@@ -8,12 +8,12 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/service"
-	"github.com/robfig/cron/v3"
+	cronlib "github.com/robfig/cron/v3"
 )
 
 // Scheduler handles scheduled tasks
 type Scheduler struct {
-	cron        *cron.Cron
+	cronJob     *cronlib.Cron
 	services    *service.Services
 	notifSvc    *notification.Service
 	taskRepo    repository.TaskRepository
@@ -24,7 +24,7 @@ type Scheduler struct {
 // NewScheduler creates a new scheduler
 func NewScheduler(services *service.Services, notifSvc *notification.Service) *Scheduler {
 	return &Scheduler{
-		cron:     cron.New(),
+		cronJob:  cronlib.New(),
 		services: services,
 		notifSvc: notifSvc,
 	}
@@ -33,7 +33,7 @@ func NewScheduler(services *service.Services, notifSvc *notification.Service) *S
 // NewSchedulerWithRepos creates a scheduler with direct repository access
 func NewSchedulerWithRepos(services *service.Services, notifSvc *notification.Service, taskRepo repository.TaskRepository, sprintRepo repository.SprintRepository, projectRepo repository.ProjectRepository) *Scheduler {
 	return &Scheduler{
-		cron:        cron.New(),
+		cronJob:     cronlib.New(),
 		services:    services,
 		notifSvc:    notifSvc,
 		taskRepo:    taskRepo,
@@ -45,54 +45,54 @@ func NewSchedulerWithRepos(services *service.Services, notifSvc *notification.Se
 // Start starts the scheduler
 func (s *Scheduler) Start() {
 	// Run every day at 9 AM - Due date reminders
-	s.cron.AddFunc("0 9 * * *", func() {
+	s.cronJob.AddFunc("0 9 * * *", func() {
 		log.Println("[Cron] Running due date reminder check...")
 		s.checkDueDateReminders()
 	})
 
 	// Run every day at 9 AM - Overdue task check
-	s.cron.AddFunc("0 9 * * *", func() {
+	s.cronJob.AddFunc("0 9 * * *", func() {
 		log.Println("[Cron] Running overdue task check...")
 		s.checkOverdueTasks()
 	})
 
 	// Run every day at 9 AM - Sprint ending reminders
-	s.cron.AddFunc("0 9 * * *", func() {
+	s.cronJob.AddFunc("0 9 * * *", func() {
 		log.Println("[Cron] Running sprint ending check...")
 		s.checkSprintDeadlines()
 	})
 
 	// Run every hour - Check for tasks due today (more urgent)
-	s.cron.AddFunc("0 * * * *", func() {
+	s.cronJob.AddFunc("0 * * * *", func() {
 		log.Println("[Cron] Running hourly due today check...")
 		s.checkTasksDueToday()
 	})
 
 	// Clean up old notifications - Run every Sunday at midnight
-	s.cron.AddFunc("0 0 * * 0", func() {
+	s.cronJob.AddFunc("0 0 * * 0", func() {
 		log.Println("[Cron] Running notification cleanup...")
 		s.cleanupOldNotifications()
 	})
 
 	// Auto-complete expired sprints - Run every hour
-	s.cron.AddFunc("0 * * * *", func() {
+	s.cronJob.AddFunc("0 * * * *", func() {
 		log.Println("[Cron] Running auto-complete expired sprints...")
 		s.autoCompleteExpiredSprints()
 	})
 
 	// Update user status to away - Run every 30 minutes
-	s.cron.AddFunc("*/30 * * * *", func() {
+	s.cronJob.AddFunc("*/30 * * * *", func() {
 		log.Println("[Cron] Running user status update...")
 		s.updateInactiveUserStatus()
 	})
 
-	s.cron.Start()
+	s.cronJob.Start()
 	log.Println("[Cron] Scheduler started")
 }
 
 // Stop stops the scheduler
 func (s *Scheduler) Stop() {
-	s.cron.Stop()
+	s.cronJob.Stop()
 	log.Println("[Cron] Scheduler stopped")
 }
 
@@ -174,8 +174,6 @@ func (s *Scheduler) checkSprintDeadlines() {
 		return
 	}
 
-	// This would need a new method in sprintRepo: FindEndingSoon
-	// For now, we'll log that this feature needs the method
 	log.Println("[Cron] Sprint deadline check: requires FindEndingSoon method in sprint repository")
 	_ = ctx
 }
@@ -200,11 +198,9 @@ func (s *Scheduler) checkTasksDueToday() {
 			continue
 		}
 
-		// Check if due today (same calendar day)
 		if task.DueDate.Year() == now.Year() && task.DueDate.YearDay() == now.YearDay() {
 			hoursRemaining := int(task.DueDate.Sub(now).Hours())
 
-			// Send reminder if less than 4 hours remaining and task not done
 			if hoursRemaining <= 4 && hoursRemaining > 0 && task.Status != "DONE" {
 				log.Printf("[Cron] Task %s due in %d hours - would send urgent reminder", task.Key, hoursRemaining)
 			}
@@ -215,9 +211,6 @@ func (s *Scheduler) checkTasksDueToday() {
 // cleanupOldNotifications removes old read notifications
 func (s *Scheduler) cleanupOldNotifications() {
 	ctx := context.Background()
-
-	// Delete read notifications older than 30 days
-	// This requires a method in notification repository: DeleteOlderThan
 	log.Println("[Cron] Notification cleanup: requires DeleteOlderThan method in notification repository")
 	_ = ctx
 }
@@ -231,7 +224,6 @@ func (s *Scheduler) autoCompleteExpiredSprints() {
 		return
 	}
 
-	// This requires FindExpired method in sprint repository
 	log.Println("[Cron] Auto-complete expired sprints: requires FindExpired method in sprint repository")
 	_ = ctx
 }
@@ -239,8 +231,6 @@ func (s *Scheduler) autoCompleteExpiredSprints() {
 // updateInactiveUserStatus marks users as away if inactive
 func (s *Scheduler) updateInactiveUserStatus() {
 	ctx := context.Background()
-
-	// This requires UpdateStatusForInactive method in user repository
 	log.Println("[Cron] User status update: requires UpdateStatusForInactive method in user repository")
 	_ = ctx
 }
