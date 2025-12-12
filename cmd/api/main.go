@@ -52,8 +52,14 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandlers(services)
 
-	// Initialize cron scheduler
-	cronScheduler := cron.NewScheduler(services, notificationSvc)
+	// Initialize cron scheduler with repositories for full functionality
+	cronScheduler := cron.NewSchedulerWithRepos(
+		services,
+		notificationSvc,
+		repos.TaskRepo,
+		repos.SprintRepo,
+		repos.ProjectRepo,
+	)
 	cronScheduler.Start()
 	defer cronScheduler.Stop()
 
