@@ -1,0 +1,55 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/build/
+/main
+
+# Go specific
+*.test
+*.out
+go.work
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+node_modules/
+
+# Generated Prisma client
+internal/db/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Test coverage
+coverage.out
+coverage.html
