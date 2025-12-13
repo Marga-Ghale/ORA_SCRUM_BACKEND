@@ -255,9 +255,20 @@ func (s *taskService) Create(ctx context.Context, projectID, reporterID, title s
 		return nil, err
 	}
 
-	// Send notification if assigned to someone else
-	if assigneeID != nil && *assigneeID != reporterID && s.notifSvc != nil {
-		s.notifSvc.SendTaskAssigned(ctx, *assigneeID, task.Title, task.ID, projectID)
+	// ============================================
+	// SEND NOTIFICATIONS
+	// ============================================
+	if s.notifSvc != nil {
+		// 1. Notify assignee if task is assigned to someone else
+		if assigneeID != nil && *assigneeID != reporterID {
+			s.notifSvc.SendTaskAssigned(ctx, *assigneeID, task.Title, task.ID, projectID)
+		}
+
+		// 2. Notify all project members about new task (except the creator)
+		memberIDs, _ := s.projectRepo.FindMemberUserIDs(ctx, projectID)
+		if len(memberIDs) > 0 {
+			s.notifSvc.SendTaskCreated(ctx, memberIDs, reporterID, task.Title, task.Key, task.ID, projectID)
+		}
 	}
 
 	// Populate user info

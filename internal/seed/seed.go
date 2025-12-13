@@ -3,131 +3,113 @@ package seed
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"time"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// SeedData creates initial test data for development
 func SeedData(repos *repository.Repositories) {
 	ctx := context.Background()
 
-	// Check if test user already exists
-	existingUser, _ := repos.UserRepo.FindByEmail(ctx, "test@example.com")
-	if existingUser != nil {
+	// Check if data already exists
+	users, _ := repos.UserRepo.FindAll(ctx)
+	if len(users) > 0 {
 		log.Println("[Seed] Data already exists, skipping...")
 		return
 	}
 
 	log.Println("[Seed] Creating initial data...")
 
-	// 1. Create test user
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
-	if err != nil {
-		log.Printf("[Seed] Failed to hash password: %v", err)
-		return
-	}
+	// Create users
+	password, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 
-	testUser := &repository.User{
+	user1 := &repository.User{
 		Email:    "test@example.com",
-		Password: string(hashedPassword),
+		Password: string(password),
 		Name:     "Test User",
-		Status:   "online", // lowercase
+		Status:   "online",
 	}
-	if err := repos.UserRepo.Create(ctx, testUser); err != nil {
-		log.Printf("[Seed] Failed to create test user: %v", err)
-		return
-	}
-	log.Printf("[Seed] Created user: %s (ID: %s)", testUser.Email, testUser.ID)
+	repos.UserRepo.Create(ctx, user1)
 
-	// Create a second user for assignment testing
-	hashedPassword2, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
-	devUser := &repository.User{
+	user2 := &repository.User{
 		Email:    "dev@example.com",
-		Password: string(hashedPassword2),
+		Password: string(password),
 		Name:     "Dev User",
-		Status:   "online", // lowercase
+		Status:   "online",
 	}
-	if err := repos.UserRepo.Create(ctx, devUser); err != nil {
-		log.Printf("[Seed] Failed to create dev user: %v", err)
-	} else {
-		log.Printf("[Seed] Created user: %s (ID: %s)", devUser.Email, devUser.ID)
-	}
+	repos.UserRepo.Create(ctx, user2)
 
-	// 2. Create default workspace
+	user3 := &repository.User{
+		Email:    "admin@example.com",
+		Password: string(password),
+		Name:     "Admin User",
+		Status:   "away",
+	}
+	repos.UserRepo.Create(ctx, user3)
+
+	// Create workspace
 	workspace := &repository.Workspace{
 		Name:    "My Workspace",
-		OwnerID: testUser.ID,
+		OwnerID: user1.ID,
 	}
-	if err := repos.WorkspaceRepo.Create(ctx, workspace); err != nil {
-		log.Printf("[Seed] Failed to create workspace: %v", err)
-		return
-	}
-	log.Printf("[Seed] Created workspace: %s (ID: %s)", workspace.Name, workspace.ID)
+	repos.WorkspaceRepo.Create(ctx, workspace)
 
-	// 3. Add users as workspace members
-	workspaceMember := &repository.WorkspaceMember{
+	// Add members to workspace
+	repos.WorkspaceRepo.AddMember(ctx, &repository.WorkspaceMember{
 		WorkspaceID: workspace.ID,
-		UserID:      testUser.ID,
-		Role:        "owner", // lowercase
-	}
-	if err := repos.WorkspaceRepo.AddMember(ctx, workspaceMember); err != nil {
-		log.Printf("[Seed] Failed to add workspace member: %v", err)
-	}
-
-	// Add dev user as member
-	devMember := &repository.WorkspaceMember{
+		UserID:      user1.ID,
+		Role:        "owner",
+	})
+	repos.WorkspaceRepo.AddMember(ctx, &repository.WorkspaceMember{
 		WorkspaceID: workspace.ID,
-		UserID:      devUser.ID,
-		Role:        "member", // lowercase
-	}
-	repos.WorkspaceRepo.AddMember(ctx, devMember)
+		UserID:      user2.ID,
+		Role:        "admin",
+	})
+	repos.WorkspaceRepo.AddMember(ctx, &repository.WorkspaceMember{
+		WorkspaceID: workspace.ID,
+		UserID:      user3.ID,
+		Role:        "member",
+	})
 
-	// 4. Create default space
+	// Create space
 	space := &repository.Space{
 		Name:        "Engineering",
 		WorkspaceID: workspace.ID,
 	}
-	if err := repos.SpaceRepo.Create(ctx, space); err != nil {
-		log.Printf("[Seed] Failed to create space: %v", err)
-		return
-	}
-	log.Printf("[Seed] Created space: %s (ID: %s)", space.Name, space.ID)
+	repos.SpaceRepo.Create(ctx, space)
 
-	// 5. Create default project
+	// Create project
 	project := &repository.Project{
-		Name:    "My Project",
-		Key:     "PRJ",
+		Name:    "ORA Scrum",
+		Key:     "ORA",
 		SpaceID: space.ID,
-		LeadID:  &testUser.ID,
+		LeadID:  &user1.ID,
 	}
-	if err := repos.ProjectRepo.Create(ctx, project); err != nil {
-		log.Printf("[Seed] Failed to create project: %v", err)
-		return
-	}
-	log.Printf("[Seed] Created project: %s (ID: %s, Key: %s)", project.Name, project.ID, project.Key)
+	repos.ProjectRepo.Create(ctx, project)
 
-	// Add users as project members
-	projectMember := &repository.ProjectMember{
+	// Add project members
+	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
 		ProjectID: project.ID,
-		UserID:    testUser.ID,
-		Role:      "lead", // lowercase
-	}
-	repos.ProjectRepo.AddMember(ctx, projectMember)
-
-	devProjectMember := &repository.ProjectMember{
+		UserID:    user1.ID,
+		Role:      "lead",
+	})
+	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
 		ProjectID: project.ID,
-		UserID:    devUser.ID,
-		Role:      "member", // lowercase
-	}
-	repos.ProjectRepo.AddMember(ctx, devProjectMember)
+		UserID:    user2.ID,
+		Role:      "member",
+	})
+	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
+		ProjectID: project.ID,
+		UserID:    user3.ID,
+		Role:      "member",
+	})
 
-	// 6. Create sample labels
+	// Create labels
 	labels := []struct {
-		name  string
-		color string
+		Name  string
+		Color string
 	}{
 		{"frontend", "#3B82F6"},
 		{"backend", "#10B981"},
@@ -137,140 +119,194 @@ func SeedData(repos *repository.Repositories) {
 	}
 
 	for _, l := range labels {
-		label := &repository.Label{
-			Name:      l.name,
-			Color:     l.color,
+		repos.LabelRepo.Create(ctx, &repository.Label{
+			Name:      l.Name,
+			Color:     l.Color,
 			ProjectID: project.ID,
-		}
-		repos.LabelRepo.Create(ctx, label)
-	}
-	log.Printf("[Seed] Created %d labels", len(labels))
-
-	// 7. Create sample tasks with LOWERCASE values
-	sampleTasks := []struct {
-		title       string
-		description string
-		status      string
-		priority    string
-		taskType    string
-		assigneeID  *string
-		labels      []string
-	}{
-		{
-			title:       "Welcome to ORA Scrum!",
-			description: "This is your first task. Get started by exploring the board.",
-			status:      "todo",   // lowercase
-			priority:    "medium", // lowercase
-			taskType:    "task",   // lowercase
-			assigneeID:  &testUser.ID,
-			labels:      []string{"documentation"},
-		},
-		{
-			title:       "Set up development environment",
-			description: "Install Node.js, Go, and Docker for local development.",
-			status:      "in_progress", // lowercase
-			priority:    "high",        // lowercase
-			taskType:    "task",        // lowercase
-			assigneeID:  &devUser.ID,
-			labels:      []string{"backend", "frontend"},
-		},
-		{
-			title:       "Review project requirements",
-			description: "Go through the PRD and ensure all requirements are captured.",
-			status:      "done",   // lowercase
-			priority:    "medium", // lowercase
-			taskType:    "task",   // lowercase
-			assigneeID:  &testUser.ID,
-			labels:      []string{"documentation"},
-		},
-		{
-			title:       "Implement user authentication",
-			description: "Create login, register, and password reset functionality.",
-			status:      "backlog", // lowercase
-			priority:    "high",    // lowercase
-			taskType:    "story",   // lowercase
-			assigneeID:  nil,
-			labels:      []string{"backend", "feature"},
-		},
-		{
-			title:       "Fix login button not responding",
-			description: "The login button sometimes doesn't respond on mobile devices.",
-			status:      "todo",   // lowercase
-			priority:    "urgent", // lowercase
-			taskType:    "bug",    // lowercase
-			assigneeID:  &devUser.ID,
-			labels:      []string{"frontend", "bug"},
-		},
-		{
-			title:       "Design system improvements",
-			description: "Update color palette and typography for better accessibility.",
-			status:      "in_review", // lowercase
-			priority:    "low",       // lowercase
-			taskType:    "story",     // lowercase
-			assigneeID:  &testUser.ID,
-			labels:      []string{"frontend", "feature"},
-		},
-		{
-			title:       "API performance optimization",
-			description: "Reduce response times for the task listing endpoint.",
-			status:      "backlog", // lowercase
-			priority:    "medium",  // lowercase
-			taskType:    "task",    // lowercase
-			assigneeID:  nil,
-			labels:      []string{"backend"},
-		},
-		{
-			title:       "Mobile app epic",
-			description: "Plan and implement the mobile application for iOS and Android.",
-			status:      "backlog", // lowercase
-			priority:    "none",    // lowercase
-			taskType:    "epic",    // lowercase
-			assigneeID:  nil,
-			labels:      []string{"feature"},
-		},
+		})
 	}
 
-	for i, t := range sampleTasks {
-		taskKey := fmt.Sprintf("%s-%d", project.Key, i+1)
-		task := &repository.Task{
-			Key:         taskKey,
-			Title:       t.title,
-			Description: &t.description,
-			Status:      t.status,
-			Priority:    t.priority,
-			Type:        t.taskType,
-			ProjectID:   project.ID,
-			ReporterID:  testUser.ID,
-			AssigneeID:  t.assigneeID,
-			Labels:      t.labels,
-			OrderIndex:  i,
-		}
-		if err := repos.TaskRepo.Create(ctx, task); err != nil {
-			log.Printf("[Seed] Failed to create task %s: %v", taskKey, err)
-		}
-	}
-	log.Printf("[Seed] Created %d tasks", len(sampleTasks))
-
-	// 8. Create a sample sprint
+	// Create sprint
+	now := time.Now()
+	sprintStart := now.AddDate(0, 0, -7)
+	sprintEnd := now.AddDate(0, 0, 7)
 	sprint := &repository.Sprint{
 		Name:      "Sprint 1",
 		ProjectID: project.ID,
-		Status:    "planning", // lowercase
+		Status:    "active",
+		StartDate: &sprintStart,
+		EndDate:   &sprintEnd,
 	}
-	if err := repos.SprintRepo.Create(ctx, sprint); err != nil {
-		log.Printf("[Seed] Failed to create sprint: %v", err)
-	} else {
-		log.Printf("[Seed] Created sprint: %s (ID: %s)", sprint.Name, sprint.ID)
+	repos.SprintRepo.Create(ctx, sprint)
+
+	// Create tasks
+	tasks := []struct {
+		Title      string
+		Status     string
+		Priority   string
+		Type       string
+		AssigneeID *string
+		SprintID   *string
+	}{
+		{"Setup project structure", "done", "high", "task", &user1.ID, &sprint.ID},
+		{"Implement authentication", "done", "urgent", "task", &user1.ID, &sprint.ID},
+		{"Create dashboard UI", "in_progress", "high", "task", &user2.ID, &sprint.ID},
+		{"API integration", "in_progress", "medium", "task", &user2.ID, &sprint.ID},
+		{"Fix login bug", "todo", "urgent", "bug", &user1.ID, &sprint.ID},
+		{"Add dark mode", "todo", "low", "feature", &user3.ID, &sprint.ID},
+		{"Write documentation", "backlog", "low", "task", nil, nil},
+		{"Performance optimization", "backlog", "medium", "task", nil, nil},
 	}
 
+	for i, t := range tasks {
+		task := &repository.Task{
+			Key:        "ORA-" + string(rune('1'+i)),
+			Title:      t.Title,
+			Status:     t.Status,
+			Priority:   t.Priority,
+			Type:       t.Type,
+			ProjectID:  project.ID,
+			SprintID:   t.SprintID,
+			AssigneeID: t.AssigneeID,
+			ReporterID: user1.ID,
+			OrderIndex: i,
+			Labels:     []string{},
+		}
+		repos.TaskRepo.Create(ctx, task)
+	}
+
+	// ============================================
+	// CREATE SAMPLE NOTIFICATIONS
+	// ============================================
+	seedNotifications(ctx, repos, user1.ID, user2.ID, user3.ID, project.ID, sprint.ID)
+
 	log.Println("[Seed] ✅ Initial data created successfully!")
-	log.Println("==========================================")
-	log.Printf("  📧 Test User: test@example.com")
-	log.Printf("  📧 Dev User:  dev@example.com")
-	log.Printf("  🔑 Password:  password123 (for both)")
-	log.Printf("  🏢 Workspace: %s", workspace.ID)
-	log.Printf("  📁 Space:     %s", space.ID)
-	log.Printf("  📋 Project:   %s (Key: %s)", project.ID, project.Key)
-	log.Printf("  🏃 Sprint:    %s", sprint.ID)
-	log.Println("==========================================")
+}
+
+// seedNotifications creates sample notifications for testing
+func seedNotifications(ctx context.Context, repos *repository.Repositories, user1ID, user2ID, user3ID, projectID, sprintID string) {
+	now := time.Now()
+
+	notifications := []repository.Notification{
+		// Task notifications for user1 (test@example.com)
+		{
+			UserID:    user1ID,
+			Type:      "TASK_ASSIGNED",
+			Title:     "Task Assigned",
+			Message:   "You have been assigned to task: Create dashboard UI",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-1", "projectId": projectID, "taskKey": "ORA-3"},
+			CreatedAt: now.Add(-5 * time.Minute),
+		},
+		{
+			UserID:    user1ID,
+			Type:      "TASK_COMMENTED",
+			Title:     "New Comment",
+			Message:   "Dev User commented on task: Setup project structure",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-2", "projectId": projectID, "taskKey": "ORA-1"},
+			CreatedAt: now.Add(-15 * time.Minute),
+		},
+		{
+			UserID:    user1ID,
+			Type:      "TASK_STATUS_CHANGED",
+			Title:     "Task Status Changed",
+			Message:   "Task 'API integration' moved from To Do to In Progress",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-3", "projectId": projectID, "taskKey": "ORA-4", "oldStatus": "todo", "newStatus": "in_progress"},
+			CreatedAt: now.Add(-1 * time.Hour),
+		},
+		{
+			UserID:    user1ID,
+			Type:      "SPRINT_ENDING",
+			Title:     "Sprint Ending Soon",
+			Message:   "Sprint 'Sprint 1' ends in 7 days",
+			Read:      false,
+			Data:      map[string]interface{}{"sprintId": sprintID, "projectId": projectID, "daysRemaining": 7},
+			CreatedAt: now.Add(-2 * time.Hour),
+		},
+		{
+			UserID:    user1ID,
+			Type:      "MENTION",
+			Title:     "You were mentioned",
+			Message:   "Dev User mentioned you in task: Fix login bug",
+			Read:      true,
+			Data:      map[string]interface{}{"taskId": "task-4", "projectId": projectID, "taskKey": "ORA-5"},
+			CreatedAt: now.Add(-1 * 24 * time.Hour),
+		},
+		{
+			UserID:    user1ID,
+			Type:      "TASK_DUE_SOON",
+			Title:     "Task Due Tomorrow",
+			Message:   "Task 'Create dashboard UI' is due tomorrow",
+			Read:      true,
+			Data:      map[string]interface{}{"taskId": "task-5", "projectId": projectID, "taskKey": "ORA-3", "daysUntilDue": 1},
+			CreatedAt: now.Add(-2 * 24 * time.Hour),
+		},
+		{
+			UserID:    user1ID,
+			Type:      "PROJECT_INVITATION",
+			Title:     "Project Invitation",
+			Message:   "Admin User added you to project: Mobile App",
+			Read:      true,
+			Data:      map[string]interface{}{"projectId": "project-2"},
+			CreatedAt: now.Add(-5 * 24 * time.Hour),
+		},
+
+		// Notifications for user2 (dev@example.com)
+		{
+			UserID:    user2ID,
+			Type:      "TASK_ASSIGNED",
+			Title:     "Task Assigned",
+			Message:   "You have been assigned to task: API integration",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-6", "projectId": projectID, "taskKey": "ORA-4"},
+			CreatedAt: now.Add(-30 * time.Minute),
+		},
+		{
+			UserID:    user2ID,
+			Type:      "TASK_CREATED",
+			Title:     "New Task Created",
+			Message:   "New task created: Performance optimization (ORA-8)",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-7", "projectId": projectID, "taskKey": "ORA-8"},
+			CreatedAt: now.Add(-45 * time.Minute),
+		},
+		{
+			UserID:    user2ID,
+			Type:      "SPRINT_STARTED",
+			Title:     "Sprint Started",
+			Message:   "Sprint 'Sprint 1' has started! Time to get to work.",
+			Read:      true,
+			Data:      map[string]interface{}{"sprintId": sprintID, "projectId": projectID},
+			CreatedAt: now.Add(-7 * 24 * time.Hour),
+		},
+
+		// Notifications for user3 (admin@example.com)
+		{
+			UserID:    user3ID,
+			Type:      "TASK_ASSIGNED",
+			Title:     "Task Assigned",
+			Message:   "You have been assigned to task: Add dark mode",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-8", "projectId": projectID, "taskKey": "ORA-6"},
+			CreatedAt: now.Add(-1 * time.Hour),
+		},
+		{
+			UserID:    user3ID,
+			Type:      "WORKSPACE_INVITATION",
+			Title:     "Workspace Invitation",
+			Message:   "Test User added you to workspace: My Workspace",
+			Read:      true,
+			Data:      map[string]interface{}{"workspaceId": "workspace-1"},
+			CreatedAt: now.Add(-10 * 24 * time.Hour),
+		},
+	}
+
+	for _, n := range notifications {
+		notif := n // Create a copy to avoid pointer issues
+		repos.NotificationRepo.Create(ctx, &notif)
+	}
+
+	log.Printf("[Seed] Created %d sample notifications", len(notifications))
 }
