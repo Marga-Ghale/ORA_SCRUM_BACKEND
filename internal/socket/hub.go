@@ -1,4 +1,4 @@
-// Package socket provides WebSocket functionality for real-time notifications
+// internal/socket/hub.go
 package socket
 
 import (
@@ -36,9 +36,9 @@ const (
 	MessageMemberRemoved  MessageType = "member_removed"
 
 	// Team messages
-	MessageTeamCreated MessageType = "team_created"
-	MessageTeamUpdated MessageType = "team_updated"
-	MessageTeamDeleted MessageType = "team_deleted"
+	MessageTeamCreated       MessageType = "team_created"
+	MessageTeamUpdated       MessageType = "team_updated"
+	MessageTeamDeleted       MessageType = "team_deleted"
 	MessageTeamMemberAdded   MessageType = "team_member_added"
 	MessageTeamMemberRemoved MessageType = "team_member_removed"
 
@@ -55,6 +55,7 @@ const (
 	// System messages
 	MessagePing MessageType = "ping"
 	MessagePong MessageType = "pong"
+	MessageAck  MessageType = "ack"
 )
 
 // Message represents a WebSocket message
@@ -66,14 +67,14 @@ type Message struct {
 
 // Client represents a connected WebSocket client
 type Client struct {
-	ID        string
-	UserID    string
-	Conn      *websocket.Conn
-	Hub       *Hub
-	Send      chan []byte
-	Rooms     map[string]bool // Subscribed rooms (workspace:id, project:id, etc.)
-	mu        sync.Mutex
-	lastPing  time.Time
+	ID       string
+	UserID   string
+	Conn     *websocket.Conn
+	Hub      *Hub
+	Send     chan []byte
+	Rooms    map[string]bool // Subscribed rooms (workspace:id, project:id, etc.)
+	mu       sync.Mutex
+	lastPing time.Time
 }
 
 // Hub maintains the set of active clients and broadcasts messages
@@ -134,6 +135,8 @@ func NewHub() *Hub {
 
 // Run starts the hub's main loop
 func (h *Hub) Run() {
+	log.Println("[Hub] WebSocket hub started")
+
 	// Start ping ticker
 	pingTicker := time.NewTicker(30 * time.Second)
 	defer pingTicker.Stop()
@@ -173,7 +176,8 @@ func (h *Hub) registerClient(client *Client) {
 	}
 	h.userClients[client.UserID][client] = true
 
-	log.Printf("🔌 Client connected: user=%s, id=%s", client.UserID, client.ID)
+	log.Printf("[Hub] ✅ Client registered: user=%s, id=%s, total_clients=%d",
+		client.UserID, client.ID, len(h.clients))
 
 	// Broadcast user online status
 	go h.BroadcastUserStatus(client.UserID, true)
@@ -191,7 +195,7 @@ func (h *Hub) unregisterClient(client *Client) {
 			delete(clients, client)
 			if len(clients) == 0 {
 				delete(h.userClients, client.UserID)
-				// User went offline
+				// User went offline (no more connections)
 				go h.BroadcastUserStatus(client.UserID, false)
 			}
 		}
@@ -207,7 +211,8 @@ func (h *Hub) unregisterClient(client *Client) {
 		}
 
 		close(client.Send)
-		log.Printf("🔌 Client disconnected: user=%s, id=%s", client.UserID, client.ID)
+		log.Printf("[Hub] ❌ Client disconnected: user=%s, id=%s, total_clients=%d",
+			client.UserID, client.ID, len(h.clients))
 	}
 }
 
@@ -230,38 +235,52 @@ func (h *Hub) broadcastToRoom(rm *RoomMessage) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if clients, ok := h.roomClients[rm.Room]; ok {
-		for client := range clients {
-			// Skip excluded user
-			if rm.Exclude != "" && client.UserID == rm.Exclude {
-				continue
-			}
-			select {
-			case client.Send <- rm.Message:
-			default:
-				go func(c *Client) {
-					h.unregister <- c
-				}(client)
-			}
+	clients, ok := h.roomClients[rm.Room]
+	if !ok {
+		log.Printf("[Hub] Room not found: %s", rm.Room)
+		return
+	}
+
+	sentCount := 0
+	for client := range clients {
+		// Skip excluded user
+		if rm.Exclude != "" && client.UserID == rm.Exclude {
+			continue
+		}
+		select {
+		case client.Send <- rm.Message:
+			sentCount++
+		default:
+			go func(c *Client) {
+				h.unregister <- c
+			}(client)
 		}
 	}
+	log.Printf("[Hub] Broadcast to room %s: sent to %d clients", rm.Room, sentCount)
 }
 
 func (h *Hub) sendToUser(dm *DirectMessage) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if clients, ok := h.userClients[dm.UserID]; ok {
-		for client := range clients {
-			select {
-			case client.Send <- dm.Message:
-			default:
-				go func(c *Client) {
-					h.unregister <- c
-				}(client)
-			}
+	clients, ok := h.userClients[dm.UserID]
+	if !ok {
+		log.Printf("[Hub] User not connected: %s", dm.UserID)
+		return
+	}
+
+	sentCount := 0
+	for client := range clients {
+		select {
+		case client.Send <- dm.Message:
+			sentCount++
+		default:
+			go func(c *Client) {
+				h.unregister <- c
+			}(client)
 		}
 	}
+	log.Printf("[Hub] Direct message to user %s: sent to %d clients", dm.UserID, sentCount)
 }
 
 func (h *Hub) pingClients() {
@@ -286,7 +305,7 @@ func (h *Hub) pingClients() {
 }
 
 // ============================================
-// Public Methods for Broadcasting
+// Public Methods for Room Management
 // ============================================
 
 // JoinRoom adds a client to a room
@@ -303,7 +322,7 @@ func (h *Hub) JoinRoom(client *Client, room string) {
 	}
 	h.roomClients[room][client] = true
 
-	log.Printf("👥 Client joined room: user=%s, room=%s", client.UserID, room)
+	log.Printf("[Hub] 👥 Client joined room: user=%s, room=%s", client.UserID, room)
 }
 
 // LeaveRoom removes a client from a room
@@ -322,8 +341,12 @@ func (h *Hub) LeaveRoom(client *Client, room string) {
 		}
 	}
 
-	log.Printf("👋 Client left room: user=%s, room=%s", client.UserID, room)
+	log.Printf("[Hub] 👋 Client left room: user=%s, room=%s", client.UserID, room)
 }
+
+// ============================================
+// Public Methods for Sending Messages
+// ============================================
 
 // SendToUser sends a message to a specific user
 func (h *Hub) SendToUser(userID string, msgType MessageType, payload map[string]interface{}) {
@@ -334,9 +357,11 @@ func (h *Hub) SendToUser(userID string, msgType MessageType, payload map[string]
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling message: %v", err)
+		log.Printf("[Hub] Error marshaling message: %v", err)
 		return
 	}
+
+	log.Printf("[Hub] 📤 SendToUser: user=%s, type=%s", userID, msgType)
 
 	h.directMessage <- &DirectMessage{
 		UserID:  userID,
@@ -353,9 +378,11 @@ func (h *Hub) SendToRoom(room string, msgType MessageType, payload map[string]in
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling message: %v", err)
+		log.Printf("[Hub] Error marshaling message: %v", err)
 		return
 	}
+
+	log.Printf("[Hub] 📤 SendToRoom: room=%s, type=%s, exclude=%s", room, msgType, excludeUserID)
 
 	h.roomBroadcast <- &RoomMessage{
 		Room:    room,
@@ -382,6 +409,10 @@ func (h *Hub) BroadcastUserStatus(userID string, online bool) {
 	data, _ := json.Marshal(msg)
 	h.broadcast <- data
 }
+
+// ============================================
+// Query Methods
+// ============================================
 
 // GetOnlineUsers returns a list of online user IDs
 func (h *Hub) GetOnlineUsers() []string {
@@ -413,4 +444,11 @@ func (h *Hub) GetRoomClients(room string) int {
 		return len(clients)
 	}
 	return 0
+}
+
+// GetConnectedClientsCount returns total connected clients
+func (h *Hub) GetConnectedClientsCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
 }

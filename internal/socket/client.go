@@ -1,16 +1,15 @@
+// internal/socket/client.go
 package socket
 
 import (
 	"encoding/json"
 	"log"
-	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
+// WebSocket connection constants
 const (
 	// Time allowed to write a message to the peer
 	writeWait = 10 * time.Second
@@ -21,38 +20,15 @@ const (
 	// Send pings to peer with this period (must be less than pongWait)
 	pingPeriod = (pongWait * 9) / 10
 
-	// Maximum message size allowed from peer
-	maxMessageSize = 4096
+	// Maximum message size allowed from peer (4KB)
+	maxMessageSize int64 = 4096
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// Allow all origins in development
-		// In production, restrict to your domains
-		return true
-	},
-}
 
 // ClientMessage represents an incoming message from a client
 type ClientMessage struct {
 	Action  string                 `json:"action"`
 	Room    string                 `json:"room,omitempty"`
 	Payload map[string]interface{} `json:"payload,omitempty"`
-}
-
-// NewClient creates a new WebSocket client
-func NewClient(hub *Hub, userID string, conn *websocket.Conn) *Client {
-	return &Client{
-		ID:       uuid.New().String(),
-		UserID:   userID,
-		Conn:     conn,
-		Hub:      hub,
-		Send:     make(chan []byte, 256),
-		Rooms:    make(map[string]bool),
-		lastPing: time.Now(),
-	}
 }
 
 // ReadPump pumps messages from the WebSocket connection to the hub
@@ -74,7 +50,7 @@ func (c *Client) ReadPump() {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+				log.Printf("[Client] WebSocket error for user %s: %v", c.UserID, err)
 			}
 			break
 		}
@@ -132,27 +108,26 @@ func (c *Client) WritePump() {
 func (c *Client) handleMessage(message []byte) {
 	var msg ClientMessage
 	if err := json.Unmarshal(message, &msg); err != nil {
-		log.Printf("Error parsing message: %v", err)
+		log.Printf("[Client] Error parsing message from user %s: %v", c.UserID, err)
 		return
 	}
 
+	log.Printf("[Client] Received action=%s room=%s from user=%s", msg.Action, msg.Room, c.UserID)
+
 	switch msg.Action {
 	case "join":
-		// Join a room (workspace, project, etc.)
 		if msg.Room != "" {
 			c.Hub.JoinRoom(c, msg.Room)
 			c.sendAck("joined", msg.Room)
 		}
 
 	case "leave":
-		// Leave a room
 		if msg.Room != "" {
 			c.Hub.LeaveRoom(c, msg.Room)
 			c.sendAck("left", msg.Room)
 		}
 
 	case "typing":
-		// Broadcast typing indicator
 		if msg.Room != "" {
 			c.Hub.SendToRoom(msg.Room, MessageUserTyping, map[string]interface{}{
 				"userId": c.UserID,
@@ -160,18 +135,21 @@ func (c *Client) handleMessage(message []byte) {
 			}, c.UserID)
 		}
 
+	case "ping":
+		c.lastPing = time.Now()
+		c.sendPong()
+
 	case "pong":
-		// Client responded to ping
 		c.lastPing = time.Now()
 
 	default:
-		log.Printf("Unknown action: %s", msg.Action)
+		log.Printf("[Client] Unknown action: %s from user: %s", msg.Action, c.UserID)
 	}
 }
 
 func (c *Client) sendAck(action, room string) {
 	msg := Message{
-		Type: "ack",
+		Type: MessageAck,
 		Payload: map[string]interface{}{
 			"action": action,
 			"room":   room,
@@ -179,80 +157,27 @@ func (c *Client) sendAck(action, room string) {
 		Timestamp: time.Now(),
 	}
 	data, _ := json.Marshal(msg)
-	c.Send <- data
+
+	select {
+	case c.Send <- data:
+	default:
+		log.Printf("[Client] Failed to send ack to user %s", c.UserID)
+	}
 }
 
-// ============================================
-// WebSocket Handler
-// ============================================
-
-// Handler handles WebSocket connections
-type Handler struct {
-	Hub *Hub
-}
-
-// NewHandler creates a new WebSocket handler
-func NewHandler(hub *Hub) *Handler {
-	return &Handler{Hub: hub}
-}
-
-// HandleWebSocket handles WebSocket upgrade requests
-func (h *Handler) HandleWebSocket(c *gin.Context) {
-	// Get user ID from context (set by auth middleware)
-	userID, exists := c.Get("userID")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
+func (c *Client) sendPong() {
+	msg := Message{
+		Type: MessagePong,
+		Payload: map[string]interface{}{
+			"time": time.Now().Unix(),
+		},
+		Timestamp: time.Now(),
 	}
+	data, _ := json.Marshal(msg)
 
-	// Upgrade HTTP connection to WebSocket
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
-		return
+	select {
+	case c.Send <- data:
+	default:
+		log.Printf("[Client] Failed to send pong to user %s", c.UserID)
 	}
-
-	// Create new client
-	client := NewClient(h.Hub, userID.(string), conn)
-
-	// Register client with hub
-	h.Hub.register <- client
-
-	// Auto-join user's personal room for direct notifications
-	h.Hub.JoinRoom(client, "user:"+userID.(string))
-
-	// Start read/write goroutines
-	go client.WritePump()
-	go client.ReadPump()
-}
-
-// HandleWebSocketWithToken handles WebSocket with token in query params
-// Use this when you can't set headers (e.g., browser WebSocket API)
-func (h *Handler) HandleWebSocketWithToken(c *gin.Context) {
-	// Token should be validated by the caller and userID set in context
-	userID, exists := c.Get("userID")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	// Upgrade HTTP connection to WebSocket
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
-		return
-	}
-
-	// Create new client
-	client := NewClient(h.Hub, userID.(string), conn)
-
-	// Register client with hub
-	h.Hub.register <- client
-
-	// Auto-join user's personal room
-	h.Hub.JoinRoom(client, "user:"+userID.(string))
-
-	// Start read/write goroutines
-	go client.WritePump()
-	go client.ReadPump()
 }
