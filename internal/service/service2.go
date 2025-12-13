@@ -45,7 +45,7 @@ func (s *sprintService) Create(ctx context.Context, projectID, name string, goal
 		ProjectID: projectID,
 		Name:      name,
 		Goal:      goal,
-		Status:    "PLANNING",
+		Status:    "planning", // lowercase
 		StartDate: startDate,
 		EndDate:   endDate,
 	}
@@ -117,14 +117,14 @@ func (s *sprintService) Start(ctx context.Context, id, userID string) (*reposito
 	}
 
 	now := time.Now()
-	sprint.Status = "ACTIVE"
+	sprint.Status = "active" // lowercase
 	sprint.StartDate = &now
 
 	if err := s.sprintRepo.Update(ctx, sprint); err != nil {
 		return nil, err
 	}
 
-	// Send notifications to all project members
+	// Send notifications
 	if s.notifSvc != nil && s.projectRepo != nil {
 		memberIDs, _ := s.projectRepo.FindMemberUserIDs(ctx, sprint.ProjectID)
 		if len(memberIDs) > 0 {
@@ -141,18 +141,17 @@ func (s *sprintService) Complete(ctx context.Context, id, moveIncomplete, userID
 		return nil, ErrNotFound
 	}
 
-	// Count tasks before completing
 	totalTasks, completedTasks, _ := s.taskRepo.CountBySprintID(ctx, id)
 
 	now := time.Now()
-	sprint.Status = "COMPLETED"
+	sprint.Status = "completed" // lowercase
 	sprint.EndDate = &now
 
 	// Move incomplete tasks
 	if moveIncomplete != "" {
 		tasks, _ := s.taskRepo.FindBySprintID(ctx, id)
 		for _, task := range tasks {
-			if task.Status != "DONE" && task.Status != "CANCELLED" {
+			if task.Status != "done" && task.Status != "cancelled" { // lowercase
 				if moveIncomplete == "backlog" {
 					task.SprintID = nil
 				} else {
@@ -167,7 +166,7 @@ func (s *sprintService) Complete(ctx context.Context, id, moveIncomplete, userID
 		return nil, err
 	}
 
-	// Send notifications to all project members
+	// Send notifications
 	if s.notifSvc != nil && s.projectRepo != nil {
 		memberIDs, _ := s.projectRepo.FindMemberUserIDs(ctx, sprint.ProjectID)
 		if len(memberIDs) > 0 {
@@ -219,16 +218,19 @@ func (s *taskService) Create(ctx context.Context, projectID, reporterID, title s
 	taskNum, _ := s.projectRepo.GetNextTaskNumber(ctx, projectID)
 	taskKey := fmt.Sprintf("%s-%d", project.Key, taskNum)
 
-	statusVal := "BACKLOG"
-	if status != nil {
+	// Use lowercase defaults
+	statusVal := "backlog"
+	if status != nil && *status != "" {
 		statusVal = *status
 	}
-	priorityVal := "MEDIUM"
-	if priority != nil {
+
+	priorityVal := "medium"
+	if priority != nil && *priority != "" {
 		priorityVal = *priority
 	}
-	typeVal := "TASK"
-	if taskType != nil {
+
+	typeVal := "task"
+	if taskType != nil && *taskType != "" {
 		typeVal = *taskType
 	}
 
@@ -257,13 +259,6 @@ func (s *taskService) Create(ctx context.Context, projectID, reporterID, title s
 	if assigneeID != nil && *assigneeID != reporterID && s.notifSvc != nil {
 		s.notifSvc.SendTaskAssigned(ctx, *assigneeID, task.Title, task.ID, projectID)
 	}
-
-	// Notify project members about new task (optional - can be disabled for high-volume projects)
-	// Uncomment if needed:
-	// if s.notifSvc != nil {
-	//     memberIDs, _ := s.projectRepo.FindMemberUserIDs(ctx, projectID)
-	//     s.notifSvc.SendTaskCreated(ctx, memberIDs, reporterID, task.Title, task.Key, task.ID, projectID)
-	// }
 
 	// Populate user info
 	s.populateTaskUsers(ctx, task)

@@ -94,7 +94,7 @@ func (s *authService) Register(ctx context.Context, name, email, password string
 		Name:     name,
 		Email:    email,
 		Password: string(hashedPassword),
-		Status:   "ONLINE",
+		Status:   "online", // lowercase
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
@@ -119,7 +119,7 @@ func (s *authService) Login(ctx context.Context, email, password string) (*repos
 		return nil, "", "", ErrInvalidCredentials
 	}
 
-	user.Status = "ONLINE"
+	user.Status = "online" // lowercase
 	s.userRepo.Update(ctx, user)
 	s.userRepo.UpdateLastActive(ctx, user.ID)
 
@@ -130,7 +130,6 @@ func (s *authService) Login(ctx context.Context, email, password string) (*repos
 
 	return user, accessToken, refreshToken, nil
 }
-
 func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (string, string, error) {
 	rt, err := s.userRepo.FindRefreshToken(ctx, refreshToken)
 	if err != nil || rt == nil {

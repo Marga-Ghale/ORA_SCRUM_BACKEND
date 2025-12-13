@@ -146,7 +146,7 @@ func (r *userRepository) UpdateLastActive(ctx context.Context, userID string) er
 	if user, ok := r.users[userID]; ok {
 		now := time.Now()
 		user.LastActiveAt = &now
-		user.Status = "ONLINE"
+		user.Status = "online" // lowercase
 	}
 	return nil
 }
@@ -154,8 +154,8 @@ func (r *userRepository) UpdateLastActive(ctx context.Context, userID string) er
 func (r *userRepository) UpdateStatusForInactive(ctx context.Context, inactiveDuration time.Duration) error {
 	threshold := time.Now().Add(-inactiveDuration)
 	for _, user := range r.users {
-		if user.LastActiveAt != nil && user.LastActiveAt.Before(threshold) && user.Status == "ONLINE" {
-			user.Status = "AWAY"
+		if user.LastActiveAt != nil && user.LastActiveAt.Before(threshold) && user.Status == "online" {
+			user.Status = "away" // lowercase
 		}
 	}
 	return nil
@@ -612,7 +612,7 @@ func (r *sprintRepository) FindByProjectID(ctx context.Context, projectID string
 
 func (r *sprintRepository) FindActive(ctx context.Context, projectID string) (*Sprint, error) {
 	for _, s := range r.sprints {
-		if s.ProjectID == projectID && s.Status == "ACTIVE" {
+		if s.ProjectID == projectID && s.Status == "active" { // lowercase
 			return s, nil
 		}
 	}
@@ -828,7 +828,7 @@ func (r *taskRepository) FindOverdue(ctx context.Context) ([]*Task, error) {
 	var result []*Task
 	now := time.Now()
 	for _, t := range r.tasks {
-		if t.DueDate != nil && t.DueDate.Before(now) && t.Status != "DONE" && t.Status != "CANCELLED" {
+		if t.DueDate != nil && t.DueDate.Before(now) && t.Status != "done" && t.Status != "cancelled" {
 			result = append(result, t)
 		}
 	}
@@ -840,7 +840,7 @@ func (r *taskRepository) FindDueSoon(ctx context.Context, within time.Duration) 
 	now := time.Now()
 	deadline := now.Add(within)
 	for _, t := range r.tasks {
-		if t.DueDate != nil && t.DueDate.After(now) && t.DueDate.Before(deadline) && t.Status != "DONE" && t.Status != "CANCELLED" {
+		if t.DueDate != nil && t.DueDate.After(now) && t.DueDate.Before(deadline) && t.Status != "done" && t.Status != "cancelled" {
 			result = append(result, t)
 		}
 	}
@@ -890,7 +890,7 @@ func (r *taskRepository) CountBySprintID(ctx context.Context, sprintID string) (
 	for _, t := range r.tasks {
 		if t.SprintID != nil && *t.SprintID == sprintID {
 			total++
-			if t.Status == "DONE" {
+			if t.Status == "done" { // lowercase
 				completed++
 			}
 		}
