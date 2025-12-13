@@ -43,8 +43,12 @@ func main() {
 	// 🔥 Seed initial data for development
 	seed.SeedData(repos)
 
-	// Initialize notification service
-	notificationSvc := notification.NewService(repos.NotificationRepo)
+	// Initialize notification service with all repos for advanced features
+	notificationSvc := notification.NewServiceWithRepos(
+		repos.NotificationRepo,
+		repos.UserRepo,
+		repos.ProjectRepo,
+	)
 
 	// Initialize services
 	services := service.NewServices(cfg, repos, notificationSvc)
@@ -52,13 +56,15 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandlers(services)
 
-	// Initialize cron scheduler with repositories for full functionality
+	// Initialize cron scheduler with all repositories for full functionality
 	cronScheduler := cron.NewSchedulerWithRepos(
 		services,
 		notificationSvc,
 		repos.TaskRepo,
 		repos.SprintRepo,
 		repos.ProjectRepo,
+		repos.UserRepo,
+		repos.NotificationRepo,
 	)
 	cronScheduler.Start()
 	defer cronScheduler.Stop()

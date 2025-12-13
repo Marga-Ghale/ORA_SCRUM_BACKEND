@@ -279,6 +279,10 @@ func (h *WorkspaceHandler) ListMembers(c *gin.Context) {
 
 func (h *WorkspaceHandler) AddMember(c *gin.Context) {
 	id := c.Param("id")
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req models.InviteMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -286,7 +290,16 @@ func (h *WorkspaceHandler) AddMember(c *gin.Context) {
 		return
 	}
 
-	if err := h.workspaceService.AddMember(c.Request.Context(), id, req.Email, req.Role); err != nil {
+	// Pass inviterID for notification
+	if err := h.workspaceService.AddMember(c.Request.Context(), id, req.Email, req.Role, userID); err != nil {
+		if err == service.ErrUserNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+		if err == service.ErrConflict {
+			c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
 		return
 	}
@@ -296,7 +309,7 @@ func (h *WorkspaceHandler) AddMember(c *gin.Context) {
 
 func (h *WorkspaceHandler) UpdateMemberRole(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.Param("userId")
+	memberUserID := c.Param("userId")
 
 	var req models.UpdateMemberRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -304,7 +317,7 @@ func (h *WorkspaceHandler) UpdateMemberRole(c *gin.Context) {
 		return
 	}
 
-	if err := h.workspaceService.UpdateMemberRole(c.Request.Context(), id, userID, req.Role); err != nil {
+	if err := h.workspaceService.UpdateMemberRole(c.Request.Context(), id, memberUserID, req.Role); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update member role"})
 		return
 	}
@@ -314,9 +327,9 @@ func (h *WorkspaceHandler) UpdateMemberRole(c *gin.Context) {
 
 func (h *WorkspaceHandler) RemoveMember(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.Param("userId")
+	memberUserID := c.Param("userId")
 
-	if err := h.workspaceService.RemoveMember(c.Request.Context(), id, userID); err != nil {
+	if err := h.workspaceService.RemoveMember(c.Request.Context(), id, memberUserID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove member"})
 		return
 	}
@@ -435,6 +448,10 @@ func (h *ProjectHandler) ListBySpace(c *gin.Context) {
 
 func (h *ProjectHandler) Create(c *gin.Context) {
 	spaceID := c.Param("id")
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req models.CreateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -442,8 +459,13 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		return
 	}
 
-	project, err := h.projectService.Create(c.Request.Context(), spaceID, req.Name, req.Key, req.Description, req.Icon, req.Color, req.LeadID)
+	// Pass creatorID for auto-adding as member
+	project, err := h.projectService.Create(c.Request.Context(), spaceID, userID, req.Name, req.Key, req.Description, req.Icon, req.Color, req.LeadID)
 	if err != nil {
+		if err == service.ErrConflict {
+			c.JSON(http.StatusConflict, gin.H{"error": "Project key already exists"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create project"})
 		return
 	}
@@ -474,6 +496,10 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 
 	project, err := h.projectService.Update(c.Request.Context(), id, req.Name, req.Key, req.Description, req.Icon, req.Color, req.LeadID)
 	if err != nil {
+		if err == service.ErrConflict {
+			c.JSON(http.StatusConflict, gin.H{"error": "Project key already exists"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update project"})
 		return
 	}
@@ -511,6 +537,10 @@ func (h *ProjectHandler) ListMembers(c *gin.Context) {
 
 func (h *ProjectHandler) AddMember(c *gin.Context) {
 	id := c.Param("id")
+	inviterID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req models.AddProjectMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -518,7 +548,12 @@ func (h *ProjectHandler) AddMember(c *gin.Context) {
 		return
 	}
 
-	if err := h.projectService.AddMember(c.Request.Context(), id, req.UserID, req.Role); err != nil {
+	// Pass inviterID for notification
+	if err := h.projectService.AddMember(c.Request.Context(), id, req.UserID, req.Role, inviterID); err != nil {
+		if err == service.ErrConflict {
+			c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
 		return
 	}
@@ -528,9 +563,9 @@ func (h *ProjectHandler) AddMember(c *gin.Context) {
 
 func (h *ProjectHandler) RemoveMember(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.Param("userId")
+	memberUserID := c.Param("userId")
 
-	if err := h.projectService.RemoveMember(c.Request.Context(), id, userID); err != nil {
+	if err := h.projectService.RemoveMember(c.Request.Context(), id, memberUserID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove member"})
 		return
 	}
@@ -624,10 +659,19 @@ func (h *SprintHandler) Delete(c *gin.Context) {
 
 func (h *SprintHandler) Start(c *gin.Context) {
 	id := c.Param("id")
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
-	sprint, err := h.sprintService.Start(c.Request.Context(), id)
+	// Pass userID for notifications
+	sprint, err := h.sprintService.Start(c.Request.Context(), id, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start sprint"})
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Sprint not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -636,12 +680,21 @@ func (h *SprintHandler) Start(c *gin.Context) {
 
 func (h *SprintHandler) Complete(c *gin.Context) {
 	id := c.Param("id")
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req models.CompleteSprintRequest
 	c.ShouldBindJSON(&req)
 
-	sprint, err := h.sprintService.Complete(c.Request.Context(), id, req.MoveIncomplete)
+	// Pass userID for notifications
+	sprint, err := h.sprintService.Complete(c.Request.Context(), id, req.MoveIncomplete, userID)
 	if err != nil {
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Sprint not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete sprint"})
 		return
 	}
@@ -724,6 +777,10 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		req.Labels,
 	)
 	if err != nil {
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task"})
 		return
 	}
@@ -745,6 +802,10 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 func (h *TaskHandler) Update(c *gin.Context) {
 	id := c.Param("id")
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req models.UpdateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -787,8 +848,13 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		updates["labels"] = req.Labels
 	}
 
-	task, err := h.taskService.Update(c.Request.Context(), id, updates)
+	// Pass userID for notifications
+	task, err := h.taskService.Update(c.Request.Context(), id, userID, updates)
 	if err != nil {
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task"})
 		return
 	}
@@ -802,8 +868,17 @@ func (h *TaskHandler) PartialUpdate(c *gin.Context) {
 
 func (h *TaskHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
-	if err := h.taskService.Delete(c.Request.Context(), id); err != nil {
+	// Pass userID for notifications
+	if err := h.taskService.Delete(c.Request.Context(), id, userID); err != nil {
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete task"})
 		return
 	}
@@ -902,6 +977,10 @@ func (h *CommentHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to update this comment"})
 			return
 		}
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Comment not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update comment"})
 		return
 	}
@@ -919,6 +998,10 @@ func (h *CommentHandler) Delete(c *gin.Context) {
 	if err := h.commentService.Delete(c.Request.Context(), id, userID); err != nil {
 		if err == service.ErrUnauthorized {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to delete this comment"})
+			return
+		}
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Comment not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete comment"})
@@ -964,6 +1047,10 @@ func (h *LabelHandler) Create(c *gin.Context) {
 
 	label, err := h.labelService.Create(c.Request.Context(), projectID, req.Name, req.Color)
 	if err != nil {
+		if err == service.ErrConflict {
+			c.JSON(http.StatusConflict, gin.H{"error": "Label with this name already exists"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create label"})
 		return
 	}
@@ -982,6 +1069,14 @@ func (h *LabelHandler) Update(c *gin.Context) {
 
 	label, err := h.labelService.Update(c.Request.Context(), id, req.Name, req.Color)
 	if err != nil {
+		if err == service.ErrConflict {
+			c.JSON(http.StatusConflict, gin.H{"error": "Label with this name already exists"})
+			return
+		}
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Label not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update label"})
 		return
 	}
@@ -1212,6 +1307,7 @@ func toTaskResponse(t *repository.Task) models.TaskResponse {
 		ParentID:    t.ParentID,
 		StoryPoints: t.StoryPoints,
 		DueDate:     t.DueDate,
+		OrderIndex:  t.OrderIndex,
 		Labels:      t.Labels,
 		CreatedAt:   t.CreatedAt,
 		UpdatedAt:   t.UpdatedAt,

@@ -127,7 +127,7 @@ type SpaceResponse struct {
 
 type CreateProjectRequest struct {
 	Name        string  `json:"name" binding:"required"`
-	Key         string  `json:"key" binding:"required,min=2,max=10"`
+	Key         string  `json:"key" binding:"required,min=2,max=10,uppercase"`
 	Description *string `json:"description,omitempty"`
 	Icon        *string `json:"icon,omitempty"`
 	Color       *string `json:"color,omitempty"`
@@ -197,7 +197,7 @@ type SprintResponse struct {
 	Name      string     `json:"name"`
 	Goal      *string    `json:"goal,omitempty"`
 	ProjectID string     `json:"projectId"`
-	Status    string     `json:"status"`
+	Status    string     `json:"status"` // PLANNING, ACTIVE, COMPLETED
 	StartDate *time.Time `json:"startDate,omitempty"`
 	EndDate   *time.Time `json:"endDate,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
@@ -209,17 +209,17 @@ type SprintResponse struct {
 // ============================================
 
 type CreateTaskRequest struct {
-	Title       string   `json:"title" binding:"required"`
-	Description *string  `json:"description,omitempty"`
-	Status      *string  `json:"status,omitempty"`
-	Priority    *string  `json:"priority,omitempty"`
-	Type        *string  `json:"type,omitempty"`
-	AssigneeID  *string  `json:"assigneeId,omitempty"`
-	SprintID    *string  `json:"sprintId,omitempty"`
-	ParentID    *string  `json:"parentId,omitempty"`
-	StoryPoints *int     `json:"storyPoints,omitempty"`
+	Title       string     `json:"title" binding:"required,min=1,max=500"`
+	Description *string    `json:"description,omitempty"`
+	Status      *string    `json:"status,omitempty"`   // BACKLOG, TODO, IN_PROGRESS, IN_REVIEW, DONE, CANCELLED
+	Priority    *string    `json:"priority,omitempty"` // LOW, MEDIUM, HIGH, URGENT
+	Type        *string    `json:"type,omitempty"`     // TASK, BUG, STORY, EPIC, SUBTASK
+	AssigneeID  *string    `json:"assigneeId,omitempty"`
+	SprintID    *string    `json:"sprintId,omitempty"`
+	ParentID    *string    `json:"parentId,omitempty"`
+	StoryPoints *int       `json:"storyPoints,omitempty"`
 	DueDate     *time.Time `json:"dueDate,omitempty"`
-	Labels      []string `json:"labels,omitempty"`
+	Labels      []string   `json:"labels,omitempty"`
 }
 
 type UpdateTaskRequest struct {
@@ -238,36 +238,37 @@ type UpdateTaskRequest struct {
 }
 
 type BulkUpdateTaskRequest struct {
-	Tasks []BulkTaskUpdate `json:"tasks" binding:"required"`
+	Tasks []BulkTaskUpdate `json:"tasks" binding:"required,min=1,dive"`
 }
 
 type BulkTaskUpdate struct {
 	ID         string  `json:"id" binding:"required"`
 	Status     *string `json:"status,omitempty"`
 	SprintID   *string `json:"sprintId,omitempty"`
-	OrderIndex *int    `json:"order,omitempty"`
+	OrderIndex *int    `json:"orderIndex,omitempty"`
 }
 
 type TaskResponse struct {
-	ID          string              `json:"id"`
-	Key         string              `json:"key"`
-	Title       string              `json:"title"`
-	Description *string             `json:"description,omitempty"`
-	Status      string              `json:"status"`
-	Priority    string              `json:"priority"`
-	Type        string              `json:"type"`
-	ProjectID   string              `json:"projectId"`
-	SprintID    *string             `json:"sprintId,omitempty"`
-	AssigneeID  *string             `json:"assigneeId,omitempty"`
-	ReporterID  string              `json:"reporterId"`
-	ParentID    *string             `json:"parentId,omitempty"`
-	StoryPoints *int                `json:"storyPoints,omitempty"`
-	DueDate     *time.Time          `json:"dueDate,omitempty"`
-	Labels      []string            `json:"labels"`
-	Assignee    *UserResponse       `json:"assignee,omitempty"`
-	Reporter    *UserResponse       `json:"reporter,omitempty"`
-	CreatedAt   time.Time           `json:"createdAt"`
-	UpdatedAt   time.Time           `json:"updatedAt"`
+	ID          string        `json:"id"`
+	Key         string        `json:"key"`
+	Title       string        `json:"title"`
+	Description *string       `json:"description,omitempty"`
+	Status      string        `json:"status"`
+	Priority    string        `json:"priority"`
+	Type        string        `json:"type"`
+	ProjectID   string        `json:"projectId"`
+	SprintID    *string       `json:"sprintId,omitempty"`
+	AssigneeID  *string       `json:"assigneeId,omitempty"`
+	ReporterID  string        `json:"reporterId"`
+	ParentID    *string       `json:"parentId,omitempty"`
+	StoryPoints *int          `json:"storyPoints,omitempty"`
+	DueDate     *time.Time    `json:"dueDate,omitempty"`
+	OrderIndex  int           `json:"orderIndex"`
+	Labels      []string      `json:"labels"`
+	Assignee    *UserResponse `json:"assignee,omitempty"`
+	Reporter    *UserResponse `json:"reporter,omitempty"`
+	CreatedAt   time.Time     `json:"createdAt"`
+	UpdatedAt   time.Time     `json:"updatedAt"`
 }
 
 type TaskFilters struct {
@@ -278,8 +279,8 @@ type TaskFilters struct {
 	SprintID   string   `form:"sprintId"`
 	Labels     []string `form:"labels"`
 	Search     string   `form:"search"`
-	Limit      int      `form:"limit"`
-	Offset     int      `form:"offset"`
+	Limit      int      `form:"limit,default=50"`
+	Offset     int      `form:"offset,default=0"`
 }
 
 // ============================================
@@ -287,11 +288,11 @@ type TaskFilters struct {
 // ============================================
 
 type CreateCommentRequest struct {
-	Content string `json:"content" binding:"required"`
+	Content string `json:"content" binding:"required,min=1,max=10000"`
 }
 
 type UpdateCommentRequest struct {
-	Content string `json:"content" binding:"required"`
+	Content string `json:"content" binding:"required,min=1,max=10000"`
 }
 
 type CommentResponse struct {
@@ -309,8 +310,8 @@ type CommentResponse struct {
 // ============================================
 
 type CreateLabelRequest struct {
-	Name  string `json:"name" binding:"required"`
-	Color string `json:"color" binding:"required"`
+	Name  string `json:"name" binding:"required,min=1,max=50"`
+	Color string `json:"color" binding:"required,hexcolor"`
 }
 
 type UpdateLabelRequest struct {
@@ -344,4 +345,47 @@ type NotificationResponse struct {
 type NotificationCountResponse struct {
 	Total  int `json:"total"`
 	Unread int `json:"unread"`
+}
+
+// ============================================
+// Common Response Types
+// ============================================
+
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Message string `json:"message,omitempty"`
+	Code    string `json:"code,omitempty"`
+}
+
+type SuccessResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
+type PaginatedResponse struct {
+	Data       interface{} `json:"data"`
+	Total      int         `json:"total"`
+	Page       int         `json:"page"`
+	PerPage    int         `json:"perPage"`
+	TotalPages int         `json:"totalPages"`
+}
+
+// ============================================
+// Utility Functions
+// ============================================
+
+// NewPaginatedResponse creates a paginated response
+func NewPaginatedResponse(data interface{}, total, page, perPage int) PaginatedResponse {
+	totalPages := total / perPage
+	if total%perPage > 0 {
+		totalPages++
+	}
+	return PaginatedResponse{
+		Data:       data,
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
+	}
 }

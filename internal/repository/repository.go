@@ -2,16 +2,16 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 // ============================================
-// Mock Implementations (Replace with Prisma)
+// Repositories Container
 // ============================================
 
-// Repositories struct holds all repository implementations
 type Repositories struct {
 	UserRepo         UserRepository
 	WorkspaceRepo    WorkspaceRepository
@@ -43,14 +43,15 @@ func NewRepositories() *Repositories {
 // ============================================
 
 type User struct {
-	ID        string
-	Email     string
-	Password  string
-	Name      string
-	Avatar    *string
-	Status    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string
+	Email        string
+	Password     string
+	Name         string
+	Avatar       *string
+	Status       string
+	LastActiveAt *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type RefreshToken struct {
@@ -65,7 +66,11 @@ type UserRepository interface {
 	Create(ctx context.Context, user *User) error
 	FindByID(ctx context.Context, id string) (*User, error)
 	FindByEmail(ctx context.Context, email string) (*User, error)
+	FindByName(ctx context.Context, name string) (*User, error)
+	FindAll(ctx context.Context) ([]*User, error)
 	Update(ctx context.Context, user *User) error
+	UpdateLastActive(ctx context.Context, userID string) error
+	UpdateStatusForInactive(ctx context.Context, inactiveDuration time.Duration) error
 	SaveRefreshToken(ctx context.Context, token *RefreshToken) error
 	FindRefreshToken(ctx context.Context, token string) (*RefreshToken, error)
 	DeleteRefreshToken(ctx context.Context, token string) error
@@ -88,6 +93,8 @@ func (r *userRepository) Create(ctx context.Context, user *User) error {
 	user.ID = uuid.New().String()
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
+	now := time.Now()
+	user.LastActiveAt = &now
 	r.users[user.ID] = user
 	return nil
 }
@@ -101,16 +108,56 @@ func (r *userRepository) FindByID(ctx context.Context, id string) (*User, error)
 
 func (r *userRepository) FindByEmail(ctx context.Context, email string) (*User, error) {
 	for _, user := range r.users {
-		if user.Email == email {
+		if strings.EqualFold(user.Email, email) {
 			return user, nil
 		}
 	}
 	return nil, nil
 }
 
+func (r *userRepository) FindByName(ctx context.Context, name string) (*User, error) {
+	nameLower := strings.ToLower(name)
+	for _, user := range r.users {
+		// Check for exact match or name contains (case-insensitive)
+		if strings.ToLower(user.Name) == nameLower ||
+			strings.Contains(strings.ToLower(user.Name), nameLower) ||
+			strings.ReplaceAll(strings.ToLower(user.Name), " ", ".") == nameLower {
+			return user, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *userRepository) FindAll(ctx context.Context) ([]*User, error) {
+	users := make([]*User, 0, len(r.users))
+	for _, user := range r.users {
+		users = append(users, user)
+	}
+	return users, nil
+}
+
 func (r *userRepository) Update(ctx context.Context, user *User) error {
 	user.UpdatedAt = time.Now()
 	r.users[user.ID] = user
+	return nil
+}
+
+func (r *userRepository) UpdateLastActive(ctx context.Context, userID string) error {
+	if user, ok := r.users[userID]; ok {
+		now := time.Now()
+		user.LastActiveAt = &now
+		user.Status = "ONLINE"
+	}
+	return nil
+}
+
+func (r *userRepository) UpdateStatusForInactive(ctx context.Context, inactiveDuration time.Duration) error {
+	threshold := time.Now().Add(-inactiveDuration)
+	for _, user := range r.users {
+		if user.LastActiveAt != nil && user.LastActiveAt.Before(threshold) && user.Status == "ONLINE" {
+			user.Status = "AWAY"
+		}
+	}
 	return nil
 }
 
@@ -175,6 +222,7 @@ type WorkspaceRepository interface {
 	AddMember(ctx context.Context, member *WorkspaceMember) error
 	FindMembers(ctx context.Context, workspaceID string) ([]*WorkspaceMember, error)
 	FindMember(ctx context.Context, workspaceID, userID string) (*WorkspaceMember, error)
+	FindMemberUserIDs(ctx context.Context, workspaceID string) ([]string, error)
 	UpdateMemberRole(ctx context.Context, workspaceID, userID, role string) error
 	RemoveMember(ctx context.Context, workspaceID, userID string) error
 }
@@ -251,6 +299,15 @@ func (r *workspaceRepository) FindMember(ctx context.Context, workspaceID, userI
 		}
 	}
 	return nil, nil
+}
+
+func (r *workspaceRepository) FindMemberUserIDs(ctx context.Context, workspaceID string) ([]string, error) {
+	members := r.members[workspaceID]
+	userIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		userIDs = append(userIDs, m.UserID)
+	}
+	return userIDs, nil
 }
 
 func (r *workspaceRepository) UpdateMemberRole(ctx context.Context, workspaceID, userID, role string) error {
@@ -373,10 +430,13 @@ type ProjectRepository interface {
 	Create(ctx context.Context, project *Project) error
 	FindByID(ctx context.Context, id string) (*Project, error)
 	FindBySpaceID(ctx context.Context, spaceID string) ([]*Project, error)
+	FindByKey(ctx context.Context, key string) (*Project, error)
 	Update(ctx context.Context, project *Project) error
 	Delete(ctx context.Context, id string) error
 	AddMember(ctx context.Context, member *ProjectMember) error
 	FindMembers(ctx context.Context, projectID string) ([]*ProjectMember, error)
+	FindMemberUserIDs(ctx context.Context, projectID string) ([]string, error)
+	FindMember(ctx context.Context, projectID, userID string) (*ProjectMember, error)
 	RemoveMember(ctx context.Context, projectID, userID string) error
 	GetNextTaskNumber(ctx context.Context, projectID string) (int, error)
 }
@@ -421,6 +481,15 @@ func (r *projectRepository) FindBySpaceID(ctx context.Context, spaceID string) (
 	return result, nil
 }
 
+func (r *projectRepository) FindByKey(ctx context.Context, key string) (*Project, error) {
+	for _, p := range r.projects {
+		if strings.EqualFold(p.Key, key) {
+			return p, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *projectRepository) Update(ctx context.Context, project *Project) error {
 	project.UpdatedAt = time.Now()
 	r.projects[project.ID] = project
@@ -430,6 +499,7 @@ func (r *projectRepository) Update(ctx context.Context, project *Project) error 
 func (r *projectRepository) Delete(ctx context.Context, id string) error {
 	delete(r.projects, id)
 	delete(r.members, id)
+	delete(r.taskCounter, id)
 	return nil
 }
 
@@ -442,6 +512,24 @@ func (r *projectRepository) AddMember(ctx context.Context, member *ProjectMember
 
 func (r *projectRepository) FindMembers(ctx context.Context, projectID string) ([]*ProjectMember, error) {
 	return r.members[projectID], nil
+}
+
+func (r *projectRepository) FindMemberUserIDs(ctx context.Context, projectID string) ([]string, error) {
+	members := r.members[projectID]
+	userIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		userIDs = append(userIDs, m.UserID)
+	}
+	return userIDs, nil
+}
+
+func (r *projectRepository) FindMember(ctx context.Context, projectID, userID string) (*ProjectMember, error) {
+	for _, m := range r.members[projectID] {
+		if m.UserID == userID {
+			return m, nil
+		}
+	}
+	return nil, nil
 }
 
 func (r *projectRepository) RemoveMember(ctx context.Context, projectID, userID string) error {
@@ -469,7 +557,7 @@ type Sprint struct {
 	Name      string
 	Goal      *string
 	ProjectID string
-	Status    string
+	Status    string // PLANNING, ACTIVE, COMPLETED
 	StartDate *time.Time
 	EndDate   *time.Time
 	CreatedAt time.Time
@@ -481,6 +569,8 @@ type SprintRepository interface {
 	FindByID(ctx context.Context, id string) (*Sprint, error)
 	FindByProjectID(ctx context.Context, projectID string) ([]*Sprint, error)
 	FindActive(ctx context.Context, projectID string) (*Sprint, error)
+	FindEndingSoon(ctx context.Context, within time.Duration) ([]*Sprint, error)
+	FindExpired(ctx context.Context) ([]*Sprint, error)
 	Update(ctx context.Context, sprint *Sprint) error
 	Delete(ctx context.Context, id string) error
 }
@@ -527,6 +617,33 @@ func (r *sprintRepository) FindActive(ctx context.Context, projectID string) (*S
 		}
 	}
 	return nil, nil
+}
+
+func (r *sprintRepository) FindEndingSoon(ctx context.Context, within time.Duration) ([]*Sprint, error) {
+	var result []*Sprint
+	now := time.Now()
+	deadline := now.Add(within)
+
+	for _, s := range r.sprints {
+		if s.Status == "ACTIVE" && s.EndDate != nil {
+			if s.EndDate.After(now) && s.EndDate.Before(deadline) {
+				result = append(result, s)
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *sprintRepository) FindExpired(ctx context.Context) ([]*Sprint, error) {
+	var result []*Sprint
+	now := time.Now()
+
+	for _, s := range r.sprints {
+		if s.Status == "ACTIVE" && s.EndDate != nil && s.EndDate.Before(now) {
+			result = append(result, s)
+		}
+	}
+	return result, nil
 }
 
 func (r *sprintRepository) Update(ctx context.Context, sprint *Sprint) error {
@@ -582,14 +699,17 @@ type TaskFilters struct {
 type TaskRepository interface {
 	Create(ctx context.Context, task *Task) error
 	FindByID(ctx context.Context, id string) (*Task, error)
+	FindByKey(ctx context.Context, key string) (*Task, error)
 	FindByProjectID(ctx context.Context, projectID string, filters *TaskFilters) ([]*Task, error)
 	FindBySprintID(ctx context.Context, sprintID string) ([]*Task, error)
 	FindBacklog(ctx context.Context, projectID string) ([]*Task, error)
 	FindOverdue(ctx context.Context) ([]*Task, error)
 	FindDueSoon(ctx context.Context, within time.Duration) ([]*Task, error)
+	FindByAssignee(ctx context.Context, assigneeID string) ([]*Task, error)
 	Update(ctx context.Context, task *Task) error
 	Delete(ctx context.Context, id string) error
 	BulkUpdate(ctx context.Context, updates []BulkTaskUpdate) error
+	CountBySprintID(ctx context.Context, sprintID string) (total int, completed int, err error)
 }
 
 type BulkTaskUpdate struct {
@@ -624,13 +744,63 @@ func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error)
 	return nil, nil
 }
 
+func (r *taskRepository) FindByKey(ctx context.Context, key string) (*Task, error) {
+	for _, t := range r.tasks {
+		if strings.EqualFold(t.Key, key) {
+			return t, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *taskRepository) FindByProjectID(ctx context.Context, projectID string, filters *TaskFilters) ([]*Task, error) {
 	var result []*Task
 	for _, t := range r.tasks {
-		if t.ProjectID == projectID {
-			result = append(result, t)
+		if t.ProjectID != projectID {
+			continue
 		}
+
+		// Apply filters
+		if filters != nil {
+			if len(filters.Status) > 0 && !contains(filters.Status, t.Status) {
+				continue
+			}
+			if len(filters.Priority) > 0 && !contains(filters.Priority, t.Priority) {
+				continue
+			}
+			if len(filters.Type) > 0 && !contains(filters.Type, t.Type) {
+				continue
+			}
+			if len(filters.AssigneeID) > 0 {
+				if t.AssigneeID == nil || !contains(filters.AssigneeID, *t.AssigneeID) {
+					continue
+				}
+			}
+			if filters.SprintID != nil {
+				if t.SprintID == nil || *t.SprintID != *filters.SprintID {
+					continue
+				}
+			}
+			if filters.Search != "" {
+				searchLower := strings.ToLower(filters.Search)
+				if !strings.Contains(strings.ToLower(t.Title), searchLower) &&
+					!strings.Contains(strings.ToLower(t.Key), searchLower) {
+					continue
+				}
+			}
+		}
+
+		result = append(result, t)
 	}
+
+	// Apply pagination
+	if filters != nil && filters.Offset > 0 && filters.Offset < len(result) {
+		result = result[filters.Offset:]
+	}
+	if filters != nil && filters.Limit > 0 && filters.Limit < len(result) {
+		result = result[:filters.Limit]
+	}
+
 	return result, nil
 }
 
@@ -658,7 +828,7 @@ func (r *taskRepository) FindOverdue(ctx context.Context) ([]*Task, error) {
 	var result []*Task
 	now := time.Now()
 	for _, t := range r.tasks {
-		if t.DueDate != nil && t.DueDate.Before(now) && t.Status != "DONE" {
+		if t.DueDate != nil && t.DueDate.Before(now) && t.Status != "DONE" && t.Status != "CANCELLED" {
 			result = append(result, t)
 		}
 	}
@@ -670,7 +840,17 @@ func (r *taskRepository) FindDueSoon(ctx context.Context, within time.Duration) 
 	now := time.Now()
 	deadline := now.Add(within)
 	for _, t := range r.tasks {
-		if t.DueDate != nil && t.DueDate.After(now) && t.DueDate.Before(deadline) && t.Status != "DONE" {
+		if t.DueDate != nil && t.DueDate.After(now) && t.DueDate.Before(deadline) && t.Status != "DONE" && t.Status != "CANCELLED" {
+			result = append(result, t)
+		}
+	}
+	return result, nil
+}
+
+func (r *taskRepository) FindByAssignee(ctx context.Context, assigneeID string) ([]*Task, error) {
+	var result []*Task
+	for _, t := range r.tasks {
+		if t.AssigneeID != nil && *t.AssigneeID == assigneeID {
 			result = append(result, t)
 		}
 	}
@@ -704,6 +884,18 @@ func (r *taskRepository) BulkUpdate(ctx context.Context, updates []BulkTaskUpdat
 		}
 	}
 	return nil
+}
+
+func (r *taskRepository) CountBySprintID(ctx context.Context, sprintID string) (total int, completed int, err error) {
+	for _, t := range r.tasks {
+		if t.SprintID != nil && *t.SprintID == sprintID {
+			total++
+			if t.Status == "DONE" {
+				completed++
+			}
+		}
+	}
+	return total, completed, nil
 }
 
 // ============================================
@@ -790,6 +982,7 @@ type LabelRepository interface {
 	Create(ctx context.Context, label *Label) error
 	FindByID(ctx context.Context, id string) (*Label, error)
 	FindByProjectID(ctx context.Context, projectID string) ([]*Label, error)
+	FindByName(ctx context.Context, projectID, name string) (*Label, error)
 	Update(ctx context.Context, label *Label) error
 	Delete(ctx context.Context, id string) error
 }
@@ -828,6 +1021,15 @@ func (r *labelRepository) FindByProjectID(ctx context.Context, projectID string)
 	return result, nil
 }
 
+func (r *labelRepository) FindByName(ctx context.Context, projectID, name string) (*Label, error) {
+	for _, l := range r.labels {
+		if l.ProjectID == projectID && strings.EqualFold(l.Name, name) {
+			return l, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *labelRepository) Update(ctx context.Context, label *Label) error {
 	r.labels[label.ID] = label
 	return nil
@@ -862,6 +1064,7 @@ type NotificationRepository interface {
 	MarkAllAsRead(ctx context.Context, userID string) error
 	Delete(ctx context.Context, id string) error
 	DeleteAll(ctx context.Context, userID string) error
+	DeleteOlderThan(ctx context.Context, olderThan time.Time, readOnly bool) (int, error)
 }
 
 type notificationRepository struct {
@@ -941,4 +1144,31 @@ func (r *notificationRepository) DeleteAll(ctx context.Context, userID string) e
 		}
 	}
 	return nil
+}
+
+func (r *notificationRepository) DeleteOlderThan(ctx context.Context, olderThan time.Time, readOnly bool) (int, error) {
+	deleted := 0
+	for id, n := range r.notifications {
+		if n.CreatedAt.Before(olderThan) {
+			if readOnly && !n.Read {
+				continue
+			}
+			delete(r.notifications, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// ============================================
+// Helper Functions
+// ============================================
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
