@@ -1,3 +1,4 @@
+// internal/config/config.go
 package config
 
 import (
@@ -6,43 +7,24 @@ import (
 )
 
 type Config struct {
-	// Server
-	Port        string
-	Environment string
-
-	// Database
-	DatabaseURL string
-
-	// Redis
-	RedisURL string
-
-	// JWT
-	JWTSecret      string
-	JWTExpiry      int // hours
-	RefreshExpiry  int // days
-
-	// Email (for notifications)
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUser     string
-	SMTPPassword string
-	SMTPFrom     string
+	Port          string
+	Environment   string
+	DatabaseURL   string
+	RedisURL      string
+	JWTSecret     string
+	JWTExpiry     int
+	RefreshExpiry int
 }
 
 func Load() *Config {
 	return &Config{
 		Port:          getEnv("API_PORT", "8080"),
 		Environment:   getEnv("ENVIRONMENT", "development"),
-		DatabaseURL:   getEnv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/ora_scrum?schema=public"),
+		DatabaseURL:   getEnv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/ora_scrum?sslmode=disable"),
 		RedisURL:      getEnv("REDIS_URL", "redis://localhost:6379"),
-		JWTSecret:     getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+		JWTSecret:     getEnv("JWT_SECRET", "your-secret-key"),
 		JWTExpiry:     getEnvInt("JWT_EXPIRY", 24),
 		RefreshExpiry: getEnvInt("REFRESH_EXPIRY", 7),
-		SMTPHost:      getEnv("SMTP_HOST", ""),
-		SMTPPort:      getEnvInt("SMTP_PORT", 587),
-		SMTPUser:      getEnv("SMTP_USER", ""),
-		SMTPPassword:  getEnv("SMTP_PASSWORD", ""),
-		SMTPFrom:      getEnv("SMTP_FROM", "noreply@ora-scrum.com"),
 	}
 }
 

@@ -235,6 +235,39 @@ GET /health
 
 Returns `200 OK` with timestamp when healthy.
 
+
+
+```
+
+## Step 6: Verify Directory Structure
+
+Your directory should look like:
+```
+~/Desktop/ORA_SCRUM_BACKEND/
+├── internal/
+│   ├── api/
+│   │   ├── handlers/
+│   │   └── middleware/
+│   ├── config/
+│   │   └── config.go       ← Updated
+│   ├── cron/
+│   ├── db/
+│   │   ├── postgres.go     ← NEW
+│   │   └── redis.go        ← NEW
+│   ├── notification/
+│   ├── repository/
+│   │   └── repository.go   ← Updated (complete file)
+│   ├── seed/
+│   │   └── seed.go
+│   └── service/
+├── docker-compose.yml
+├── Dockerfile
+├── go.mod
+├── go.sum
+└── main.go                  ← Updated
+
 ## License
 
 MIT
+
+

@@ -14,6 +14,7 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/api/middleware"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/config"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/cron"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/db"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/seed"
@@ -37,13 +38,40 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// Initialize repositories
-	repos := repository.NewRepositories()
+	// ============================================
+	// Initialize Repositories
+	// ============================================
+	var repos *repository.Repositories
 
-	// 🔥 Seed initial data for development
-	seed.SeedData(repos)
+	// Try to connect to PostgreSQL
+	postgresDB, err := db.NewPostgresDB(cfg.DatabaseURL)
+	if err != nil {
+		log.Printf("⚠️  Failed to connect to PostgreSQL: %v", err)
+		log.Println("📦 Falling back to in-memory storage")
+		repos = repository.NewRepositories() // In-memory fallback
+	} else {
+		defer postgresDB.Close()
+		repos = repository.NewPgRepositories(postgresDB.Pool)
+		log.Println("📦 Using PostgreSQL storage")
+	}
 
-	// Initialize notification service with all repos for advanced features
+	// Try to connect to Redis (optional)
+	redisDB, err := db.NewRedisDB(cfg.RedisURL)
+	if err != nil {
+		log.Printf("⚠️  Failed to connect to Redis: %v (continuing without cache)", err)
+	} else {
+		defer redisDB.Close()
+		log.Println("⚡ Redis cache enabled")
+	}
+
+	// ============================================
+	// Seed Data (for development)
+	// ============================================
+	if cfg.Environment == "development" {
+		seed.SeedData(repos)
+	}
+
+	// Initialize notification service
 	notificationSvc := notification.NewServiceWithRepos(
 		repos.NotificationRepo,
 		repos.UserRepo,
@@ -56,7 +84,7 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandlers(services)
 
-	// Initialize cron scheduler with all repositories for full functionality
+	// Initialize cron scheduler
 	cronScheduler := cron.NewSchedulerWithRepos(
 		services,
 		notificationSvc,
@@ -84,7 +112,21 @@ func main() {
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "healthy", "timestamp": time.Now()})
+		status := gin.H{
+			"status":    "healthy",
+			"timestamp": time.Now(),
+		}
+		if postgresDB != nil {
+			status["database"] = "connected"
+		} else {
+			status["database"] = "in-memory"
+		}
+		if redisDB != nil {
+			status["cache"] = "connected"
+		} else {
+			status["cache"] = "disabled"
+		}
+		c.JSON(http.StatusOK, status)
 	})
 
 	// API routes
@@ -122,8 +164,6 @@ func main() {
 				workspaces.POST("/:id/members", h.Workspace.AddMember)
 				workspaces.PUT("/:id/members/:userId", h.Workspace.UpdateMemberRole)
 				workspaces.DELETE("/:id/members/:userId", h.Workspace.RemoveMember)
-
-				// Spaces within workspace
 				workspaces.GET("/:id/spaces", h.Space.ListByWorkspace)
 				workspaces.POST("/:id/spaces", h.Space.Create)
 			}
@@ -134,8 +174,6 @@ func main() {
 				spaces.GET("/:id", h.Space.Get)
 				spaces.PUT("/:id", h.Space.Update)
 				spaces.DELETE("/:id", h.Space.Delete)
-
-				// Projects within space
 				spaces.GET("/:id/projects", h.Project.ListBySpace)
 				spaces.POST("/:id/projects", h.Project.Create)
 			}
@@ -149,16 +187,10 @@ func main() {
 				projects.GET("/:id/members", h.Project.ListMembers)
 				projects.POST("/:id/members", h.Project.AddMember)
 				projects.DELETE("/:id/members/:userId", h.Project.RemoveMember)
-
-				// Sprints within project
 				projects.GET("/:id/sprints", h.Sprint.ListByProject)
 				projects.POST("/:id/sprints", h.Sprint.Create)
-
-				// Tasks within project
 				projects.GET("/:id/tasks", h.Task.ListByProject)
 				projects.POST("/:id/tasks", h.Task.Create)
-
-				// Labels within project
 				projects.GET("/:id/labels", h.Label.ListByProject)
 				projects.POST("/:id/labels", h.Label.Create)
 			}
@@ -182,8 +214,6 @@ func main() {
 				tasks.PATCH("/:id", h.Task.PartialUpdate)
 				tasks.DELETE("/:id", h.Task.Delete)
 				tasks.PUT("/bulk", h.Task.BulkUpdate)
-
-				// Comments
 				tasks.GET("/:id/comments", h.Comment.ListByTask)
 				tasks.POST("/:id/comments", h.Comment.Create)
 			}
@@ -224,7 +254,7 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in goroutine
+	// Start server
 	go func() {
 		log.Printf("🚀 Server starting on port %s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
