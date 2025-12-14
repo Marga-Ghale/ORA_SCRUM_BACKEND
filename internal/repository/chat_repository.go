@@ -24,6 +24,9 @@ type ChatChannel struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
 	LastMessage *time.Time `json:"lastMessage,omitempty"`
+	// Computed fields (not stored in DB)
+	OtherUser   *User `json:"otherUser,omitempty"`   // For direct messages
+	MemberCount int   `json:"memberCount,omitempty"` // Number of members
 }
 
 // ChatMessage represents a message in a channel
@@ -39,6 +42,8 @@ type ChatMessage struct {
 	CreatedAt   time.Time              `json:"createdAt"`
 	UpdatedAt   time.Time              `json:"updatedAt"`
 	User        *User                  `json:"user,omitempty"`
+	Reactions   []*ChatReaction        `json:"reactions,omitempty"`
+	ReplyCount  int                    `json:"replyCount,omitempty"`
 }
 
 // ChatChannelMember represents channel membership
@@ -58,6 +63,7 @@ type ChatReaction struct {
 	UserID    string    `json:"userId"`
 	Emoji     string    `json:"emoji"`
 	CreatedAt time.Time `json:"createdAt"`
+	User      *User     `json:"user,omitempty"`
 }
 
 // ============================================
@@ -79,6 +85,7 @@ type ChatRepository interface {
 	AddMember(ctx context.Context, member *ChatChannelMember) error
 	RemoveMember(ctx context.Context, channelID, userID string) error
 	GetMembers(ctx context.Context, channelID string) ([]*ChatChannelMember, error)
+	GetMemberCount(ctx context.Context, channelID string) (int, error)
 	IsMember(ctx context.Context, channelID, userID string) (bool, error)
 	UpdateLastRead(ctx context.Context, channelID, userID string) error
 
@@ -111,6 +118,10 @@ type chatRepository struct {
 func NewChatRepository(pool *pgxpool.Pool) ChatRepository {
 	return &chatRepository{pool: pool}
 }
+
+// ============================================
+// Channel Operations
+// ============================================
 
 func (r *chatRepository) CreateChannel(ctx context.Context, channel *ChatChannel) error {
 	channel.ID = uuid.New().String()
@@ -202,9 +213,9 @@ func (r *chatRepository) ListChannelsByUser(ctx context.Context, userID string) 
 func (r *chatRepository) UpdateChannel(ctx context.Context, channel *ChatChannel) error {
 	channel.UpdatedAt = time.Now()
 	_, err := r.pool.Exec(ctx, `
-		UPDATE chat_channels SET name = $2, is_private = $3, updated_at = $4
+		UPDATE chat_channels SET name = $2, type = $3, is_private = $4, updated_at = $5
 		WHERE id = $1
-	`, channel.ID, channel.Name, channel.IsPrivate, channel.UpdatedAt)
+	`, channel.ID, channel.Name, channel.Type, channel.IsPrivate, channel.UpdatedAt)
 	return err
 }
 
@@ -212,6 +223,10 @@ func (r *chatRepository) DeleteChannel(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM chat_channels WHERE id = $1`, id)
 	return err
 }
+
+// ============================================
+// Member Operations
+// ============================================
 
 func (r *chatRepository) AddMember(ctx context.Context, member *ChatChannelMember) error {
 	member.ID = uuid.New().String()
@@ -233,8 +248,13 @@ func (r *chatRepository) RemoveMember(ctx context.Context, channelID, userID str
 
 func (r *chatRepository) GetMembers(ctx context.Context, channelID string) ([]*ChatChannelMember, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, channel_id, user_id, joined_at, last_read
-		FROM chat_channel_members WHERE channel_id = $1
+		SELECT 
+			m.id, m.channel_id, m.user_id, m.joined_at, m.last_read,
+			u.id, u.name, u.email, u.avatar
+		FROM chat_channel_members m
+		LEFT JOIN users u ON m.user_id = u.id
+		WHERE m.channel_id = $1
+		ORDER BY m.joined_at ASC
 	`, channelID)
 	if err != nil {
 		return nil, err
@@ -244,13 +264,41 @@ func (r *chatRepository) GetMembers(ctx context.Context, channelID string) ([]*C
 	var members []*ChatChannelMember
 	for rows.Next() {
 		member := &ChatChannelMember{}
-		if err := rows.Scan(&member.ID, &member.ChannelID, &member.UserID, &member.JoinedAt, &member.LastRead); err != nil {
+		var userID, userName, userEmail, userAvatar *string
+
+		if err := rows.Scan(
+			&member.ID, &member.ChannelID, &member.UserID, &member.JoinedAt, &member.LastRead,
+			&userID, &userName, &userEmail, &userAvatar,
+		); err != nil {
 			return nil, err
 		}
+
+		// Populate user if exists
+		if userID != nil && userName != nil {
+			member.User = &User{
+				ID:   *userID,
+				Name: *userName,
+			}
+			if userEmail != nil {
+				member.User.Email = *userEmail
+			}
+			if userAvatar != nil {
+				member.User.Avatar = userAvatar
+			}
+		}
+
 		members = append(members, member)
 	}
 
 	return members, nil
+}
+
+func (r *chatRepository) GetMemberCount(ctx context.Context, channelID string) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM chat_channel_members WHERE channel_id = $1
+	`, channelID).Scan(&count)
+	return count, err
 }
 
 func (r *chatRepository) IsMember(ctx context.Context, channelID, userID string) (bool, error) {
@@ -267,6 +315,10 @@ func (r *chatRepository) UpdateLastRead(ctx context.Context, channelID, userID s
 	`, channelID, userID)
 	return err
 }
+
+// ============================================
+// Message Operations
+// ============================================
 
 func (r *chatRepository) CreateMessage(ctx context.Context, message *ChatMessage) error {
 	message.ID = uuid.New().String()
@@ -288,14 +340,42 @@ func (r *chatRepository) CreateMessage(ctx context.Context, message *ChatMessage
 
 func (r *chatRepository) GetMessageByID(ctx context.Context, id string) (*ChatMessage, error) {
 	message := &ChatMessage{}
+	var userID, userName, userEmail, userAvatar *string
+
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, channel_id, user_id, content, message_type, metadata, parent_id, is_edited, created_at, updated_at
-		FROM chat_messages WHERE id = $1
-	`, id).Scan(&message.ID, &message.ChannelID, &message.UserID, &message.Content, &message.MessageType, &message.Metadata, &message.ParentID, &message.IsEdited, &message.CreatedAt, &message.UpdatedAt)
+		SELECT 
+			m.id, m.channel_id, m.user_id, m.content, m.message_type, 
+			m.metadata, m.parent_id, m.is_edited, m.created_at, m.updated_at,
+			u.id, u.name, u.email, u.avatar
+		FROM chat_messages m
+		LEFT JOIN users u ON m.user_id = u.id
+		WHERE m.id = $1
+	`, id).Scan(
+		&message.ID, &message.ChannelID, &message.UserID, &message.Content,
+		&message.MessageType, &message.Metadata, &message.ParentID,
+		&message.IsEdited, &message.CreatedAt, &message.UpdatedAt,
+		&userID, &userName, &userEmail, &userAvatar,
+	)
 
 	if err != nil {
 		return nil, err
 	}
+
+	// Populate user if exists
+	if userID != nil && userName != nil {
+		message.User = &User{
+			ID:   *userID,
+			Name: *userName,
+		}
+		if userEmail != nil {
+			message.User.Email = *userEmail
+		}
+		if userAvatar != nil {
+			message.User.Avatar = userAvatar
+
+		}
+	}
+
 	return message, nil
 }
 
@@ -305,10 +385,15 @@ func (r *chatRepository) GetMessages(ctx context.Context, channelID string, limi
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, channel_id, user_id, content, message_type, metadata, parent_id, is_edited, created_at, updated_at
-		FROM chat_messages
-		WHERE channel_id = $1 AND parent_id IS NULL
-		ORDER BY created_at DESC
+		SELECT 
+			m.id, m.channel_id, m.user_id, m.content, m.message_type, 
+			m.metadata, m.parent_id, m.is_edited, m.created_at, m.updated_at,
+			u.id, u.name, u.email, u.avatar,
+			(SELECT COUNT(*) FROM chat_messages replies WHERE replies.parent_id = m.id) as reply_count
+		FROM chat_messages m
+		LEFT JOIN users u ON m.user_id = u.id
+		WHERE m.channel_id = $1 AND m.parent_id IS NULL
+		ORDER BY m.created_at DESC
 		LIMIT $2 OFFSET $3
 	`, channelID, limit, offset)
 	if err != nil {
@@ -319,10 +404,41 @@ func (r *chatRepository) GetMessages(ctx context.Context, channelID string, limi
 	var messages []*ChatMessage
 	for rows.Next() {
 		message := &ChatMessage{}
-		if err := rows.Scan(&message.ID, &message.ChannelID, &message.UserID, &message.Content, &message.MessageType, &message.Metadata, &message.ParentID, &message.IsEdited, &message.CreatedAt, &message.UpdatedAt); err != nil {
+		var userID, userName, userEmail, userAvatar *string
+
+		if err := rows.Scan(
+			&message.ID, &message.ChannelID, &message.UserID, &message.Content,
+			&message.MessageType, &message.Metadata, &message.ParentID,
+			&message.IsEdited, &message.CreatedAt, &message.UpdatedAt,
+			&userID, &userName, &userEmail, &userAvatar,
+			&message.ReplyCount,
+		); err != nil {
 			return nil, err
 		}
+
+		// Populate user if exists
+		if userID != nil && userName != nil {
+			message.User = &User{
+				ID:   *userID,
+				Name: *userName,
+			}
+			if userEmail != nil {
+				message.User.Email = *userEmail
+			}
+			if userAvatar != nil {
+				message.User.Avatar = userAvatar
+			}
+		}
+
 		messages = append(messages, message)
+	}
+
+	// Load reactions for each message
+	for _, msg := range messages {
+		reactions, err := r.GetReactions(ctx, msg.ID)
+		if err == nil {
+			msg.Reactions = reactions
+		}
 	}
 
 	return messages, nil
@@ -330,9 +446,14 @@ func (r *chatRepository) GetMessages(ctx context.Context, channelID string, limi
 
 func (r *chatRepository) GetThreadMessages(ctx context.Context, parentID string) ([]*ChatMessage, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, channel_id, user_id, content, message_type, metadata, parent_id, is_edited, created_at, updated_at
-		FROM chat_messages WHERE parent_id = $1
-		ORDER BY created_at ASC
+		SELECT 
+			m.id, m.channel_id, m.user_id, m.content, m.message_type, 
+			m.metadata, m.parent_id, m.is_edited, m.created_at, m.updated_at,
+			u.id, u.name, u.email, u.avatar
+		FROM chat_messages m
+		LEFT JOIN users u ON m.user_id = u.id
+		WHERE m.parent_id = $1
+		ORDER BY m.created_at ASC
 	`, parentID)
 	if err != nil {
 		return nil, err
@@ -342,10 +463,40 @@ func (r *chatRepository) GetThreadMessages(ctx context.Context, parentID string)
 	var messages []*ChatMessage
 	for rows.Next() {
 		message := &ChatMessage{}
-		if err := rows.Scan(&message.ID, &message.ChannelID, &message.UserID, &message.Content, &message.MessageType, &message.Metadata, &message.ParentID, &message.IsEdited, &message.CreatedAt, &message.UpdatedAt); err != nil {
+		var userID, userName, userEmail, userAvatar *string
+
+		if err := rows.Scan(
+			&message.ID, &message.ChannelID, &message.UserID, &message.Content,
+			&message.MessageType, &message.Metadata, &message.ParentID,
+			&message.IsEdited, &message.CreatedAt, &message.UpdatedAt,
+			&userID, &userName, &userEmail, &userAvatar,
+		); err != nil {
 			return nil, err
 		}
+
+		// Populate user if exists
+		if userID != nil && userName != nil {
+			message.User = &User{
+				ID:   *userID,
+				Name: *userName,
+			}
+			if userEmail != nil {
+				message.User.Email = *userEmail
+			}
+			if userAvatar != nil {
+				message.User.Avatar = userAvatar
+			}
+		}
+
 		messages = append(messages, message)
+	}
+
+	// Load reactions for each message
+	for _, msg := range messages {
+		reactions, err := r.GetReactions(ctx, msg.ID)
+		if err == nil {
+			msg.Reactions = reactions
+		}
 	}
 
 	return messages, nil
@@ -364,6 +515,10 @@ func (r *chatRepository) DeleteMessage(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM chat_messages WHERE id = $1`, id)
 	return err
 }
+
+// ============================================
+// Reaction Operations
+// ============================================
 
 func (r *chatRepository) AddReaction(ctx context.Context, reaction *ChatReaction) error {
 	reaction.ID = uuid.New().String()
@@ -385,8 +540,12 @@ func (r *chatRepository) RemoveReaction(ctx context.Context, messageID, userID, 
 
 func (r *chatRepository) GetReactions(ctx context.Context, messageID string) ([]*ChatReaction, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, message_id, user_id, emoji, created_at
-		FROM chat_reactions WHERE message_id = $1
+		SELECT r.id, r.message_id, r.user_id, r.emoji, r.created_at,
+			   u.id, u.name, u.email, u.avatar
+		FROM chat_reactions r
+		LEFT JOIN users u ON r.user_id = u.id
+		WHERE r.message_id = $1
+		ORDER BY r.created_at ASC
 	`, messageID)
 	if err != nil {
 		return nil, err
@@ -396,21 +555,45 @@ func (r *chatRepository) GetReactions(ctx context.Context, messageID string) ([]
 	var reactions []*ChatReaction
 	for rows.Next() {
 		reaction := &ChatReaction{}
-		if err := rows.Scan(&reaction.ID, &reaction.MessageID, &reaction.UserID, &reaction.Emoji, &reaction.CreatedAt); err != nil {
+		var userID, userName, userEmail, userAvatar *string
+
+		if err := rows.Scan(
+			&reaction.ID, &reaction.MessageID, &reaction.UserID, &reaction.Emoji, &reaction.CreatedAt,
+			&userID, &userName, &userEmail, &userAvatar,
+		); err != nil {
 			return nil, err
 		}
+
+		// Populate user if exists
+		if userID != nil && userName != nil {
+			reaction.User = &User{
+				ID:   *userID,
+				Name: *userName,
+			}
+			if userEmail != nil {
+				reaction.User.Email = *userEmail
+			}
+			if userAvatar != nil {
+				reaction.User.Avatar = userAvatar
+			}
+		}
+
 		reactions = append(reactions, reaction)
 	}
 
 	return reactions, nil
 }
 
+// ============================================
+// Unread Count
+// ============================================
+
 func (r *chatRepository) GetUnreadCount(ctx context.Context, channelID, userID string) (int, error) {
 	var count int
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM chat_messages m
 		INNER JOIN chat_channel_members cm ON m.channel_id = cm.channel_id
-		WHERE m.channel_id = $1 AND cm.user_id = $2 AND m.created_at > cm.last_read
+		WHERE m.channel_id = $1 AND cm.user_id = $2 AND m.created_at > cm.last_read AND m.user_id != $2
 	`, channelID, userID).Scan(&count)
 	return count, err
 }

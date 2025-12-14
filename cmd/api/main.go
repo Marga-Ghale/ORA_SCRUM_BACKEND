@@ -369,6 +369,7 @@ func main() {
 				chat.POST("/channels/:id/join", chatHandler.JoinChannel)
 				chat.POST("/channels/:id/leave", chatHandler.LeaveChannel)
 				chat.GET("/channels/:id/members", chatHandler.GetChannelMembers)
+				chat.POST("/channels/:id/members/add", chatHandler.AddMember)
 				chat.POST("/channels/:id/read", chatHandler.MarkAsRead)
 				chat.GET("/channels/:id/unread", chatHandler.GetUnreadCount)
 
