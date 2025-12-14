@@ -271,6 +271,7 @@ func (s *chatService) SendMessage(ctx context.Context, channelID, userID, conten
 	// Broadcast message to channel members
 	if s.broadcaster != nil && channel != nil {
 		room := fmt.Sprintf("chat:%s", channelID)
+		_ = room
 		s.broadcaster.SendToUsers([]string{}, socket.MessageType("chat_message"), map[string]interface{}{
 			"channelId": channelID,
 			"message":   message,
