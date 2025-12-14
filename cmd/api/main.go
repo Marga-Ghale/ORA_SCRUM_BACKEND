@@ -106,37 +106,40 @@ func main() {
 	}
 
 	// ============================================
-	// Initialize Services
+	// Initialize Notification Service
 	// ============================================
 	notificationSvc := notification.NewServiceWithRepos(
 		repos.NotificationRepo,
 		repos.UserRepo,
 		repos.ProjectRepo,
 	)
-
-	// Set broadcaster on notification service for real-time updates
 	notificationSvc.SetBroadcaster(broadcaster)
 
-	services := service.NewServices(cfg, repos, notificationSvc)
+	// ============================================
+	// Initialize All Services
+	// ============================================
+	services := service.NewServices(&service.ServiceDeps{
+		Config:      cfg,
+		Repos:       repos,
+		NotifSvc:    notificationSvc,
+		EmailSvc:    emailSvc,
+		Broadcaster: broadcaster,
+	})
+	log.Println("✨ All services initialized")
 
-	// Initialize handlers
+	// ============================================
+	// Initialize Handlers
+	// ============================================
 	h := handlers.NewHandlers(services)
+	teamHandler := handlers.NewTeamHandler(services.Team)
+	activityHandler := handlers.NewActivityHandler(services.Activity)
+	watcherHandler := handlers.NewTaskWatcherHandler(services.TaskWatcher)
+	chatHandler := handlers.NewChatHandler(services.Chat)
+	invitationHandler := handlers.NewInvitationHandler(services.Invitation)
 
-	// Initialize additional services for new features
-	teamSvc := service.NewTeamService(repos.TeamRepo, repos.UserRepo, repos.WorkspaceRepo, notificationSvc, emailSvc, broadcaster)
-	activitySvc := service.NewActivityService(repos.ActivityRepo)
-	watcherSvc := service.NewTaskWatcherService(repos.TaskWatcherRepo)
-	chatSvc := service.NewChatService(repos.ChatRepo, repos.UserRepo, notificationSvc, broadcaster)
-
-	// Initialize additional handlers
-	teamHandler := handlers.NewTeamHandler(teamSvc)
-	activityHandler := handlers.NewActivityHandler(activitySvc)
-	watcherHandler := handlers.NewTaskWatcherHandler(watcherSvc)
-	chatHandler := handlers.NewChatHandler(chatSvc)
-
-	log.Println("✨ Additional services initialized (Teams, Chat, Activity, Watchers)")
-
-	// Initialize cron scheduler
+	// ============================================
+	// Initialize Cron Scheduler
+	// ============================================
 	cronScheduler := cron.NewSchedulerWithRepos(
 		services,
 		notificationSvc,
@@ -183,8 +186,6 @@ func main() {
 		// ============================================
 		// Public routes (no auth required)
 		// ============================================
-
-		// Auth routes
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", h.Auth.Register)
@@ -193,10 +194,7 @@ func main() {
 			auth.POST("/logout", h.Auth.Logout)
 		}
 
-		// ============================================
-		// WebSocket route (handles its own auth via query param)
-		// IMPORTANT: Must be BEFORE the protected middleware group
-		// ============================================
+		// WebSocket route
 		api.GET("/ws", wsHandler.HandleWebSocket)
 
 		// ============================================
@@ -210,6 +208,7 @@ func main() {
 			{
 				users.GET("/me", h.User.GetCurrentUser)
 				users.PUT("/me", h.User.UpdateCurrentUser)
+				users.GET("/search", h.User.SearchUsers)
 			}
 
 			// Workspace routes
@@ -220,12 +219,27 @@ func main() {
 				workspaces.GET("/:id", h.Workspace.Get)
 				workspaces.PUT("/:id", h.Workspace.Update)
 				workspaces.DELETE("/:id", h.Workspace.Delete)
+
+				// Members
 				workspaces.GET("/:id/members", h.Workspace.ListMembers)
 				workspaces.POST("/:id/members", h.Workspace.AddMember)
+				workspaces.POST("/:id/members/add", h.Workspace.AddMemberByID)
 				workspaces.PUT("/:id/members/:userId", h.Workspace.UpdateMemberRole)
 				workspaces.DELETE("/:id/members/:userId", h.Workspace.RemoveMember)
+
+				// Invitations
+				workspaces.POST("/:id/invitations", invitationHandler.CreateWorkspaceInvitation)
+				workspaces.GET("/:id/invitations", invitationHandler.GetWorkspaceInvitations)
+
+				// Spaces
 				workspaces.GET("/:id/spaces", h.Space.ListByWorkspace)
 				workspaces.POST("/:id/spaces", h.Space.Create)
+
+				// Teams
+				workspaces.GET("/:id/teams", teamHandler.ListByWorkspace)
+
+				// Chat channels
+				workspaces.GET("/:id/chat/channels", chatHandler.ListWorkspaceChannels)
 			}
 
 			// Space routes
@@ -244,15 +258,31 @@ func main() {
 				projects.GET("/:id", h.Project.Get)
 				projects.PUT("/:id", h.Project.Update)
 				projects.DELETE("/:id", h.Project.Delete)
+
+				// Members
 				projects.GET("/:id/members", h.Project.ListMembers)
 				projects.POST("/:id/members", h.Project.AddMember)
+				projects.POST("/:id/members/add", h.Project.AddMemberByID)
 				projects.DELETE("/:id/members/:userId", h.Project.RemoveMember)
+
+				// Invitations
+				projects.POST("/:id/invitations", invitationHandler.CreateProjectInvitation)
+				projects.GET("/:id/invitations", invitationHandler.GetProjectInvitations)
+
+				// Sprints
 				projects.GET("/:id/sprints", h.Sprint.ListByProject)
 				projects.POST("/:id/sprints", h.Sprint.Create)
+
+				// Tasks
 				projects.GET("/:id/tasks", h.Task.ListByProject)
 				projects.POST("/:id/tasks", h.Task.Create)
+
+				// Labels
 				projects.GET("/:id/labels", h.Label.ListByProject)
 				projects.POST("/:id/labels", h.Label.Create)
+
+				// Activities
+				projects.GET("/:id/activities", activityHandler.GetProjectActivities)
 			}
 
 			// Sprint routes
@@ -274,8 +304,19 @@ func main() {
 				tasks.PATCH("/:id", h.Task.PartialUpdate)
 				tasks.DELETE("/:id", h.Task.Delete)
 				tasks.PUT("/bulk", h.Task.BulkUpdate)
+
+				// Comments
 				tasks.GET("/:id/comments", h.Comment.ListByTask)
 				tasks.POST("/:id/comments", h.Comment.Create)
+
+				// Watchers
+				tasks.POST("/:id/watch", watcherHandler.WatchTask)
+				tasks.DELETE("/:id/watch", watcherHandler.UnwatchTask)
+				tasks.GET("/:id/watchers", watcherHandler.GetWatchers)
+				tasks.GET("/:id/watching", watcherHandler.IsWatching)
+
+				// Activities
+				tasks.GET("/:id/activities", activityHandler.GetTaskActivities)
 			}
 
 			// Comment routes
@@ -303,9 +344,7 @@ func main() {
 				notifications.DELETE("", h.Notification.DeleteAll)
 			}
 
-			// ============================================
-			// Team routes (ClickUp-like teams)
-			// ============================================
+			// Team routes
 			teams := protected.Group("/teams")
 			{
 				teams.POST("", teamHandler.Create)
@@ -318,69 +357,50 @@ func main() {
 				teams.DELETE("/:id/members/:userId", teamHandler.RemoveMember)
 			}
 
-			// Workspace teams (use protected group directly)
-			protected.GET("/workspaces/:id/teams", teamHandler.ListByWorkspace)
-
-			// ============================================
-			// Chat routes (ClickUp-like chat)
-			// ============================================
+			// Chat routes
 			chat := protected.Group("/chat")
 			{
-				// Channels
 				chat.GET("/channels", chatHandler.ListChannels)
 				chat.POST("/channels", chatHandler.CreateChannel)
 				chat.GET("/channels/find", chatHandler.GetChannelByTarget)
 				chat.GET("/channels/:id", chatHandler.GetChannel)
 				chat.DELETE("/channels/:id", chatHandler.DeleteChannel)
 
-				// Channel membership
 				chat.POST("/channels/:id/join", chatHandler.JoinChannel)
 				chat.POST("/channels/:id/leave", chatHandler.LeaveChannel)
 				chat.GET("/channels/:id/members", chatHandler.GetChannelMembers)
+				chat.POST("/channels/:id/members/add", chatHandler.AddMember)
 				chat.POST("/channels/:id/read", chatHandler.MarkAsRead)
 				chat.GET("/channels/:id/unread", chatHandler.GetUnreadCount)
 
-				// Messages
 				chat.GET("/channels/:id/messages", chatHandler.GetMessages)
 				chat.POST("/channels/:id/messages", chatHandler.SendMessage)
 				chat.GET("/messages/:messageId/thread", chatHandler.GetThreadMessages)
 				chat.PUT("/messages/:messageId", chatHandler.UpdateMessage)
 				chat.DELETE("/messages/:messageId", chatHandler.DeleteMessage)
 
-				// Reactions
 				chat.POST("/messages/:messageId/reactions", chatHandler.AddReaction)
 				chat.DELETE("/messages/:messageId/reactions", chatHandler.RemoveReaction)
 				chat.GET("/messages/:messageId/reactions", chatHandler.GetReactions)
 
-				// Direct messages
 				chat.POST("/direct", chatHandler.CreateDirectChannel)
-
-				// Unread counts
 				chat.GET("/unread", chatHandler.GetAllUnreadCounts)
 			}
 
-			// Workspace chat channels
-			protected.GET("/workspaces/:workspaceId/chat/channels", chatHandler.ListWorkspaceChannels)
+			// Invitation routes
+			invitations := protected.Group("/invitations")
+			{
+				invitations.GET("/pending", invitationHandler.GetMyInvitations)
+				invitations.POST("/accept/:token", invitationHandler.AcceptInvitation)
+				invitations.POST("/resend/:id", invitationHandler.ResendInvitation)
+				invitations.DELETE("/:id", invitationHandler.CancelInvitation)
+			}
 
-			// ============================================
-			// Task Watchers routes
-			// ============================================
-			protected.POST("/tasks/:id/watch", watcherHandler.WatchTask)
-			protected.DELETE("/tasks/:id/watch", watcherHandler.UnwatchTask)
-			protected.GET("/tasks/:id/watchers", watcherHandler.GetWatchers)
-			protected.GET("/tasks/:id/watching", watcherHandler.IsWatching)
-
-			// ============================================
-			// Activity Feed routes
-			// ============================================
+			// Activity routes
 			activities := protected.Group("/activities")
 			{
 				activities.GET("/me", activityHandler.GetMyActivities)
 			}
-
-			// Task and Project activities
-			protected.GET("/tasks/:id/activities", activityHandler.GetTaskActivities)
-			protected.GET("/projects/:id/activities", activityHandler.GetProjectActivities)
 		}
 	}
 

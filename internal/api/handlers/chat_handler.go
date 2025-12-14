@@ -118,7 +118,7 @@ func (h *ChatHandler) ListChannels(c *gin.Context) {
 
 // ListWorkspaceChannels lists all channels in a workspace
 func (h *ChatHandler) ListWorkspaceChannels(c *gin.Context) {
-	workspaceID := c.Param("workspaceId")
+	workspaceID := c.Param("id")
 
 	channels, err := h.chatSvc.ListWorkspaceChannels(c.Request.Context(), workspaceID)
 	if err != nil {
@@ -397,4 +397,37 @@ func (h *ChatHandler) GetAllUnreadCounts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, counts)
+}
+
+// AddMemberRequest for adding a member to a channel
+type AddMemberRequest struct {
+	UserID string `json:"userId" binding:"required"`
+}
+
+// AddMember adds a member to a channel
+func (h *ChatHandler) AddMember(c *gin.Context) {
+	channelID := c.Param("id")
+
+	var req AddMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	currentUserID := c.GetString("userID")
+
+	if err := h.chatSvc.AddMemberToChannel(c.Request.Context(), channelID, req.UserID, currentUserID); err != nil {
+		if err == service.ErrForbidden {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to add members"})
+			return
+		}
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

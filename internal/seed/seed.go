@@ -3,6 +3,7 @@ package seed
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -160,7 +161,7 @@ func SeedData(repos *repository.Repositories) {
 
 	for i, t := range tasks {
 		task := &repository.Task{
-			Key:        "ORA-" + string(rune('1'+i)),
+			Key:        fmt.Sprintf("ORA-%d", i+1), // FIX: ORA-1, ORA-2, etc.
 			Title:      t.Title,
 			Status:     t.Status,
 			Priority:   t.Priority,
