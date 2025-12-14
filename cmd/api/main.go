@@ -15,10 +15,12 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/config"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/cron"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/db"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/email"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/seed"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/service"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -39,30 +41,62 @@ func main() {
 	}
 
 	// ============================================
-	// Initialize Repositories
+	// Initialize Database Connection
 	// ============================================
-	var repos *repository.Repositories
-
-	// Try to connect to PostgreSQL
 	postgresDB, err := db.NewPostgresDB(cfg.DatabaseURL)
 	if err != nil {
-		log.Printf("⚠️  Failed to connect to PostgreSQL: %v", err)
-		log.Println("📦 Falling back to in-memory storage")
-		repos = repository.NewRepositories() // In-memory fallback
-	} else {
-		defer postgresDB.Close()
-		repos = repository.NewPgRepositories(postgresDB.Pool)
-		log.Println("📦 Using PostgreSQL storage")
+		log.Fatalf("❌ Failed to connect to PostgreSQL: %v", err)
+	}
+	defer postgresDB.Close()
+	log.Println("✅ Connected to PostgreSQL")
+
+	// Initialize Repositories
+	repos := repository.NewRepositories(postgresDB.Pool)
+	log.Println("📦 Repositories initialized")
+
+	// ============================================
+	// Initialize Redis (optional cache)
+	// ============================================
+	var redisDB *db.RedisDB
+	if cfg.RedisURL != "" {
+		redisDB, err = db.NewRedisDB(cfg.RedisURL)
+		if err != nil {
+			log.Printf("⚠️  Failed to connect to Redis: %v (continuing without cache)", err)
+		} else {
+			defer redisDB.Close()
+			log.Println("⚡ Redis cache enabled")
+		}
 	}
 
-	// Try to connect to Redis (optional)
-	redisDB, err := db.NewRedisDB(cfg.RedisURL)
-	if err != nil {
-		log.Printf("⚠️  Failed to connect to Redis: %v (continuing without cache)", err)
+	// ============================================
+	// Initialize Email Service (optional)
+	// ============================================
+	var emailSvc *email.Service
+	if cfg.SMTPHost != "" {
+		emailSvc = email.NewService(&email.Config{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			User:     cfg.SMTPUser,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+			FromName: cfg.SMTPFromName,
+			UseTLS:   cfg.SMTPUseTLS,
+		})
+		log.Println("📧 Email service initialized")
 	} else {
-		defer redisDB.Close()
-		log.Println("⚡ Redis cache enabled")
+		log.Println("⚠️  Email not configured (SMTP_HOST not set)")
 	}
+
+	// ============================================
+	// Initialize WebSocket Hub
+	// ============================================
+	hub := socket.NewHub()
+	go hub.Run()
+	broadcaster := socket.NewBroadcaster(hub)
+
+	// WebSocket handler with JWT secret for self-authentication
+	wsHandler := socket.NewHandler(hub, cfg.JWTSecret)
+	log.Println("🔌 WebSocket hub initialized")
 
 	// ============================================
 	// Seed Data (for development)
@@ -71,14 +105,18 @@ func main() {
 		seed.SeedData(repos)
 	}
 
-	// Initialize notification service
+	// ============================================
+	// Initialize Services
+	// ============================================
 	notificationSvc := notification.NewServiceWithRepos(
 		repos.NotificationRepo,
 		repos.UserRepo,
 		repos.ProjectRepo,
 	)
 
-	// Initialize services
+	// Set broadcaster on notification service for real-time updates
+	notificationSvc.SetBroadcaster(broadcaster)
+
 	services := service.NewServices(cfg, repos, notificationSvc)
 
 	// Initialize handlers
@@ -97,7 +135,9 @@ func main() {
 	cronScheduler.Start()
 	defer cronScheduler.Stop()
 
-	// Create Gin router
+	// ============================================
+	// Create Gin Router
+	// ============================================
 	r := gin.Default()
 
 	// Configure CORS
@@ -112,27 +152,25 @@ func main() {
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
-		status := gin.H{
-			"status":    "healthy",
-			"timestamp": time.Now(),
-		}
-		if postgresDB != nil {
-			status["database"] = "connected"
-		} else {
-			status["database"] = "in-memory"
-		}
-		if redisDB != nil {
-			status["cache"] = "connected"
-		} else {
-			status["cache"] = "disabled"
-		}
-		c.JSON(http.StatusOK, status)
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "healthy",
+			"timestamp":  time.Now(),
+			"database":   "connected",
+			"cache":      getCacheStatus(redisDB),
+			"websocket":  "active",
+			"ws_clients": hub.GetConnectedClientsCount(),
+			"email":      getEmailStatus(emailSvc),
+		})
 	})
 
 	// API routes
 	api := r.Group("/api")
 	{
-		// Auth routes (public)
+		// ============================================
+		// Public routes (no auth required)
+		// ============================================
+
+		// Auth routes
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", h.Auth.Register)
@@ -141,7 +179,15 @@ func main() {
 			auth.POST("/logout", h.Auth.Logout)
 		}
 
-		// Protected routes
+		// ============================================
+		// WebSocket route (handles its own auth via query param)
+		// IMPORTANT: Must be BEFORE the protected middleware group
+		// ============================================
+		api.GET("/ws", wsHandler.HandleWebSocket)
+
+		// ============================================
+		// Protected routes (require auth middleware)
+		// ============================================
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(services.Auth))
 		{
@@ -276,4 +322,18 @@ func main() {
 	}
 
 	log.Println("Server exited")
+}
+
+func getCacheStatus(redisDB *db.RedisDB) string {
+	if redisDB != nil {
+		return "connected"
+	}
+	return "disabled"
+}
+
+func getEmailStatus(emailSvc *email.Service) string {
+	if emailSvc != nil {
+		return "configured"
+	}
+	return "disabled"
 }

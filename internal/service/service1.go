@@ -9,6 +9,7 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/config"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -29,6 +30,7 @@ var (
 // Services Container
 // ============================================
 
+// Add broadcaster to Services struct
 type Services struct {
 	Auth         AuthService
 	User         UserService
@@ -40,7 +42,11 @@ type Services struct {
 	Comment      CommentService
 	Label        LabelService
 	Notification NotificationService
+	Broadcaster  *socket.Broadcaster // Add this
 }
+
+// Update NewServices to accept broadcaster
+// In service1.go, change NewServices to:
 
 func NewServices(cfg *config.Config, repos *repository.Repositories, notifSvc *notification.Service) *Services {
 	return &Services{
@@ -54,6 +60,7 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, notifSvc *n
 		Comment:      NewCommentService(repos.CommentRepo, repos.TaskRepo, repos.UserRepo, notifSvc),
 		Label:        NewLabelService(repos.LabelRepo),
 		Notification: NewNotificationService(repos.NotificationRepo),
+		Broadcaster:  nil, // Set separately if needed
 	}
 }
 

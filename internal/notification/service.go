@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 )
 
 // Notification types
@@ -32,6 +33,11 @@ type Service struct {
 	notificationRepo repository.NotificationRepository
 	userRepo         repository.UserRepository
 	projectRepo      repository.ProjectRepository
+	broadcaster      *socket.Broadcaster
+}
+
+func (s *Service) SetBroadcaster(b *socket.Broadcaster) {
+	s.broadcaster = b
 }
 
 // NewService creates a new notification service
@@ -65,6 +71,27 @@ func (s *Service) SetProjectRepo(projectRepo repository.ProjectRepository) {
 }
 
 // ============================================
+// WebSocket Helper
+// ============================================
+
+// sendWebSocketNotification sends real-time notification via WebSocket
+func (s *Service) sendWebSocketNotification(notification *repository.Notification) {
+	if s.broadcaster == nil || notification == nil {
+		return
+	}
+
+	s.broadcaster.SendNotification(notification.UserID, map[string]interface{}{
+		"id":        notification.ID,
+		"type":      notification.Type,
+		"title":     notification.Title,
+		"message":   notification.Message,
+		"data":      notification.Data,
+		"read":      notification.Read,
+		"createdAt": notification.CreatedAt,
+	})
+}
+
+// ============================================
 // Task Notifications
 // ============================================
 
@@ -87,7 +114,14 @@ func (s *Service) SendTaskAssigned(ctx context.Context, userID, taskTitle, taskI
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendTaskCreated sends a notification when a task is created in a project
@@ -115,6 +149,9 @@ func (s *Service) SendTaskCreated(ctx context.Context, userIDs []string, creator
 
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
+		} else {
+			// Send real-time WebSocket notification
+			s.sendWebSocketNotification(notification)
 		}
 	}
 
@@ -149,7 +186,14 @@ func (s *Service) SendTaskUpdated(ctx context.Context, userID, taskTitle, taskID
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendTaskUpdatedToUsers sends task update notifications to multiple users
@@ -193,7 +237,14 @@ func (s *Service) SendTaskStatusChanged(ctx context.Context, userID, taskTitle, 
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendTaskStatusChangedToUsers sends status change notifications to multiple users
@@ -235,7 +286,14 @@ func (s *Service) SendTaskCommented(ctx context.Context, userID, commenterName, 
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendTaskDeleted sends a notification when a task is deleted
@@ -257,7 +315,14 @@ func (s *Service) SendTaskDeleted(ctx context.Context, userID, taskTitle, taskKe
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendTaskDeletedToUsers sends task deleted notifications to multiple users
@@ -303,7 +368,14 @@ func (s *Service) SendSprintStarted(ctx context.Context, userID, sprintName, spr
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendSprintStartedToMembers sends sprint started notification to all project members
@@ -330,6 +402,9 @@ func (s *Service) SendSprintStartedToMembers(ctx context.Context, members []stri
 
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
+		} else {
+			// Send real-time WebSocket notification
+			s.sendWebSocketNotification(notification)
 		}
 	}
 
@@ -358,7 +433,14 @@ func (s *Service) SendSprintCompleted(ctx context.Context, userID, sprintName, s
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendSprintCompletedToMembers sends sprint completed notification to all project members
@@ -387,6 +469,9 @@ func (s *Service) SendSprintCompletedToMembers(ctx context.Context, members []st
 
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
+		} else {
+			// Send real-time WebSocket notification
+			s.sendWebSocketNotification(notification)
 		}
 	}
 
@@ -426,7 +511,14 @@ func (s *Service) SendSprintEnding(ctx context.Context, userID, sprintName, spri
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendSprintEndingToMembers sends sprint ending notification to all project members
@@ -473,7 +565,14 @@ func (s *Service) SendMention(ctx context.Context, userID, mentionedBy, taskTitl
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // ParseAndSendMentions parses text for @mentions and sends notifications
@@ -483,7 +582,6 @@ func (s *Service) ParseAndSendMentions(ctx context.Context, content, authorName,
 	}
 
 	// Find all @mentions (e.g., @john.doe or @john or @user@email.com)
-	// Supports: @username, @firstname.lastname, @email
 	mentionRegex := regexp.MustCompile(`@([a-zA-Z0-9._]+(?:@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})?)`)
 	matches := mentionRegex.FindAllStringSubmatch(content, -1)
 
@@ -503,7 +601,6 @@ func (s *Service) ParseAndSendMentions(ctx context.Context, content, authorName,
 		if strings.Contains(mention, "@") {
 			user, err = s.userRepo.FindByEmail(ctx, mention)
 		} else {
-			// Try to find user by name (case-insensitive search would be better)
 			user, err = s.userRepo.FindByName(ctx, mention)
 		}
 
@@ -571,7 +668,14 @@ func (s *Service) SendDueDateReminder(ctx context.Context, userID, taskTitle, ta
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendOverdueTaskReminder sends a reminder for overdue tasks
@@ -602,7 +706,14 @@ func (s *Service) SendOverdueTaskReminder(ctx context.Context, userID, taskTitle
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // ============================================
@@ -632,7 +743,14 @@ func (s *Service) SendProjectInvitation(ctx context.Context, userID, projectName
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // SendWorkspaceInvitation sends a notification when invited to a workspace
@@ -658,7 +776,14 @@ func (s *Service) SendWorkspaceInvitation(ctx context.Context, userID, workspace
 		},
 	}
 
-	return s.notificationRepo.Create(ctx, notification)
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Send real-time WebSocket notification
+	s.sendWebSocketNotification(notification)
+
+	return nil
 }
 
 // ============================================
@@ -685,6 +810,9 @@ func (s *Service) SendBatchNotifications(ctx context.Context, userIDs []string, 
 
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
+		} else {
+			// Send real-time WebSocket notification
+			s.sendWebSocketNotification(notification)
 		}
 	}
 
