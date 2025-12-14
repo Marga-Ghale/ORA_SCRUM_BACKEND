@@ -179,6 +179,51 @@ func (s *Service) loadTemplates() {
 </html>
 `))
 
+	// Project Invitation Template
+	s.templates["project_invitation"] = template.Must(template.New("project_invitation").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .project-card { background: white; border-radius: 8px; padding: 20px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn { display: inline-block; background: #6366f1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 Project Invitation</h1>
+        </div>
+        <div class="content">
+            <p>Hi there!</p>
+            <p><strong>{{.InviterName}}</strong> has invited you to join the project <strong>{{.ProjectName}}</strong>{{if .WorkspaceName}} in the <strong>{{.WorkspaceName}}</strong> workspace{{end}}.</p>
+            <p>You've been assigned the role of <strong>{{.Role}}</strong>.</p>
+
+            <div class="project-card">
+                <h3>{{.ProjectName}}</h3>
+                {{if .WorkspaceName}}<p><strong>Workspace:</strong> {{.WorkspaceName}}</p>{{end}}
+                <p><strong>Your Role:</strong> {{.Role}}</p>
+            </div>
+
+            <a href="{{.InviteURL}}" class="btn">Accept Invitation</a>
+
+            <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">
+                This invitation will expire in 7 days.
+            </p>
+        </div>
+        <div class="footer">
+            <p>If you didn't expect this invitation, you can safely ignore this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
 	// Team Invitation Template
 	s.templates["team_invitation"] = template.Must(template.New("team_invitation").Parse(`
 <!DOCTYPE html>
@@ -486,6 +531,25 @@ type WorkspaceInvitationData struct {
 	WorkspaceName string
 	Role          string
 	InviteURL     string
+}
+
+// ProjectInvitationData holds data for project invitation email
+type ProjectInvitationData struct {
+	InviterName   string
+	ProjectName   string
+	WorkspaceName string
+	Role          string
+	InviteURL     string
+}
+
+// SendProjectInvitation sends a project invitation email
+func (s *Service) SendProjectInvitation(to string, data ProjectInvitationData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Invitation to join project %s", data.ProjectName),
+		"project_invitation",
+		data,
+	)
 }
 
 // SendWorkspaceInvitation sends a workspace invitation email

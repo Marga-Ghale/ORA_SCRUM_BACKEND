@@ -34,6 +34,7 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*User, error)
 	FindByName(ctx context.Context, name string) (*User, error)
 	FindAll(ctx context.Context) ([]*User, error)
+	Search(ctx context.Context, query string) ([]*User, error)
 	Update(ctx context.Context, user *User) error
 	UpdateLastActive(ctx context.Context, userID string) error
 	UpdateStatusForInactive(ctx context.Context, inactiveDuration time.Duration) error
@@ -131,6 +132,35 @@ func (r *pgUserRepository) FindAll(ctx context.Context) ([]*User, error) {
 		FROM users ORDER BY name
 	`
 	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		user := &User{}
+		if err := rows.Scan(
+			&user.ID, &user.Email, &user.Password, &user.Name, &user.Avatar,
+			&user.Status, &user.LastActiveAt, &user.CreatedAt, &user.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+func (r *pgUserRepository) Search(ctx context.Context, query string) ([]*User, error) {
+	searchQuery := "%" + query + "%"
+	sqlQuery := `
+		SELECT id, email, password, name, avatar, status, last_active_at, created_at, updated_at
+		FROM users
+		WHERE LOWER(name) LIKE LOWER($1) OR LOWER(email) LIKE LOWER($1)
+		ORDER BY name
+		LIMIT 20
+	`
+	rows, err := r.pool.Query(ctx, sqlQuery, searchQuery)
 	if err != nil {
 		return nil, err
 	}

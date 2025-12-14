@@ -118,7 +118,7 @@ func (h *ChatHandler) ListChannels(c *gin.Context) {
 
 // ListWorkspaceChannels lists all channels in a workspace
 func (h *ChatHandler) ListWorkspaceChannels(c *gin.Context) {
-	workspaceID := c.Param("workspaceId")
+	workspaceID := c.Param("id")
 
 	channels, err := h.chatSvc.ListWorkspaceChannels(c.Request.Context(), workspaceID)
 	if err != nil {
