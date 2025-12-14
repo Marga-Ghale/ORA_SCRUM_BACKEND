@@ -11,14 +11,17 @@ import (
 
 // Space represents a space entity
 type Space struct {
-	ID          string
-	Name        string
-	Description *string
-	Icon        *string
-	Color       *string
-	WorkspaceID string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	Name         string
+	Description  *string
+	Icon         *string
+	Color        *string
+	WorkspaceID  string
+	Visibility   *string  // "private", "workspace", "public"
+	AllowedUsers []string // User IDs allowed for private spaces
+	AllowedTeams []string // Team IDs allowed for private spaces
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type SpaceRepository interface {
