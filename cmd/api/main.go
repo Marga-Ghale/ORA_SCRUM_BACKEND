@@ -122,6 +122,20 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandlers(services)
 
+	// Initialize additional services for new features
+	teamSvc := service.NewTeamService(repos.TeamRepo, repos.UserRepo, repos.WorkspaceRepo, notificationSvc, emailSvc, broadcaster)
+	activitySvc := service.NewActivityService(repos.ActivityRepo)
+	watcherSvc := service.NewTaskWatcherService(repos.TaskWatcherRepo)
+	chatSvc := service.NewChatService(repos.ChatRepo, repos.UserRepo, notificationSvc, broadcaster)
+
+	// Initialize additional handlers
+	teamHandler := handlers.NewTeamHandler(teamSvc)
+	activityHandler := handlers.NewActivityHandler(activitySvc)
+	watcherHandler := handlers.NewTaskWatcherHandler(watcherSvc)
+	chatHandler := handlers.NewChatHandler(chatSvc)
+
+	log.Println("✨ Additional services initialized (Teams, Chat, Activity, Watchers)")
+
 	// Initialize cron scheduler
 	cronScheduler := cron.NewSchedulerWithRepos(
 		services,
@@ -288,6 +302,85 @@ func main() {
 				notifications.DELETE("/:id", h.Notification.Delete)
 				notifications.DELETE("", h.Notification.DeleteAll)
 			}
+
+			// ============================================
+			// Team routes (ClickUp-like teams)
+			// ============================================
+			teams := protected.Group("/teams")
+			{
+				teams.POST("", teamHandler.Create)
+				teams.GET("/:id", teamHandler.Get)
+				teams.PUT("/:id", teamHandler.Update)
+				teams.DELETE("/:id", teamHandler.Delete)
+				teams.GET("/:id/members", teamHandler.ListMembers)
+				teams.POST("/:id/members", teamHandler.AddMember)
+				teams.PUT("/:id/members/:userId", teamHandler.UpdateMemberRole)
+				teams.DELETE("/:id/members/:userId", teamHandler.RemoveMember)
+			}
+
+			// Workspace teams (use protected group directly)
+			protected.GET("/workspaces/:id/teams", teamHandler.ListByWorkspace)
+
+			// ============================================
+			// Chat routes (ClickUp-like chat)
+			// ============================================
+			chat := protected.Group("/chat")
+			{
+				// Channels
+				chat.GET("/channels", chatHandler.ListChannels)
+				chat.POST("/channels", chatHandler.CreateChannel)
+				chat.GET("/channels/find", chatHandler.GetChannelByTarget)
+				chat.GET("/channels/:id", chatHandler.GetChannel)
+				chat.DELETE("/channels/:id", chatHandler.DeleteChannel)
+
+				// Channel membership
+				chat.POST("/channels/:id/join", chatHandler.JoinChannel)
+				chat.POST("/channels/:id/leave", chatHandler.LeaveChannel)
+				chat.GET("/channels/:id/members", chatHandler.GetChannelMembers)
+				chat.POST("/channels/:id/read", chatHandler.MarkAsRead)
+				chat.GET("/channels/:id/unread", chatHandler.GetUnreadCount)
+
+				// Messages
+				chat.GET("/channels/:id/messages", chatHandler.GetMessages)
+				chat.POST("/channels/:id/messages", chatHandler.SendMessage)
+				chat.GET("/messages/:messageId/thread", chatHandler.GetThreadMessages)
+				chat.PUT("/messages/:messageId", chatHandler.UpdateMessage)
+				chat.DELETE("/messages/:messageId", chatHandler.DeleteMessage)
+
+				// Reactions
+				chat.POST("/messages/:messageId/reactions", chatHandler.AddReaction)
+				chat.DELETE("/messages/:messageId/reactions", chatHandler.RemoveReaction)
+				chat.GET("/messages/:messageId/reactions", chatHandler.GetReactions)
+
+				// Direct messages
+				chat.POST("/direct", chatHandler.CreateDirectChannel)
+
+				// Unread counts
+				chat.GET("/unread", chatHandler.GetAllUnreadCounts)
+			}
+
+			// Workspace chat channels
+			protected.GET("/workspaces/:workspaceId/chat/channels", chatHandler.ListWorkspaceChannels)
+
+			// ============================================
+			// Task Watchers routes
+			// ============================================
+			protected.POST("/tasks/:id/watch", watcherHandler.WatchTask)
+			protected.DELETE("/tasks/:id/watch", watcherHandler.UnwatchTask)
+			protected.GET("/tasks/:id/watchers", watcherHandler.GetWatchers)
+			protected.GET("/tasks/:id/watching", watcherHandler.IsWatching)
+
+			// ============================================
+			// Activity Feed routes
+			// ============================================
+			activities := protected.Group("/activities")
+			{
+				activities.GET("/me", activityHandler.GetMyActivities)
+			}
+
+			// Task and Project activities
+			protected.GET("/tasks/:id/activities", activityHandler.GetTaskActivities)
+			protected.GET("/projects/:id/activities", activityHandler.GetProjectActivities)
 		}
 	}
 

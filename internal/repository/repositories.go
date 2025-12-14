@@ -17,6 +17,7 @@ type Repositories struct {
 	InvitationRepo   InvitationRepository
 	ActivityRepo     ActivityRepository
 	TaskWatcherRepo  TaskWatcherRepository
+	ChatRepo         ChatRepository
 }
 
 // NewRepositories creates all PostgreSQL-backed repositories
@@ -35,5 +36,6 @@ func NewRepositories(pool *pgxpool.Pool) *Repositories {
 		InvitationRepo:   NewInvitationRepository(pool),
 		ActivityRepo:     NewActivityRepository(pool),
 		TaskWatcherRepo:  NewTaskWatcherRepository(pool),
+		ChatRepo:         NewChatRepository(pool),
 	}
 }
