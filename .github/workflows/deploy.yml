@@ -39,6 +39,8 @@ jobs:
           context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     name: Deploy to Server
@@ -53,7 +55,18 @@ jobs:
         id: repo
         run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
-      - name: Deploy via SSH
+      - name: Copy migration files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          source: "internal/db/migrations/*"
+          target: "/root/ORA_SCRUM/"
+          strip_components: 0
+          overwrite: true
+
+      - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -68,37 +81,38 @@ jobs:
             # Pull latest image
             docker pull ghcr.io/${{ steps.repo.outputs.name }}:latest
             
-            # Restart API container
-            docker compose up -d api
+            # Restart services (migrations run automatically via docker-compose)
+            docker compose up -d
             
-            # Cleanup
+            # Wait for services to be healthy
+            sleep 20
+            
+            # Show status
+            echo "=== Container Status ==="
+            docker compose ps
+            
+            echo ""
+            echo "=== Migration Logs ==="
+            docker logs ora_scrum_migrate 2>&1 || echo "No migration logs yet"
+            
+            echo ""
+            echo "=== API Logs (last 10 lines) ==="
+            docker logs ora_scrum_api 2>&1 | tail -10
+            
+            # Cleanup old images
             docker image prune -f
-
-      - name: Copy and run migrations
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          script: |
-            cd /root/ORA_SCRUM
-            
-            # Run migrations inside the API container
-            docker compose exec -T api sh -c '
-              for file in /app/internal/db/migrations/*.up.sql; do
-                if [ -f "$file" ]; then
-                  echo "Running migration: $file"
-                  PGPASSWORD=$DB_PASSWORD psql -h db -U $DB_USER -d $DB_NAME -f "$file" 2>/dev/null || true
-                fi
-              done
-            '
 
       - name: Verify deployment
         run: |
+          echo "⏳ Waiting for API to be ready..."
           sleep 15
+          
           response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health)
+          
           if [ "$response" = "200" ]; then
-            echo "✅ Deployment successful!"
+            echo "✅ Deployment successful! API is healthy."
           else
-            echo "⚠️ API status: $response"
+            echo "⚠️ API returned status: $response"
+            echo "Check logs: docker logs ora_scrum_api"
+            exit 1
           fi
