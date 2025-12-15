@@ -101,9 +101,7 @@ func main() {
 	// ============================================
 	// Seed Data (for development)
 	// ============================================
-	if cfg.Environment == "development" {
-		seed.SeedData(repos)
-	}
+	seed.SeedData(repos)
 
 	// ============================================
 	// Initialize Notification Service
