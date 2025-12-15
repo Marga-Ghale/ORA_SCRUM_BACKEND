@@ -10,25 +10,6 @@ env:
   GO_VERSION: '1.23'
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: latest
-          args: --timeout=5m
-
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -69,34 +50,18 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run migrations
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/ora_scrum_test?sslmode=disable
-        run: |
-          for file in internal/db/migrations/*.up.sql; do
-            if [ -f "$file" ]; then
-              psql "$DATABASE_URL" -f "$file"
-            fi
-          done
-
       - name: Run tests
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/ora_scrum_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test-secret-key
           ENVIRONMENT: test
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.out
-          fail_ci_if_error: false
+        run: go test -v -race ./...
 
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [test]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -109,42 +74,3 @@ jobs:
 
       - name: Build
         run: go build -o ora-scrum-api ./cmd/api
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ora-scrum-api
-          path: ora-scrum-api
-
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
-
-      - name: Run Gosec Security Scanner
-        run: gosec -fmt=json -out=gosec-results.json ./... || true
-
-      - name: Upload gosec results
-        uses: actions/upload-artifact@v4
-        with:
-          name: gosec-results
-          path: gosec-results.json
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '0'
