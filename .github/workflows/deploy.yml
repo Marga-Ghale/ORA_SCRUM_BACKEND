@@ -46,6 +46,9 @@ jobs:
     needs: build-and-push
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Set repository name to lowercase
         id: repo
         run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
@@ -58,10 +61,37 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
             cd /root/ORA_SCRUM
+            
+            # Login to registry
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Pull latest image
             docker pull ghcr.io/${{ steps.repo.outputs.name }}:latest
+            
+            # Restart API container
             docker compose up -d api
+            
+            # Cleanup
             docker image prune -f
+
+      - name: Copy and run migrations
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            cd /root/ORA_SCRUM
+            
+            # Run migrations inside the API container
+            docker compose exec -T api sh -c '
+              for file in /app/internal/db/migrations/*.up.sql; do
+                if [ -f "$file" ]; then
+                  echo "Running migration: $file"
+                  PGPASSWORD=$DB_PASSWORD psql -h db -U $DB_USER -d $DB_NAME -f "$file" 2>/dev/null || true
+                fi
+              done
+            '
 
       - name: Verify deployment
         run: |
