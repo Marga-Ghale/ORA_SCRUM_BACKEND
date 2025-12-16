@@ -1,21 +1,18 @@
-// Package email provides email sending functionality used by the invitation system and other parts of the app.
+// Package email provides email sending functionality
 package email
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"html/template"
 	"log"
-	"net"
 	"net/smtp"
 	"strings"
 	"time"
 )
 
-// Config holds SMTP/email configuration.
+// Config holds email configuration
 type Config struct {
 	Host     string
 	Port     int
@@ -23,394 +20,723 @@ type Config struct {
 	Password string
 	From     string
 	FromName string
-	UseTLS   bool // implicit TLS (SMTPS) when true, otherwise STARTTLS when available
-	Debug    bool // when true, print emails instead of sending
-	Timeout  time.Duration
-	BaseURL  string // used to build invitation links in templates
+	UseTLS   bool
 }
 
-// Service is the main email service used across the app.
+// Service handles email sending
 type Service struct {
-	conf      *Config
+	config    *Config
 	templates map[string]*template.Template
-	queue     *EmailQueue
-	sender    EmailSender
 }
 
-// Email represents a single email message.
+// NewService creates a new email service
+func NewService(config *Config) *Service {
+	s := &Service{
+		config:    config,
+		templates: make(map[string]*template.Template),
+	}
+	s.loadTemplates()
+	return s
+}
+
+// Email represents an email message
 type Email struct {
 	To       []string
 	CC       []string
 	BCC      []string
 	Subject  string
-	Body     string // plain text
-	HTMLBody string // html version (preferred)
+	Body     string
+	HTMLBody string
 }
 
-// EmailSender is a small interface allowing pluggable senders (SMTP, provider API, debug).
-type EmailSender interface {
-	Send(ctx context.Context, from, to string, subject, plainBody, htmlBody string) error
+// InvitationEmailData holds data for invitation emails
+type InvitationEmailData struct {
+	WorkspaceName string
+	InvitedBy     string
+	InviteURL     string
 }
 
-// NewService creates and configures the email Service. config.From and Host/Port must be set for sending;
-// if config.Debug is true and SMTP not configured, service will operate in debug mode (printing emails).
-func NewService(conf *Config) (*Service, error) {
-	if conf == nil {
-		return nil, errors.New("email config required")
-	}
-	if strings.TrimSpace(conf.From) == "" {
-		return nil, errors.New("email From address required")
-	}
-	if conf.Timeout == 0 {
-		conf.Timeout = 10 * time.Second
-	}
 
-	s := &Service{
-		conf:      conf,
-		templates: make(map[string]*template.Template),
-	}
 
-	// choose sender
-	if conf.Debug {
-		s.sender = &debugSender{}
-	} else if conf.Host != "" && conf.Port != 0 {
-		s.sender = &smtpSender{
-			cfg: SMTPConfig{
-				Host:     conf.Host,
-				Port:     conf.Port,
-				Username: conf.User,
-				Password: conf.Password,
-				UseTLS:   conf.UseTLS,
-				Timeout:  conf.Timeout,
-			},
-			timeout: conf.Timeout,
-		}
-	} else {
-		// fallback to debug sender if no smtp configured
-		s.sender = &debugSender{}
-	}
-
-	// load built-in templates
-	s.loadTemplates()
-
-	// optional queue (small default workers)
-	s.queue = NewEmailQueue(s, 2)
-
-	return s, nil
-}
-
-// Close stops the internal queue workers.
-func (s *Service) Close() {
-	if s.queue != nil {
-		s.queue.Stop()
-	}
-}
-
-// BuildInviteURL builds a front-end link for acceptance using BaseURL.
-func (s *Service) BuildInviteURL(token string) string {
-	base := strings.TrimRight(s.conf.BaseURL, "/")
-	if base == "" {
-		// default path if BaseURL not provided
-		return fmt.Sprintf("/invitations/accept?token=%s", token)
-	}
-	return fmt.Sprintf("%s/invitations/accept?token=%s", base, token)
-}
-
-// SendInvitation composes and sends (best-effort) an invitation email.
-// NOTE: signature matches calls from invitation service: (workspaceName, toEmail, fromName, token string) error
-func (s *Service) SendInvitation(workspaceName, toEmail, fromName, token string) error {
-	if strings.TrimSpace(toEmail) == "" {
-		return errors.New("toEmail required")
-	}
-	// Use built-in workspace_invitation template
-	data := map[string]interface{}{
-		"InviterName":   fromName,
-		"WorkspaceName": workspaceName,
-		"Role":          "",
-		"InviteURL":     s.BuildInviteURL(token),
-	}
-	subject := fmt.Sprintf("[ORA] Invitation to join %s", workspaceName)
-	// Use context with configured timeout
-	ctx, cancel := context.WithTimeout(context.Background(), s.conf.Timeout)
-	defer cancel()
-	return s.sendWithTemplateContext(ctx, []string{toEmail}, subject, "workspace_invitation", data)
-}
-
-// Send is a low-level convenience to send an email immediately (synchronous).
-func (s *Service) Send(ctx context.Context, email *Email) error {
-	if email == nil {
-		return errors.New("email required")
-	}
-	plain := email.Body
-	html := email.HTMLBody
-	// pick a single "to" for the lower-level sender interface; sender.Send handles single recipient
-	if len(email.To) > 0 {
-	} else {
-		return errors.New("at least one recipient required")
-	}
-	// Use context with service timeout if ctx has no closer deadline
-	sendCtx := ctx
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > s.conf.Timeout {
-		var cancel context.CancelFunc
-		sendCtx, cancel = context.WithTimeout(ctx, s.conf.Timeout)
-		defer cancel()
-	}
-
-	// For simplicity we send to each recipient individually (best-effort).
-	recipients := append([]string{}, email.To...)
-	recipients = append(recipients, email.CC...)
-	recipients = append(recipients, email.BCC...)
-
-	var lastErr error
-	for _, rcpt := range recipients {
-		if err := s.sender.Send(sendCtx, fmt.Sprintf("%s <%s>", s.conf.FromName, s.conf.From), rcpt, email.Subject, plain, html); err != nil {
-			lastErr = err
-			log.Printf("email send to %s failed: %v", rcpt, err)
-		}
-	}
-	return lastErr
-}
-
-// SendWithTemplate renders a template and sends the resulting HTML to the provided recipients.
-func (s *Service) SendWithTemplate(to []string, subject, templateName string, data interface{}) error {
-	return s.sendWithTemplateContext(context.Background(), to, subject, templateName, data)
-}
-
-func (s *Service) sendWithTemplateContext(ctx context.Context, to []string, subject, templateName string, data interface{}) error {
-	tmpl, ok := s.templates[templateName]
-	if !ok {
-		return fmt.Errorf("template not found: %s", templateName)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("template execute: %w", err)
-	}
-
-	email := &Email{
-		To:       to,
-		Subject:  subject,
-		HTMLBody: buf.String(),
-		Body:     stripHTMLForPlain(buf.String()),
-	}
-	return s.Send(ctx, email)
-}
-
-// EnqueueWithTemplate enqueues an email to be sent asynchronously using the service's queue.
-func (s *Service) EnqueueWithTemplate(to []string, subject, templateName string, data interface{}) {
-	if s.queue == nil {
-		_ = s.SendWithTemplate(to, subject, templateName, data)
-		return
-	}
-	s.queue.Enqueue(to, subject, templateName, data)
-}
-
-// ========== Templates (use the templates you already have) ==========
+// loadTemplates loads all email templates
 func (s *Service) loadTemplates() {
-	// load the templates you provided into s.templates.
-	// For brevity here, load the workspace_invitation template and simple placeholders.
-	s.templates["workspace_invitation"] = template.Must(template.New("workspace_invitation").Parse(`
+
+
+	// Generic Invitation Template (used by service layer)
+s.templates["invitation"] = template.Must(template.New("invitation").Parse(`
 <!DOCTYPE html>
 <html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #10b981; color: white; padding: 24px; border-radius: 8px 8px 0 0; }
+        .content { background: #f9fafb; padding: 24px; border-radius: 0 0 8px 8px; }
+        .btn { display: inline-block; background: #10b981; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; margin-top: 16px; }
+        .footer { margin-top: 24px; font-size: 12px; color: #6b7280; text-align: center; }
+    </style>
+</head>
 <body>
-  <h1>🎉 Workspace Invitation</h1>
-  <p><strong>{{.InviterName}}</strong> invited you to join <strong>{{.WorkspaceName}}</strong>.</p>
-  <p><a href="{{.InviteURL}}">Accept Invitation</a></p>
+<div class="container">
+    <div class="header">
+        <h2>You're Invited to ORA Scrum</h2>
+    </div>
+    <div class="content">
+        <p>Hello,</p>
+        <p><strong>{{.InvitedBy}}</strong> invited you to join <strong>{{.WorkspaceName}}</strong>.</p>
+
+        <a href="{{.InviteURL}}" class="btn">Accept Invitation</a>
+
+        <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+            This invitation may expire. If you were not expecting this email, you can ignore it.
+        </p>
+    </div>
+    <div class="footer">
+        ORA Scrum • Team Collaboration Platform
+    </div>
+</div>
 </body>
 </html>
 `))
 
-	// (You should copy the full templates from your earlier snippet into s.templates["..."] as needed)
+	// Task Assigned Template
+	s.templates["task_assigned"] = template.Must(template.New("task_assigned").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .task-card { background: white; border-radius: 8px; padding: 20px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn { display: inline-block; background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .priority-high { color: #ef4444; }
+        .priority-medium { color: #f59e0b; }
+        .priority-low { color: #10b981; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 New Task Assigned</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.AssigneeName}},</p>
+            <p>You have been assigned a new task by <strong>{{.AssignerName}}</strong>.</p>
+
+            <div class="task-card">
+                <h2>{{.TaskKey}} - {{.TaskTitle}}</h2>
+                <p><strong>Project:</strong> {{.ProjectName}}</p>
+                <p><strong>Priority:</strong> <span class="priority-{{.Priority}}">{{.Priority}}</span></p>
+                {{if .DueDate}}<p><strong>Due Date:</strong> {{.DueDate}}</p>{{end}}
+                {{if .Description}}<p><strong>Description:</strong><br/>{{.Description}}</p>{{end}}
+            </div>
+
+            <a href="{{.TaskURL}}" class="btn">View Task</a>
+        </div>
+        <div class="footer">
+            <p>This email was sent from ORA Scrum</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Task Updated Template
+	s.templates["task_updated"] = template.Must(template.New("task_updated").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .changes { background: white; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .change-item { padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+        .change-item:last-child { border-bottom: none; }
+        .btn { display: inline-block; background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔄 Task Updated</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.UserName}},</p>
+            <p>Task <strong>{{.TaskKey}} - {{.TaskTitle}}</strong> has been updated by {{.UpdatedBy}}.</p>
+
+            <div class="changes">
+                <h3>Changes:</h3>
+                {{range .Changes}}
+                <div class="change-item">
+                    <strong>{{.Field}}:</strong> {{.OldValue}} → {{.NewValue}}
+                </div>
+                {{end}}
+            </div>
+
+            <a href="{{.TaskURL}}" class="btn">View Task</a>
+        </div>
+        <div class="footer">
+            <p>This email was sent from ORA Scrum</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Workspace Invitation Template
+	s.templates["workspace_invitation"] = template.Must(template.New("workspace_invitation").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .btn { display: inline-block; background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎉 Workspace Invitation</h1>
+        </div>
+        <div class="content">
+            <p>Hi there!</p>
+            <p><strong>{{.InviterName}}</strong> has invited you to join the <strong>{{.WorkspaceName}}</strong> workspace on ORA Scrum.</p>
+            <p>You've been assigned the role of <strong>{{.Role}}</strong>.</p>
+
+            <a href="{{.InviteURL}}" class="btn">Accept Invitation</a>
+
+            <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">
+                This invitation will expire in 7 days.
+            </p>
+        </div>
+        <div class="footer">
+            <p>If you didn't expect this invitation, you can safely ignore this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Project Invitation Template
+	s.templates["project_invitation"] = template.Must(template.New("project_invitation").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .project-card { background: white; border-radius: 8px; padding: 20px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn { display: inline-block; background: #6366f1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 Project Invitation</h1>
+        </div>
+        <div class="content">
+            <p>Hi there!</p>
+            <p><strong>{{.InviterName}}</strong> has invited you to join the project <strong>{{.ProjectName}}</strong>{{if .WorkspaceName}} in the <strong>{{.WorkspaceName}}</strong> workspace{{end}}.</p>
+            <p>You've been assigned the role of <strong>{{.Role}}</strong>.</p>
+
+            <div class="project-card">
+                <h3>{{.ProjectName}}</h3>
+                {{if .WorkspaceName}}<p><strong>Workspace:</strong> {{.WorkspaceName}}</p>{{end}}
+                <p><strong>Your Role:</strong> {{.Role}}</p>
+            </div>
+
+            <a href="{{.InviteURL}}" class="btn">Accept Invitation</a>
+
+            <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">
+                This invitation will expire in 7 days.
+            </p>
+        </div>
+        <div class="footer">
+            <p>If you didn't expect this invitation, you can safely ignore this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Team Invitation Template
+	s.templates["team_invitation"] = template.Must(template.New("team_invitation").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .btn { display: inline-block; background: #8b5cf6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>👥 Team Invitation</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.UserName}},</p>
+            <p>You've been added to the <strong>{{.TeamName}}</strong> team in <strong>{{.WorkspaceName}}</strong>.</p>
+            <p>Added by: <strong>{{.AddedBy}}</strong></p>
+
+            <a href="{{.TeamURL}}" class="btn">View Team</a>
+        </div>
+        <div class="footer">
+            <p>This email was sent from ORA Scrum</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Sprint Started Template
+	s.templates["sprint_started"] = template.Must(template.New("sprint_started").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .sprint-info { background: white; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .btn { display: inline-block; background: #f59e0b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Sprint Started!</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.UserName}},</p>
+            <p>Sprint <strong>{{.SprintName}}</strong> has started!</p>
+
+            <div class="sprint-info">
+                <p><strong>Project:</strong> {{.ProjectName}}</p>
+                <p><strong>Duration:</strong> {{.StartDate}} - {{.EndDate}}</p>
+                {{if .Goal}}<p><strong>Sprint Goal:</strong><br/>{{.Goal}}</p>{{end}}
+                <p><strong>Tasks:</strong> {{.TaskCount}} tasks</p>
+            </div>
+
+            <a href="{{.SprintURL}}" class="btn">View Sprint Board</a>
+        </div>
+        <div class="footer">
+            <p>This email was sent from ORA Scrum</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Due Date Reminder Template
+	s.templates["due_date_reminder"] = template.Must(template.New("due_date_reminder").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .task-list { background: white; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .task-item { padding: 15px; border-bottom: 1px solid #e5e7eb; }
+        .task-item:last-child { border-bottom: none; }
+        .due-today { color: #ef4444; font-weight: bold; }
+        .due-soon { color: #f59e0b; }
+        .btn { display: inline-block; background: #ef4444; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⏰ Task Due Date Reminder</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.UserName}},</p>
+            <p>You have tasks that need your attention:</p>
+
+            <div class="task-list">
+                {{range .Tasks}}
+                <div class="task-item">
+                    <strong>{{.TaskKey}}</strong> - {{.TaskTitle}}<br/>
+                    <span class="{{if eq .DaysRemaining 0}}due-today{{else}}due-soon{{end}}">
+                        {{if eq .DaysRemaining 0}}Due Today!{{else}}Due in {{.DaysRemaining}} days{{end}}
+                    </span>
+                </div>
+                {{end}}
+            </div>
+
+            <a href="{{.DashboardURL}}" class="btn">View My Tasks</a>
+        </div>
+        <div class="footer">
+            <p>This email was sent from ORA Scrum</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Comment Mention Template
+	s.templates["mention"] = template.Must(template.New("mention").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .comment-box { background: white; border-left: 4px solid #3b82f6; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+        .btn { display: inline-block; background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💬 You Were Mentioned</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.UserName}},</p>
+            <p><strong>{{.MentionedBy}}</strong> mentioned you in a comment on task <strong>{{.TaskKey}}</strong>:</p>
+
+            <div class="comment-box">
+                {{.CommentContent}}
+            </div>
+
+            <a href="{{.TaskURL}}" class="btn">View Comment</a>
+        </div>
+        <div class="footer">
+            <p>This email was sent from ORA Scrum</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
 }
 
-// stripHTMLForPlain attempts to produce a plain-text fallback from HTML content.
-func stripHTMLForPlain(html string) string {
-	plain := strings.ReplaceAll(html, "\n", " ")
-	plain = strings.ReplaceAll(plain, "<br>", "\n")
-	plain = strings.ReplaceAll(plain, "<br/>", "\n")
-	plain = strings.ReplaceAll(plain, "<br />", "\n")
-	for {
-		start := strings.Index(plain, "<")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(plain[start:], ">")
-		if end == -1 {
-			break
-		}
-		plain = plain[:start] + plain[start+end+1:]
+
+// SendInvitation sends a generic invitation email (workspace/project/link)
+func (s *Service) SendInvitation(
+	workspaceName string,
+	to string,
+	invitedBy string,
+	token string,
+) error {
+
+	if invitedBy == "" {
+		invitedBy = "Someone"
 	}
-	return strings.TrimSpace(plain)
+
+	inviteURL := fmt.Sprintf(
+		"https://app.orascrum.com/invite?token=%s",
+		token,
+	)
+
+	data := InvitationEmailData{
+		WorkspaceName: workspaceName,
+		InvitedBy:     invitedBy,
+		InviteURL:     inviteURL,
+	}
+
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Invitation to join %s", workspaceName),
+		"invitation",
+		data,
+	)
 }
 
-// ========== Default SMTP sender implementation ==========
 
-type smtpSender struct {
-	cfg     SMTPConfig
-	timeout time.Duration
-}
-
-type SMTPConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	UseTLS   bool
-	Timeout  time.Duration
-}
-
-func (s *smtpSender) Send(ctx context.Context, from, to, subject, plainBody, htmlBody string) error {
-	boundary := "INVITE-MSG-BOUNDARY"
-	var b bytes.Buffer
-	b.WriteString(fmt.Sprintf("From: %s\r\n", from))
-	b.WriteString(fmt.Sprintf("To: %s\r\n", to))
-	b.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
-	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=%s\r\n", boundary))
-	b.WriteString("\r\n")
-	b.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(plainBody + "\r\n")
-	b.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-	b.WriteString("Content-Type: text/html; charset=utf-8\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(htmlBody + "\r\n")
-	b.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
-
-	msg := b.Bytes()
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-
-	// if implicit TLS (SMTPS)
-	if s.cfg.UseTLS {
-		dialer := &net.Dialer{Timeout: s.timeout}
-		conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: s.cfg.Host})
-		if err != nil {
-			return fmt.Errorf("tls dial failed: %w", err)
-		}
-		defer conn.Close()
-
-		client, err := smtp.NewClient(conn, s.cfg.Host)
-		if err != nil {
-			return fmt.Errorf("smtp client failed: %w", err)
-		}
-		defer client.Quit()
-
-		if s.cfg.Username != "" && s.cfg.Password != "" {
-			auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
-			if ok, _ := client.Extension("AUTH"); ok {
-				if err := client.Auth(auth); err != nil {
-					return fmt.Errorf("auth failed: %w", err)
-				}
-			}
-		}
-
-		fromAddr := from
-		if strings.Contains(from, "<") && strings.Contains(from, ">") {
-			start := strings.Index(from, "<")
-			end := strings.Index(from, ">")
-			if start >= 0 && end > start {
-				fromAddr = strings.TrimSpace(from[start+1 : end])
-			}
-		}
-		if err := client.Mail(fromAddr); err != nil {
-			return fmt.Errorf("mail from failed: %w", err)
-		}
-		if err := client.Rcpt(to); err != nil {
-			return fmt.Errorf("rcpt failed: %w", err)
-		}
-		wc, err := client.Data()
-		if err != nil {
-			return fmt.Errorf("data failed: %w", err)
-		}
-		if _, err := wc.Write(msg); err != nil {
-			_ = wc.Close()
-			return fmt.Errorf("write failed: %w", err)
-		}
-		if err := wc.Close(); err != nil {
-			return fmt.Errorf("close failed: %w", err)
-		}
+// Send sends an email
+func (s *Service) Send(email *Email) error {
+	if s.config.Host == "" {
+		log.Println("Email not configured, skipping send")
 		return nil
 	}
 
-	// Non-TLS: Dial and use STARTTLS when available
-	var conn net.Conn
-	var err error
-	if dl := s.timeout; dl == 0 {
-		dl = 10 * time.Second
-	}
-	dl := s.timeout
-	dialer := &net.Dialer{Timeout: dl}
-	conn, err = dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("dial failed: %w", err)
-	}
-	client, err := smtp.NewClient(conn, s.cfg.Host)
-	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("smtp new client failed: %w", err)
-	}
-	defer client.Close()
+	// Build message
+	var msg bytes.Buffer
 
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err := client.StartTLS(&tls.Config{ServerName: s.cfg.Host}); err != nil {
-			return fmt.Errorf("starttls failed: %w", err)
+	// Headers
+	msg.WriteString(fmt.Sprintf("From: %s <%s>\r\n", s.config.FromName, s.config.From))
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(email.To, ", ")))
+	if len(email.CC) > 0 {
+		msg.WriteString(fmt.Sprintf("Cc: %s\r\n", strings.Join(email.CC, ", ")))
+	}
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", email.Subject))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+
+	if email.HTMLBody != "" {
+		msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		msg.WriteString("\r\n")
+		msg.WriteString(email.HTMLBody)
+	} else {
+		msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+		msg.WriteString("\r\n")
+		msg.WriteString(email.Body)
+	}
+
+	// Build recipient list
+	recipients := append(email.To, email.CC...)
+	recipients = append(recipients, email.BCC...)
+
+	// Create auth
+	auth := smtp.PlainAuth("", s.config.User, s.config.Password, s.config.Host)
+
+	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+
+	if s.config.UseTLS {
+		// TLS connection
+		tlsConfig := &tls.Config{
+			ServerName: s.config.Host,
 		}
-	}
 
-	if s.cfg.Username != "" && s.cfg.Password != "" {
-		auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
-		if ok, _ := client.Extension("AUTH"); ok {
-			if err := client.Auth(auth); err != nil {
-				return fmt.Errorf("smtp auth failed: %w", err)
+		conn, err := tls.Dial("tcp", addr, tlsConfig)
+		if err != nil {
+			return fmt.Errorf("TLS dial error: %w", err)
+		}
+		defer conn.Close()
+
+		client, err := smtp.NewClient(conn, s.config.Host)
+		if err != nil {
+			return fmt.Errorf("SMTP client error: %w", err)
+		}
+		defer client.Close()
+
+		if err = client.Auth(auth); err != nil {
+			return fmt.Errorf("auth error: %w", err)
+		}
+
+		if err = client.Mail(s.config.From); err != nil {
+			return fmt.Errorf("mail error: %w", err)
+		}
+
+		for _, rcpt := range recipients {
+			if err = client.Rcpt(rcpt); err != nil {
+				return fmt.Errorf("rcpt error: %w", err)
 			}
 		}
-	}
 
-	fromAddr := from
-	if strings.Contains(from, "<") && strings.Contains(from, ">") {
-		start := strings.Index(from, "<")
-		end := strings.Index(from, ">")
-		if start >= 0 && end > start {
-			fromAddr = strings.TrimSpace(from[start+1 : end])
+		w, err := client.Data()
+		if err != nil {
+			return fmt.Errorf("data error: %w", err)
 		}
+
+		_, err = w.Write(msg.Bytes())
+		if err != nil {
+			return fmt.Errorf("write error: %w", err)
+		}
+
+		err = w.Close()
+		if err != nil {
+			return fmt.Errorf("close error: %w", err)
+		}
+
+		return client.Quit()
 	}
 
-	if err := client.Mail(fromAddr); err != nil {
-		return fmt.Errorf("mail from failed: %w", err)
-	}
-	if err := client.Rcpt(to); err != nil {
-		return fmt.Errorf("rcpt failed: %w", err)
-	}
-	wc, err := client.Data()
-	if err != nil {
-		return fmt.Errorf("data failed: %w", err)
-	}
-	if _, err := wc.Write(msg); err != nil {
-		_ = wc.Close()
-		return fmt.Errorf("write failed: %w", err)
-	}
-	if err := wc.Close(); err != nil {
-		return fmt.Errorf("close failed: %w", err)
-	}
-	_ = client.Quit()
-	return nil
+	// Non-TLS
+	return smtp.SendMail(addr, auth, s.config.From, recipients, msg.Bytes())
 }
 
-// ========== Debug sender ==========
-
-type debugSender struct{}
-
-func (d *debugSender) Send(ctx context.Context, from, to, subject, plainBody, htmlBody string) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
+// SendWithTemplate sends an email using a template
+func (s *Service) SendWithTemplate(to []string, subject, templateName string, data interface{}) error {
+	tmpl, ok := s.templates[templateName]
+	if !ok {
+		return fmt.Errorf("template not found: %s", templateName)
 	}
-	log.Printf("DEBUG EMAIL\nFrom: %s\nTo: %s\nSubject: %s\n\n%s\n\n(HTML body omitted)\n", from, to, subject, plainBody)
-	return nil
+
+	var body bytes.Buffer
+	if err := tmpl.Execute(&body, data); err != nil {
+		return fmt.Errorf("template execution error: %w", err)
+	}
+
+	return s.Send(&Email{
+		To:       to,
+		Subject:  subject,
+		HTMLBody: body.String(),
+	})
 }
 
-// ========== Simple in-memory async queue (same as before) ==========
+// ============================================
+// Convenience Methods
+// ============================================
+
+// TaskAssignedData holds data for task assigned email
+type TaskAssignedData struct {
+	AssigneeName string
+	AssignerName string
+	TaskKey      string
+	TaskTitle    string
+	ProjectName  string
+	Priority     string
+	DueDate      string
+	Description  string
+	TaskURL      string
+}
+
+// SendTaskAssigned sends a task assigned email
+func (s *Service) SendTaskAssigned(to string, data TaskAssignedData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Task Assigned: %s - %s", data.TaskKey, data.TaskTitle),
+		"task_assigned",
+		data,
+	)
+}
+
+// WorkspaceInvitationData holds data for workspace invitation email
+type WorkspaceInvitationData struct {
+	InviterName   string
+	WorkspaceName string
+	Role          string
+	InviteURL     string
+}
+
+// ProjectInvitationData holds data for project invitation email
+type ProjectInvitationData struct {
+	InviterName   string
+	ProjectName   string
+	WorkspaceName string
+	Role          string
+	InviteURL     string
+}
+
+// SendProjectInvitation sends a project invitation email
+func (s *Service) SendProjectInvitation(to string, data ProjectInvitationData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Invitation to join project %s", data.ProjectName),
+		"project_invitation",
+		data,
+	)
+}
+
+// SendWorkspaceInvitation sends a workspace invitation email
+func (s *Service) SendWorkspaceInvitation(to string, data WorkspaceInvitationData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Invitation to join %s", data.WorkspaceName),
+		"workspace_invitation",
+		data,
+	)
+}
+
+// TeamInvitationData holds data for team invitation email
+type TeamInvitationData struct {
+	UserName      string
+	TeamName      string
+	WorkspaceName string
+	AddedBy       string
+	TeamURL       string
+}
+
+// SendTeamInvitation sends a team invitation email
+func (s *Service) SendTeamInvitation(to string, data TeamInvitationData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Added to team: %s", data.TeamName),
+		"team_invitation",
+		data,
+	)
+}
+
+// SprintStartedData holds data for sprint started email
+type SprintStartedData struct {
+	UserName    string
+	SprintName  string
+	ProjectName string
+	StartDate   string
+	EndDate     string
+	Goal        string
+	TaskCount   int
+	SprintURL   string
+}
+
+// SendSprintStarted sends a sprint started email
+func (s *Service) SendSprintStarted(to string, data SprintStartedData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Sprint Started: %s", data.SprintName),
+		"sprint_started",
+		data,
+	)
+}
+
+// DueDateReminderTask holds task info for due date reminder
+type DueDateReminderTask struct {
+	TaskKey       string
+	TaskTitle     string
+	DaysRemaining int
+}
+
+// DueDateReminderData holds data for due date reminder email
+type DueDateReminderData struct {
+	UserName     string
+	Tasks        []DueDateReminderTask
+	DashboardURL string
+}
+
+// SendDueDateReminder sends a due date reminder email
+func (s *Service) SendDueDateReminder(to string, data DueDateReminderData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		"[ORA] Task Due Date Reminder",
+		"due_date_reminder",
+		data,
+	)
+}
+
+// MentionData holds data for mention notification email
+type MentionData struct {
+	UserName       string
+	MentionedBy    string
+	TaskKey        string
+	CommentContent string
+	TaskURL        string
+}
+
+// SendMention sends a mention notification email
+func (s *Service) SendMention(to string, data MentionData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] %s mentioned you in %s", data.MentionedBy, data.TaskKey),
+		"mention",
+		data,
+	)
+}
+
+// ============================================
+// Async Email Queue (simple in-memory)
+// ============================================
+
+// EmailQueue handles async email sending
+type EmailQueue struct {
+	service *Service
+	queue   chan *queuedEmail
+	done    chan bool
+}
 
 type queuedEmail struct {
 	to           []string
@@ -420,45 +746,34 @@ type queuedEmail struct {
 	retries      int
 }
 
-type EmailQueue struct {
-	service *Service
-	queue   chan *queuedEmail
-	done    chan struct{}
-}
-
+// NewEmailQueue creates a new email queue
 func NewEmailQueue(service *Service, workers int) *EmailQueue {
 	q := &EmailQueue{
 		service: service,
 		queue:   make(chan *queuedEmail, 1000),
-		done:    make(chan struct{}),
+		done:    make(chan bool),
 	}
-	if workers <= 0 {
-		workers = 1
-	}
+
+	// Start workers
 	for i := 0; i < workers; i++ {
 		go q.worker()
 	}
+
 	return q
 }
 
 func (q *EmailQueue) worker() {
 	for {
 		select {
-		case e := <-q.queue:
-			if e == nil {
-				continue
-			}
-			err := q.service.SendWithTemplate(e.to, e.subject, e.templateName, e.data)
+		case email := <-q.queue:
+			err := q.service.SendWithTemplate(email.to, email.subject, email.templateName, email.data)
 			if err != nil {
-				log.Printf("email send error: %v (template=%s)", err, e.templateName)
-				if e.retries < 3 {
-					e.retries++
-					time.Sleep(time.Second * time.Duration(e.retries*2))
-					select {
-					case q.queue <- e:
-					default:
-						log.Printf("email queue full, dropping email (subject=%s)", e.subject)
-					}
+				log.Printf("Email send error: %v", err)
+				// Retry logic
+				if email.retries < 3 {
+					email.retries++
+					time.Sleep(time.Second * time.Duration(email.retries*2))
+					q.queue <- email
 				}
 			}
 		case <-q.done:
@@ -467,14 +782,18 @@ func (q *EmailQueue) worker() {
 	}
 }
 
+// Enqueue adds an email to the queue
 func (q *EmailQueue) Enqueue(to []string, subject, templateName string, data interface{}) {
-	select {
-	case q.queue <- &queuedEmail{to: to, subject: subject, templateName: templateName, data: data}:
-	default:
-		log.Printf("email queue full, dropping email (subject=%s)", subject)
+	q.queue <- &queuedEmail{
+		to:           to,
+		subject:      subject,
+		templateName: templateName,
+		data:         data,
+		retries:      0,
 	}
 }
 
+// Stop stops the email queue workers
 func (q *EmailQueue) Stop() {
 	close(q.done)
 }

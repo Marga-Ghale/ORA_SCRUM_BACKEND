@@ -192,6 +192,12 @@ func main() {
 			auth.POST("/logout", h.Auth.Logout)
 		}
 
+		// Public invitation routes (for accepting without login)
+		publicInvitations := api.Group("/invitations")
+		{
+			publicInvitations.GET("/link/:token", invitationHandler.GetLinkInvitation)
+		}
+
 		// WebSocket route
 		api.GET("/ws", wsHandler.HandleWebSocket)
 
@@ -385,13 +391,16 @@ func main() {
 				chat.GET("/unread", chatHandler.GetAllUnreadCounts)
 			}
 
-			// Invitation routes
+			// Invitation routes (protected)
 			invitations := protected.Group("/invitations")
 			{
 				invitations.GET("/pending", invitationHandler.GetMyInvitations)
 				invitations.POST("/accept/:token", invitationHandler.AcceptInvitation)
+				invitations.POST("/accept-link", invitationHandler.AcceptInvitationByLink)
 				invitations.POST("/resend/:id", invitationHandler.ResendInvitation)
 				invitations.DELETE("/:id", invitationHandler.CancelInvitation)
+				invitations.POST("/link", invitationHandler.CreateLinkInvitation)
+				invitations.GET("/stats", invitationHandler.GetInvitationStats)
 			}
 
 			// Activity routes

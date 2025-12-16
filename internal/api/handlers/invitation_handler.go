@@ -1,517 +1,381 @@
 package handlers
 
 import (
-	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/go-chi/chi/v5"
-
-	"github.com/Marga-Ghale/ora-scrum-backend/internal/api/middleware"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
-// InvitationHandler exposes HTTP endpoints for invitation flows.
 type InvitationHandler struct {
-	svc service.InvitationService
+	invSvc service.InvitationService
 }
 
-
-type createWorkspaceInvitationReq struct {
-	Email string `json:"email" binding:"required,email"`
-	Role  string `json:"role" binding:"required,oneof=ADMIN MEMBER VIEWER"`
+func NewInvitationHandler(invSvc service.InvitationService) *InvitationHandler {
+	return &InvitationHandler{invSvc: invSvc}
 }
 
-type createProjectInvitationReq struct {
-	Email string `json:"email" binding:"required,email"`
-	Role  string `json:"role" binding:"required,oneof=LEAD MEMBER VIEWER"`
-}
-
-type acceptInvitationReq struct {
-	Token string `json:"token" binding:"required"`
-}
-
-func NewInvitationHandler(svc service.InvitationService) *InvitationHandler {
-	return &InvitationHandler{svc: svc}
-}
-
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
-// DTOs
-
-type createInvitationReq struct {
-	WorkspaceID   string                      `json:"workspace_id"`
-	Email         string                      `json:"email"`
-	Type          repository.InvitationType  `json:"type,omitempty"`
-	TargetID      string                      `json:"target_id,omitempty"`
-	TargetName    string                      `json:"target_name,omitempty"`
-	Role          repository.WorkspaceRole    `json:"role,omitempty"`
-	Permission    repository.PermissionLevel  `json:"permission,omitempty"`
-	InvitedByID   string                      `json:"invited_by_id,omitempty"`
-	InvitedByName string                      `json:"invited_by_name,omitempty"`
-	Message       *string                     `json:"message,omitempty"`
-	ExpiresInDays *int                        `json:"expires_in_days,omitempty"`
-	MaxUses       *int                        `json:"max_uses,omitempty"`
-	Method        repository.InvitationMethod `json:"method,omitempty"`
-}
-
-type acceptReq struct {
-	UserID string `json:"user_id,omitempty"`
-}
-
-type createLinkReq struct {
-	WorkspaceID       string                     `json:"workspace_id"`
-	Type              repository.InvitationType `json:"type,omitempty"`
-	TargetID          string                     `json:"target_id,omitempty"`
-	DefaultRole       repository.WorkspaceRole   `json:"default_role,omitempty"`
-	DefaultPermission repository.PermissionLevel `json:"default_permission,omitempty"`
-	IsActive          *bool                      `json:"is_active,omitempty"`
-	RequiresApproval  *bool                      `json:"requires_approval,omitempty"`
-	AllowedDomains    []string                   `json:"allowed_domains,omitempty"`
-	BlockedDomains    []string                   `json:"blocked_domains,omitempty"`
-	MaxUses           *int                       `json:"max_uses,omitempty"`
-	ExpiresInDays     *int                       `json:"expires_in_days,omitempty"`
-	CreatedByID       string                     `json:"created_by_id,omitempty"`
-}
-
-type accessRequestReq struct {
-	WorkspaceID string                     `json:"workspace_id"`
-	RequesterID string                     `json:"requester_id"`
-	Email       string                     `json:"email"`
-	Type        repository.InvitationType `json:"type"`
-	TargetID    string                     `json:"target_id"`
-	Message     *string                    `json:"message,omitempty"`
-}
-
-// Handlers
-
-// POST /api/invitations
-func (h *InvitationHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
-	var req createInvitationReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	inv := &repository.Invitation{
-		WorkspaceID:   req.WorkspaceID,
-		Email:         req.Email,
-		Type:          req.Type,
-		TargetID:      req.TargetID,
-		TargetName:    req.TargetName,
-		Role:          req.Role,
-		Permission:    req.Permission,
-		InvitedByID:   req.InvitedByID,
-		InvitedByName: req.InvitedByName,
-		Message:       req.Message,
-		Method:        req.Method,
-		MaxUses:       req.MaxUses,
-	}
-	if req.ExpiresInDays != nil {
-		t := time.Now().Add(time.Duration(*req.ExpiresInDays) * 24 * time.Hour)
-		inv.ExpiresAt = &t
-	}
-	if err := h.svc.CreateInvitation(r.Context(), inv); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, inv)
-}
-
-// POST /api/invitations/with-permissions
-func (h *InvitationHandler) CreateWithPermissions(w http.ResponseWriter, r *http.Request) {
-	var payload struct {
-		Invitation  *repository.Invitation           `json:"invitation"`
-		Permissions *repository.InvitationPermissions `json:"permissions"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	if payload.Invitation == nil {
-		writeError(w, http.StatusBadRequest, "invitation required")
-		return
-	}
-	if err := h.svc.CreateWithPermissions(r.Context(), payload.Invitation, payload.Permissions); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, payload.Invitation)
-}
-
-// GET /api/invitations/{id}
-func (h *InvitationHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	inv, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if inv == nil {
-		writeError(w, http.StatusNotFound, "invitation not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, inv)
-}
-
-// GET /api/invitations/token/{token}
-func (h *InvitationHandler) GetByToken(w http.ResponseWriter, r *http.Request) {
-	token := chi.URLParam(r, "token")
-	inv, err := h.svc.GetByToken(r.Context(), token)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if inv == nil {
-		writeError(w, http.StatusNotFound, "invitation not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, inv)
-}
-
-// POST /api/invitations/{id}/accept
-func (h *InvitationHandler) AcceptByID(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	var req acceptReq
-	_ = json.NewDecoder(r.Body).Decode(&req)
-
-	inv, err := h.svc.AcceptByID(r.Context(), id, req.UserID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if inv == nil {
-		writeError(w, http.StatusNotFound, "invitation not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, inv)
-}
-
-// POST /api/invitations/token/{token}/accept
-func (h *InvitationHandler) AcceptByToken(w http.ResponseWriter, r *http.Request) {
-	token := chi.URLParam(r, "token")
-	var req acceptReq
-	_ = json.NewDecoder(r.Body).Decode(&req)
-
-	inv, err := h.svc.AcceptByToken(r.Context(), token, req.UserID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if inv == nil {
-		writeError(w, http.StatusNotFound, "invitation not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, inv)
-}
-
-// POST /api/invitations/{id}/decline
-func (h *InvitationHandler) DeclineByID(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	inv, err := h.svcDeclineByID(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if inv == nil {
-		writeError(w, http.StatusNotFound, "invitation not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, inv)
-}
-
-// wrapper to handle potential naming collision
-func (h *InvitationHandler) svcDeclineByID(ctx context.Context, id string) (*repository.Invitation, error) {
-	return h.svc.DeclineByID(ctx, id)
-}
-
-// POST /api/invitations/{id}/resend
-func (h *InvitationHandler) ResendByID(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	actor := r.Header.Get("X-Actor-Id")
-	var actorPtr *string
-	if actor != "" {
-		actorPtr = &actor
-	}
-	inv, err := h.svc.ResendInvitation(r.Context(), id, actorPtr)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if inv == nil {
-		writeError(w, http.StatusNotFound, "invitation not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, inv)
-}
-
-// GET /api/workspaces/{workspace_id}/invitations?limit=&offset=
-func (h *InvitationHandler) ListByWorkspace(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspace_id")
-	limit := 50
-	offset := 0
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = v
-		}
-	}
-	invs, total, err := h.svc.ListByWorkspace(r.Context(), workspaceID, limit, offset)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	resp := map[string]interface{}{
-		"count": len(invs),
-		"total": total,
-		"data":  invs,
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// CreateLinkSettings POST /api/invitation-links
-func (h *InvitationHandler) CreateLinkSettings(w http.ResponseWriter, r *http.Request) {
-	var req createLinkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	settings := &repository.InvitationLinkSettings{
-		WorkspaceID:       req.WorkspaceID,
-		Type:              req.Type,
-		TargetID:          req.TargetID,
-		DefaultRole:       req.DefaultRole,
-		DefaultPermission: req.DefaultPermission,
-		IsActive:          true,
-		RequiresApproval:  false,
-		CreatedByID:       req.CreatedByID,
-	}
-	if req.IsActive != nil {
-		settings.IsActive = *req.IsActive
-	}
-	if req.RequiresApproval != nil {
-		settings.RequiresApproval = *req.RequiresApproval
-	}
-	if len(req.AllowedDomains) > 0 {
-		b, _ := json.Marshal(req.AllowedDomains)
-		s := string(b)
-		settings.AllowedDomains = &s
-	}
-	if len(req.BlockedDomains) > 0 {
-		b, _ := json.Marshal(req.BlockedDomains)
-		s := string(b)
-		settings.BlockedDomains = &s
-	}
-	if req.MaxUses != nil {
-		settings.MaxUses = req.MaxUses
-	}
-	if req.ExpiresInDays != nil {
-		t := time.Now().Add(time.Duration(*req.ExpiresInDays) * 24 * time.Hour)
-		settings.ExpiresAt = &t
-	}
-
-	if err := h.svc.CreateLinkSettings(r.Context(), settings); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, settings)
-}
-
-// GET /api/invitation-links/token/{token}/use?email=...
-func (h *InvitationHandler) UseInvitationLink(w http.ResponseWriter, r *http.Request) {
-	token := chi.URLParam(r, "token")
-	emailAddr := r.URL.Query().Get("email")
-	if emailAddr == "" {
-		writeError(w, http.StatusBadRequest, "email query param required")
-		return
-	}
-	inv, ls, err := h.svc.UseLink(r.Context(), token, emailAddr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if ls == nil {
-		writeError(w, http.StatusNotFound, "link not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"link_settings": ls,
-		"invitation":    inv,
-	})
-}
-
-// GET /api/invitation-links/token/{token}
-func (h *InvitationHandler) GetLinkSettingsByToken(w http.ResponseWriter, r *http.Request) {
-	token := chi.URLParam(r, "token")
-	ls, err := h.svc.GetLinkSettingsByToken(r.Context(), token)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if ls == nil {
-		writeError(w, http.StatusNotFound, "link not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, ls)
-}
-
-// POST /api/invitations/{id}/regenerate-token
-func (h *InvitationHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	newTok, err := h.svc.RegenerateToken(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"token": newTok})
-}
-
-// GET /api/workspaces/{workspace_id}/invitations/stats
-func (h *InvitationHandler) GetStatsByWorkspace(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspace_id")
-	stats, err := h.svc.GetStatsByWorkspace(r.Context(), workspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, stats)
-}
-
-// POST /api/access-requests
-func (h *InvitationHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Request) {
-	var req accessRequestReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	ar := &repository.AccessRequest{
-		WorkspaceID: req.WorkspaceID,
-		RequesterID: req.RequesterID,
-		Email:       req.Email,
-		Type:        req.Type,
-		TargetID:    req.TargetID,
-		Message:     req.Message,
-		Status:      "pending",
-	}
-	if err := h.svc.CreateAccessRequest(r.Context(), ar); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, ar)
-}
-
-// POST /api/access-requests/{id}/process
-func (h *InvitationHandler) ProcessAccessRequest(w http.ResponseWriter, r *http.Request) {
-	_ = chi.URLParam(r, "id")
-	var payload struct {
-		Status       string  `json:"status"`
-		ProcessedBy  *string `json:"processed_by,omitempty"`
-		DenialReason *string `json:"denial_reason,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	if payload.Status == "" {
-		writeError(w, http.StatusBadRequest, "status required")
-		return
-	}
-	// Use repository method via service (service exposes CreateAccessRequest only in this implementation).
-	// The repo-level UpdateAccessRequestStatus is not exposed via the service interface above;
-	// if you need it, add an appropriate method to service.InvitationService and implement it.
-	writeError(w, http.StatusNotImplemented, "processing access requests via handler requires service method - add UpdateAccessRequestStatus to service if needed")
-}
-
-
-
-
-
-// POST /api/workspaces/:id/invitations
+// CreateWorkspaceInvitation godoc
+// @Summary Create workspace invitation
+// @Tags invitations
+// @Accept json
+// @Produce json
+// @Param id path string true "Workspace ID"
+// @Param request body CreateInvitationRequest true "Invitation details"
+// @Success 201 {object} map[string]interface{}
+// @Router /workspaces/{id}/invitations [post]
 func (h *InvitationHandler) CreateWorkspaceInvitation(c *gin.Context) {
 	workspaceID := c.Param("id")
-	userID := middleware.GetUserID(c)
+	userID := c.GetString("user_id")
 
-	var req createWorkspaceInvitationReq
+	var req CreateInvitationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	inv, err := h.svc.CreateWorkspaceInvitation(c.Request.Context(), workspaceID, req.Email, req.Role, userID)
+	inv, err := h.invSvc.CreateWorkspaceInvitation(c.Request.Context(), workspaceID, req.Email, req.Role, userID)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":    "Invitation sent successfully",
+		"invitation": inv,
+	})
+}
+
+// CreateProjectInvitation godoc
+// @Summary Create project invitation
+// @Tags invitations
+// @Accept json
+// @Produce json
+// @Param id path string true "Project ID"
+// @Param request body CreateInvitationRequest true "Invitation details"
+// @Success 201 {object} map[string]interface{}
+// @Router /projects/{id}/invitations [post]
+func (h *InvitationHandler) CreateProjectInvitation(c *gin.Context) {
+	projectID := c.Param("id")
+	userID := c.GetString("user_id")
+
+	var req CreateInvitationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, inv)
+	inv, err := h.invSvc.CreateProjectInvitation(c.Request.Context(), req.WorkspaceID, projectID, req.Email, req.Role, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":    "Invitation sent successfully",
+		"invitation": inv,
+	})
 }
 
-// GET /api/workspaces/:id/invitations
+// GetWorkspaceInvitations godoc
+// @Summary Get workspace invitations
+// @Tags invitations
+// @Produce json
+// @Param id path string true "Workspace ID"
+// @Param limit query int false "Limit"
+// @Param offset query int false "Offset"
+// @Success 200 {object} map[string]interface{}
+// @Router /workspaces/{id}/invitations [get]
 func (h *InvitationHandler) GetWorkspaceInvitations(c *gin.Context) {
 	workspaceID := c.Param("id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	invs, total, err := h.svc.ListByWorkspace(c.Request.Context(), workspaceID, limit, offset)
+	invitations, total, err := h.invSvc.ListByWorkspace(c.Request.Context(), workspaceID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data":  invs,
-		"total": total,
-		"count": len(invs),
+		"invitations": invitations,
+		"total":       total,
+		"limit":       limit,
+		"offset":      offset,
 	})
 }
 
-// POST /api/projects/:id/invitations
-func (h *InvitationHandler) CreateProjectInvitation(c *gin.Context) {
+// GetProjectInvitations godoc
+// @Summary Get project invitations
+// @Tags invitations
+// @Produce json
+// @Param id path string true "Project ID"
+// @Param limit query int false "Limit"
+// @Param offset query int false "Offset"
+// @Success 200 {object} map[string]interface{}
+// @Router /projects/{id}/invitations [get]
+func (h *InvitationHandler) GetProjectInvitations(c *gin.Context) {
 	projectID := c.Param("id")
-	userID := middleware.GetUserID(c)
 
-	var req createProjectInvitationReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	invitations, total, err := h.invSvc.ListByProject(c.Request.Context(), projectID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	workspaceID := c.Query("workspaceId")
-	if workspaceID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "workspaceId query parameter required"})
+	c.JSON(http.StatusOK, gin.H{
+		"invitations": invitations,
+		"total":       total,
+		"limit":       limit,
+		"offset":      offset,
+	})
+}
+
+// GetMyInvitations godoc
+// @Summary Get my pending invitations
+// @Tags invitations
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /invitations/pending [get]
+func (h *InvitationHandler) GetMyInvitations(c *gin.Context) {
+	userEmail := c.GetString("user_email")
+
+	invitations, err := h.invSvc.GetMyInvitations(c.Request.Context(), userEmail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	inv, err := h.svc.CreateProjectInvitation(c.Request.Context(), workspaceID, projectID, req.Email, req.Role, userID)
+	c.JSON(http.StatusOK, gin.H{
+		"invitations": invitations,
+	})
+}
+
+// AcceptInvitation godoc
+// @Summary Accept invitation
+// @Tags invitations
+// @Produce json
+// @Param token path string true "Invitation Token"
+// @Success 200 {object} map[string]interface{}
+// @Router /invitations/accept/{token} [post]
+func (h *InvitationHandler) AcceptInvitation(c *gin.Context) {
+	token := c.Param("token")
+	userID := c.GetString("user_id")
+
+	err := h.invSvc.AcceptByToken(c.Request.Context(), token, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, inv)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Invitation accepted successfully",
+	})
 }
 
-// // GET /api/projects/:id/invitations
-// func (h *InvitationHandler) GetProjectInvitations(c *gin.Context) {
-// 	projectID := c.Param("id")
-// 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-// 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+// ResendInvitation godoc
+// @Summary Resend invitation
+// @Tags invitations
+// @Produce json
+// @Param id path string true "Invitation ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /invitations/resend/{id} [post]
+func (h *InvitationHandler) ResendInvitation(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetString("user_id")
 
-// 	invs, total, err := h.svc.ListByProject(c.Request.Context(), projectID, limit, offset)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err
+	inv, err := h.invSvc.ResendInvitation(c.Request.Context(), id, &userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Invitation resent successfully",
+		"invitation": inv,
+	})
+}
+
+// CancelInvitation godoc
+// @Summary Cancel invitation
+// @Tags invitations
+// @Produce json
+// @Param id path string true "Invitation ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /invitations/{id} [delete]
+func (h *InvitationHandler) CancelInvitation(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetString("user_id")
+
+	err := h.invSvc.CancelInvitation(c.Request.Context(), id, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Invitation cancelled successfully",
+	})
+}
+
+// AcceptInvitationByLink godoc
+// @Summary Accept invitation by link
+// @Tags invitations
+// @Accept json
+// @Produce json
+// @Param request body AcceptLinkRequest true "Link details"
+// @Success 200 {object} map[string]interface{}
+// @Router /invitations/accept-link [post]
+func (h *InvitationHandler) AcceptInvitationByLink(c *gin.Context) {
+	var req AcceptLinkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := c.GetString("user_id")
+	userEmail := c.GetString("user_email")
+
+	inv, settings, err := h.invSvc.UseLink(c.Request.Context(), req.LinkToken, userEmail)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = h.invSvc.AcceptByID(c.Request.Context(), inv.ID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Invitation accepted successfully",
+		"invitation": inv,
+		"settings":   settings,
+	})
+}
+
+// CreateLinkInvitation godoc
+// @Summary Create link invitation
+// @Tags invitations
+// @Accept json
+// @Produce json
+// @Param request body CreateLinkInvitationRequest true "Link invitation details"
+// @Success 201 {object} map[string]interface{}
+// @Router /invitations/link [post]
+func (h *InvitationHandler) CreateLinkInvitation(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	var req CreateLinkInvitationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	settings := &repository.InvitationLinkSettings{
+		WorkspaceID:       req.WorkspaceID,
+		Type:              repository.InvitationType(req.Type),
+		TargetID:          req.TargetID,
+		DefaultRole:       repository.WorkspaceRole(req.DefaultRole),
+		DefaultPermission: repository.PermissionLevel(req.DefaultPermission),
+		IsActive:          true,
+		RequiresApproval:  req.RequiresApproval,
+		AllowedDomains:    req.AllowedDomains,
+		BlockedDomains:    req.BlockedDomains,
+		MaxUses:           req.MaxUses,
+		ExpiresAt:         req.ExpiresAt,
+		CreatedByID:       userID,
+	}
+
+	err := h.invSvc.CreateLinkSettings(c.Request.Context(), settings)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":  "Link invitation created successfully",
+		"settings": settings,
+	})
+}
+
+// GetLinkInvitation godoc
+// @Summary Get link invitation by token
+// @Tags invitations
+// @Produce json
+// @Param token path string true "Link Token"
+// @Success 200 {object} map[string]interface{}
+// @Router /invitations/link/{token} [get]
+func (h *InvitationHandler) GetLinkInvitation(c *gin.Context) {
+	token := c.Param("token")
+
+	settings, err := h.invSvc.GetLinkSettingsByToken(c.Request.Context(), token)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Link not found"})
+		return
+	}
+
+	if !settings.IsValid() {
+		c.JSON(http.StatusGone, gin.H{"error": "Link is expired or inactive"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"settings": settings,
+	})
+}
+
+// GetInvitationStats godoc
+// @Summary Get invitation statistics
+// @Tags invitations
+// @Produce json
+// @Param workspaceId query string true "Workspace ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /invitations/stats [get]
+func (h *InvitationHandler) GetInvitationStats(c *gin.Context) {
+	workspaceID := c.Query("workspaceId")
+	if workspaceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspaceId is required"})
+		return
+	}
+
+	stats, err := h.invSvc.GetStatsByWorkspace(c.Request.Context(), workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stats": stats,
+	})
+}
+
+type CreateInvitationRequest struct {
+	Email       string `json:"email" binding:"required,email"`
+	Role        string `json:"role" binding:"required"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+}
+
+type AcceptLinkRequest struct {
+	LinkToken string `json:"link_token" binding:"required"`
+}
+
+type CreateLinkInvitationRequest struct {
+	WorkspaceID       string     `json:"workspace_id" binding:"required"`
+	Type              string     `json:"type" binding:"required"`
+	TargetID          string     `json:"target_id" binding:"required"`
+	DefaultRole       string     `json:"default_role" binding:"required"`
+	DefaultPermission string     `json:"default_permission"`
+	RequiresApproval  bool       `json:"requires_approval"`
+	AllowedDomains    *string    `json:"allowed_domains,omitempty"`
+	BlockedDomains    *string    `json:"blocked_domains,omitempty"`
+	MaxUses           *int       `json:"max_uses,omitempty"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+}
