@@ -227,8 +227,8 @@ func (s *teamService) AddMember(ctx context.Context, teamID, userID, role, added
 
 	// Get user info for notifications
 	user, _ := s.userRepo.FindByID(ctx, userID)
-	addedBy, _ := s.userRepo.FindByID(ctx, addedByID)
-	workspace, _ := s.workspaceRepo.FindByID(ctx, team.WorkspaceID)
+	// addedBy, _ := s.userRepo.FindByID(ctx, addedByID)
+	// workspace, _ := s.workspaceRepo.FindByID(ctx, team.WorkspaceID)
 
 	// Send notification
 	if s.notifSvc != nil && user != nil {
@@ -243,16 +243,16 @@ func (s *teamService) AddMember(ctx context.Context, teamID, userID, role, added
 			})
 	}
 
-	// Send email
-	if s.emailSvc != nil && user != nil && addedBy != nil && workspace != nil {
-		s.emailSvc.SendTeamInvitation(user.Email, email.TeamInvitationData{
-			UserName:      user.Name,
-			TeamName:      team.Name,
-			WorkspaceName: workspace.Name,
-			AddedBy:       addedBy.Name,
-			TeamURL:       fmt.Sprintf("/workspaces/%s/teams/%s", team.WorkspaceID, teamID),
-		})
-	}
+	// // Send email
+	// if s.emailSvc != nil && user != nil && addedBy != nil && workspace != nil {
+	// 	s.emailSvc.SendTeamInvitation(user.Email, email.TeamInvitationData{
+	// 		UserName:      user.Name,
+	// 		TeamName:      team.Name,
+	// 		WorkspaceName: workspace.Name,
+	// 		AddedBy:       addedBy.Name,
+	// 		TeamURL:       fmt.Sprintf("/workspaces/%s/teams/%s", team.WorkspaceID, teamID),
+	// 	})
+	// }
 
 	// Broadcast member added
 	if s.broadcaster != nil && user != nil {
