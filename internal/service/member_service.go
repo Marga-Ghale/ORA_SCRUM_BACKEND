@@ -8,27 +8,6 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 )
 
-// EntityType constants
-const (
-	EntityTypeWorkspace = "workspace"
-	EntityTypeSpace     = "space"
-	EntityTypeFolder    = "folder"
-	EntityTypeProject   = "project"
-)
-
-// UnifiedMember represents a member across any entity type
-type UnifiedMember struct {
-	ID           string
-	EntityType   string
-	EntityID     string
-	UserID       string
-	Role         string
-	JoinedAt     time.Time
-	User         *repository.User
-	IsInherited  bool   // True if access comes from parent entity
-	InheritedFrom string // EntityType where membership originates
-}
-
 // MemberService handles member operations across all entity types
 type MemberService interface {
 	// Direct member operations
@@ -54,6 +33,28 @@ type MemberService interface {
 	GetUserMemberships(ctx context.Context, userID string) (map[string][]string, error)
 	GetUserAllAccess(ctx context.Context, userID string) (*UserAccessMap, error)
 }
+
+// EntityType constants
+const (
+	EntityTypeWorkspace = "workspace"
+	EntityTypeSpace     = "space"
+	EntityTypeFolder    = "folder"
+	EntityTypeProject   = "project"
+)
+
+// UnifiedMember represents a member across any entity type
+type UnifiedMember struct {
+	ID           string
+	EntityType   string
+	EntityID     string
+	UserID       string
+	Role         string
+	JoinedAt     time.Time
+	User         *repository.User
+	IsInherited  bool   // True if access comes from parent entity
+	InheritedFrom string // EntityType where membership originates
+}
+
 
 type UserAccessMap struct {
 	Workspaces []string `json:"workspaces"`

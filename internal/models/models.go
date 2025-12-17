@@ -398,7 +398,7 @@ type TaskFiltersRequest struct {
     DueBefore   *time.Time `json:"dueBefore"`
     DueAfter    *time.Time `json:"dueAfter"`
     Blocked     *bool      `json:"blocked"`
-    Overdue     *bool      `json:"overdue"`       // ✅ Add this
+    Overdue     *bool      `json:"overdue"`      
     SearchQuery *string    `json:"searchQuery"`
     Limit       int        `json:"limit"`
     Offset      int        `json:"offset"`
