@@ -17,6 +17,12 @@ type ProjectHandler struct {
 	projectService service.ProjectService
 }
 
+func NewProjectHandler(projectService service.ProjectService) *ProjectHandler {
+	return &ProjectHandler{
+		projectService: projectService,
+	}
+}
+
 func (h *ProjectHandler) ListBySpace(c *gin.Context) {
 	spaceID := c.Param("id")
 
@@ -36,6 +42,7 @@ func (h *ProjectHandler) ListBySpace(c *gin.Context) {
 
 func (h *ProjectHandler) Create(c *gin.Context) {
 	spaceID := c.Param("id")
+
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
@@ -47,11 +54,25 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Pass creatorID for auto-adding as member
-	project, err := h.projectService.Create(c.Request.Context(), spaceID, userID, req.Name, req.Key, req.Description, req.Icon, req.Color, req.LeadID)
+	project, err := h.projectService.Create(
+		c.Request.Context(),
+		spaceID,
+		req.FolderID,     // ✅ folderID
+		userID,           // ✅ creatorID
+		req.Name,
+		req.Key,
+		req.Description,
+		req.Icon,
+		req.Color,
+		req.LeadID,
+	)
 	if err != nil {
 		if err == service.ErrConflict {
 			c.JSON(http.StatusConflict, gin.H{"error": "Project key already exists"})
+			return
+		}
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Space or folder not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create project"})
@@ -82,10 +103,24 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		return
 	}
 
-	project, err := h.projectService.Update(c.Request.Context(), id, req.Name, req.Key, req.Description, req.Icon, req.Color, req.LeadID)
+	project, err := h.projectService.Update(
+		c.Request.Context(),
+		id,
+		req.Name,
+		req.Key,
+		req.Description,
+		req.Icon,
+		req.Color,
+		req.LeadID,
+		req.FolderID, // ✅ required
+	)
 	if err != nil {
 		if err == service.ErrConflict {
 			c.JSON(http.StatusConflict, gin.H{"error": "Project key already exists"})
+			return
+		}
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update project"})
@@ -103,93 +138,7 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
-func (h *ProjectHandler) ListMembers(c *gin.Context) {
-	id := c.Param("id")
 
-	members, err := h.projectService.ListMembers(c.Request.Context(), id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch members"})
-		return
-	}
-
-	response := make([]models.ProjectMemberResponse, len(members))
-	for i, m := range members {
-		response[i] = toProjectMemberResponse(m)
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
-func (h *ProjectHandler) AddMember(c *gin.Context) {
-	id := c.Param("id")
-	inviterID, ok := middleware.RequireUserID(c)
-	if !ok {
-		return
-	}
-
-	var req models.AddProjectMemberRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Pass inviterID for notification
-	if err := h.projectService.AddMember(c.Request.Context(), id, req.UserID, req.Role, inviterID); err != nil {
-		if err == service.ErrConflict {
-			c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"message": "Member added successfully"})
-}
-
-func (h *ProjectHandler) RemoveMember(c *gin.Context) {
-	id := c.Param("id")
-	memberUserID := c.Param("userId")
-
-	if err := h.projectService.RemoveMember(c.Request.Context(), id, memberUserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove member"})
-		return
-	}
-
-	c.JSON(http.StatusNoContent, nil)
-}
-
-// AddMemberByID adds an existing user to project by their user ID
-func (h *ProjectHandler) AddMemberByID(c *gin.Context) {
-	projectID := c.Param("id")
-	inviterID, ok := middleware.RequireUserID(c)
-	if !ok {
-		return
-	}
-
-	var req struct {
-		UserID string `json:"userId" binding:"required"`
-		Role   string `json:"role"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if req.Role == "" {
-		req.Role = "member"
-	}
-
-	if err := h.projectService.AddMember(c.Request.Context(), projectID, req.UserID, req.Role, inviterID); err != nil {
-		if err == service.ErrConflict {
-			c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"message": "Member added successfully"})
-}

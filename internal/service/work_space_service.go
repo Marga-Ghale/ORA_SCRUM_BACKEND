@@ -7,15 +7,11 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 )
 
-// ============================================
-// Workspace Service
-// ============================================
-
 type WorkspaceService interface {
-	Create(ctx context.Context, userID, name string, description, icon, color *string) (*repository.Workspace, error)
+	Create(ctx context.Context, userID, name string, description, icon, color, visibility *string, allowedUsers, allowedTeams []string) (*repository.Workspace, error)
 	GetByID(ctx context.Context, id string) (*repository.Workspace, error)
 	List(ctx context.Context, userID string) ([]*repository.Workspace, error)
-	Update(ctx context.Context, id string, name, description, icon, color *string) (*repository.Workspace, error)
+	Update(ctx context.Context, id string, name, description, icon, color, visibility *string, allowedUsers, allowedTeams *[]string) (*repository.Workspace, error)
 	Delete(ctx context.Context, id string) error
 	AddMember(ctx context.Context, workspaceID, email, role, inviterID string) error
 	AddMemberByID(ctx context.Context, workspaceID, userID, role, inviterID string) error
@@ -23,6 +19,7 @@ type WorkspaceService interface {
 	UpdateMemberRole(ctx context.Context, workspaceID, userID, role string) error
 	RemoveMember(ctx context.Context, workspaceID, userID string) error
 	IsMember(ctx context.Context, workspaceID, userID string) (bool, error)
+	HasAccess(ctx context.Context, workspaceID, userID string) (bool, error)
 }
 
 type workspaceService struct {
@@ -39,13 +36,21 @@ func NewWorkspaceService(workspaceRepo repository.WorkspaceRepository, userRepo 
 	}
 }
 
-func (s *workspaceService) Create(ctx context.Context, userID, name string, description, icon, color *string) (*repository.Workspace, error) {
+func (s *workspaceService) Create(ctx context.Context, userID, name string, description, icon, color, visibility *string, allowedUsers, allowedTeams []string) (*repository.Workspace, error) {
+	defaultVisibility := "private"
+	if visibility == nil {
+		visibility = &defaultVisibility
+	}
+
 	workspace := &repository.Workspace{
-		Name:        name,
-		Description: description,
-		Icon:        icon,
-		Color:       color,
-		OwnerID:     userID,
+		Name:         name,
+		Description:  description,
+		Icon:         icon,
+		Color:        color,
+		OwnerID:      userID,
+		Visibility:   visibility,
+		AllowedUsers: allowedUsers,
+		AllowedTeams: allowedTeams,
 	}
 
 	if err := s.workspaceRepo.Create(ctx, workspace); err != nil {
@@ -55,7 +60,7 @@ func (s *workspaceService) Create(ctx context.Context, userID, name string, desc
 	member := &repository.WorkspaceMember{
 		WorkspaceID: workspace.ID,
 		UserID:      userID,
-		Role:        "OWNER",
+		Role:        "owner",
 	}
 	if err := s.workspaceRepo.AddMember(ctx, member); err != nil {
 		return nil, err
@@ -79,21 +84,26 @@ func (s *workspaceService) List(ctx context.Context, userID string) ([]*reposito
 	return s.workspaceRepo.FindByUserID(ctx, userID)
 }
 
-func (s *workspaceService) Update(ctx context.Context, id string, name, description, icon, color *string) (*repository.Workspace, error) {
+func (s *workspaceService) Update(ctx context.Context, id string, name, description, icon, color, visibility *string, allowedUsers, allowedTeams *[]string) (*repository.Workspace, error) {
 	workspace, err := s.workspaceRepo.FindByID(ctx, id)
 	if err != nil || workspace == nil {
 		return nil, ErrNotFound
 	}
 
-	// Name is required - only update if provided
 	if name != nil {
 		workspace.Name = *name
 	}
-
-	// Nullable fields - always update to allow clearing (setting to NULL)
 	workspace.Description = description
 	workspace.Icon = icon
 	workspace.Color = color
+	workspace.Visibility = visibility
+
+	if allowedUsers != nil {
+		workspace.AllowedUsers = *allowedUsers
+	}
+	if allowedTeams != nil {
+		workspace.AllowedTeams = *allowedTeams
+	}
 
 	if err := s.workspaceRepo.Update(ctx, workspace); err != nil {
 		return nil, err
@@ -172,17 +182,7 @@ func (s *workspaceService) AddMemberByID(ctx context.Context, workspaceID, userI
 }
 
 func (s *workspaceService) ListMembers(ctx context.Context, workspaceID string) ([]*repository.WorkspaceMember, error) {
-	members, err := s.workspaceRepo.FindMembers(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, m := range members {
-		user, _ := s.userRepo.FindByID(ctx, m.UserID)
-		m.User = user
-	}
-
-	return members, nil
+	return s.workspaceRepo.FindMembers(ctx, workspaceID)
 }
 
 func (s *workspaceService) UpdateMemberRole(ctx context.Context, workspaceID, userID, role string) error {
@@ -199,4 +199,8 @@ func (s *workspaceService) IsMember(ctx context.Context, workspaceID, userID str
 		return false, err
 	}
 	return member != nil, nil
+}
+
+func (s *workspaceService) HasAccess(ctx context.Context, workspaceID, userID string) (bool, error) {
+	return s.workspaceRepo.HasAccess(ctx, workspaceID, userID)
 }

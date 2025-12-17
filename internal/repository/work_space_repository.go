@@ -9,14 +9,17 @@ import (
 )
 
 type Workspace struct {
-	ID          string
-	Name        string
-	Description *string
-	Icon        *string
-	Color       *string
-	OwnerID     string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	OwnerID      string
+	Name         string
+	Description  *string
+	Icon         *string
+	Color        *string
+	Visibility   *string  // "private", "workspace", "public"
+	AllowedUsers []string // User IDs allowed for private workspace
+	AllowedTeams []string // Team IDs allowed for private workspace
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type WorkspaceMember struct {
@@ -40,6 +43,7 @@ type WorkspaceRepository interface {
 	FindMemberUserIDs(ctx context.Context, workspaceID string) ([]string, error)
 	UpdateMemberRole(ctx context.Context, workspaceID, userID, role string) error
 	RemoveMember(ctx context.Context, workspaceID, userID string) error
+	HasAccess(ctx context.Context, workspaceID, userID string) (bool, error)
 }
 
 type pgWorkspaceRepository struct {
@@ -52,24 +56,26 @@ func NewWorkspaceRepository(pool *pgxpool.Pool) WorkspaceRepository {
 
 func (r *pgWorkspaceRepository) Create(ctx context.Context, workspace *Workspace) error {
 	query := `
-		INSERT INTO workspaces (name, description, icon, color, owner_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO workspaces (name, description, icon, color, owner_id, visibility, allowed_users, allowed_teams)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
 	`
 	return r.pool.QueryRow(ctx, query,
 		workspace.Name, workspace.Description, workspace.Icon, workspace.Color, workspace.OwnerID,
+		workspace.Visibility, workspace.AllowedUsers, workspace.AllowedTeams,
 	).Scan(&workspace.ID, &workspace.CreatedAt, &workspace.UpdatedAt)
 }
 
 func (r *pgWorkspaceRepository) FindByID(ctx context.Context, id string) (*Workspace, error) {
 	query := `
-		SELECT id, name, description, icon, color, owner_id, created_at, updated_at
+		SELECT id, name, description, icon, color, owner_id, visibility, allowed_users, allowed_teams, created_at, updated_at
 		FROM workspaces WHERE id = $1
 	`
 	ws := &Workspace{}
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&ws.ID, &ws.Name, &ws.Description, &ws.Icon, &ws.Color,
-		&ws.OwnerID, &ws.CreatedAt, &ws.UpdatedAt,
+		&ws.OwnerID, &ws.Visibility, &ws.AllowedUsers, &ws.AllowedTeams,
+		&ws.CreatedAt, &ws.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -82,7 +88,7 @@ func (r *pgWorkspaceRepository) FindByID(ctx context.Context, id string) (*Works
 
 func (r *pgWorkspaceRepository) FindByUserID(ctx context.Context, userID string) ([]*Workspace, error) {
 	query := `
-		SELECT w.id, w.name, w.description, w.icon, w.color, w.owner_id, w.created_at, w.updated_at
+		SELECT w.id, w.name, w.description, w.icon, w.color, w.owner_id, w.visibility, w.allowed_users, w.allowed_teams, w.created_at, w.updated_at
 		FROM workspaces w
 		JOIN workspace_members wm ON w.id = wm.workspace_id
 		WHERE wm.user_id = $1
@@ -99,7 +105,8 @@ func (r *pgWorkspaceRepository) FindByUserID(ctx context.Context, userID string)
 		ws := &Workspace{}
 		if err := rows.Scan(
 			&ws.ID, &ws.Name, &ws.Description, &ws.Icon, &ws.Color,
-			&ws.OwnerID, &ws.CreatedAt, &ws.UpdatedAt,
+			&ws.OwnerID, &ws.Visibility, &ws.AllowedUsers, &ws.AllowedTeams,
+			&ws.CreatedAt, &ws.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -110,11 +117,13 @@ func (r *pgWorkspaceRepository) FindByUserID(ctx context.Context, userID string)
 
 func (r *pgWorkspaceRepository) Update(ctx context.Context, workspace *Workspace) error {
 	query := `
-		UPDATE workspaces SET name = $2, description = $3, icon = $4, color = $5, updated_at = NOW()
+		UPDATE workspaces 
+		SET name = $2, description = $3, icon = $4, color = $5, visibility = $6, allowed_users = $7, allowed_teams = $8, updated_at = NOW()
 		WHERE id = $1
 	`
 	_, err := r.pool.Exec(ctx, query,
 		workspace.ID, workspace.Name, workspace.Description, workspace.Icon, workspace.Color,
+		workspace.Visibility, workspace.AllowedUsers, workspace.AllowedTeams,
 	)
 	return err
 }
@@ -212,4 +221,16 @@ func (r *pgWorkspaceRepository) RemoveMember(ctx context.Context, workspaceID, u
 	query := `DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2`
 	_, err := r.pool.Exec(ctx, query, workspaceID, userID)
 	return err
+}
+
+func (r *pgWorkspaceRepository) HasAccess(ctx context.Context, workspaceID, userID string) (bool, error) {
+	query := `
+		SELECT EXISTS(
+			SELECT 1 FROM workspace_members 
+			WHERE workspace_id = $1 AND user_id = $2
+		)
+	`
+	var exists bool
+	err := r.pool.QueryRow(ctx, query, workspaceID, userID).Scan(&exists)
+	return exists, err
 }

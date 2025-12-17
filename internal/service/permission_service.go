@@ -65,25 +65,27 @@ type permissionService struct {
 	projectRepo   repository.ProjectRepository
 	taskRepo      repository.TaskRepository
 	teamRepo      repository.TeamRepository
+	folderRepo    repository.FolderRepository
 }
 
 // NewPermissionService creates a new permission service
 func NewPermissionService(
-	workspaceRepo repository.WorkspaceRepository,
-	spaceRepo repository.SpaceRepository,
-	projectRepo repository.ProjectRepository,
-	taskRepo repository.TaskRepository,
-	teamRepo repository.TeamRepository,
+    workspaceRepo repository.WorkspaceRepository,
+    spaceRepo repository.SpaceRepository,
+    projectRepo repository.ProjectRepository,
+    taskRepo repository.TaskRepository,
+    teamRepo repository.TeamRepository,
+    folderRepo repository.FolderRepository,  // ✅ Add this parameter
 ) PermissionService {
-	return &permissionService{
-		workspaceRepo: workspaceRepo,
-		spaceRepo:     spaceRepo,
-		projectRepo:   projectRepo,
-		taskRepo:      taskRepo,
-		teamRepo:      teamRepo,
-	}
+    return &permissionService{
+        workspaceRepo: workspaceRepo,
+        spaceRepo:     spaceRepo,
+        projectRepo:   projectRepo,
+        taskRepo:      taskRepo,
+        teamRepo:      teamRepo,
+        folderRepo:    folderRepo,  // ✅ Add this
+    }
 }
-
 // ============================================
 // Permission Hierarchy Helpers
 // ============================================
@@ -175,13 +177,18 @@ func (s *permissionService) CanManageSpace(ctx context.Context, userID, spaceID 
 }
 
 func (s *permissionService) GetSpaceRole(ctx context.Context, userID, spaceID string) string {
-	space, err := s.spaceRepo.FindByID(ctx, spaceID)
-	if err != nil || space == nil {
-		return ""
-	}
+    // ✅ Check direct space membership first
+    member, err := s.spaceRepo.FindMember(ctx, spaceID, userID)
+    if err == nil && member != nil {
+        return normalizeRole(member.Role)
+    }
 
-	// Inherit from workspace
-	return s.GetWorkspaceRole(ctx, userID, space.WorkspaceID)
+    // Fall back to workspace role
+    space, err := s.spaceRepo.FindByID(ctx, spaceID)
+    if err != nil || space == nil {
+        return ""
+    }
+    return s.GetWorkspaceRole(ctx, userID, space.WorkspaceID)
 }
 
 func (s *permissionService) isAllowedInSpace(ctx context.Context, userID string, space *repository.Space) bool {
@@ -238,21 +245,27 @@ func (s *permissionService) CanEditProject(ctx context.Context, userID, projectI
 }
 
 func (s *permissionService) GetProjectRole(ctx context.Context, userID, projectID string) string {
-	// Check direct project membership
-	member, err := s.projectRepo.FindMember(ctx, projectID, userID)
-	if err == nil && member != nil {
-		return normalizeRole(member.Role)
-	}
+    // ✅ Check direct project membership
+    member, err := s.projectRepo.FindMember(ctx, projectID, userID)
+    if err == nil && member != nil {
+        return normalizeRole(member.Role)
+    }
 
-	// Fall back to space/workspace role
-	project, err := s.projectRepo.FindByID(ctx, projectID)
-	if err != nil || project == nil {
-		return ""
-	}
+    project, err := s.projectRepo.FindByID(ctx, projectID)
+    if err != nil || project == nil {
+        return ""
+    }
 
-	return s.GetSpaceRole(ctx, userID, project.SpaceID)
+    // ✅ Check folder membership if project is in a folder
+    if project.FolderID != nil {
+        folderMember, _ := s.folderRepo.FindMember(ctx, *project.FolderID, userID)
+        if folderMember != nil {
+            return normalizeRole(folderMember.Role)
+        }
+    }
+
+    return s.GetSpaceRole(ctx, userID, project.SpaceID)
 }
-
 // ============================================
 // Task Permissions
 // ============================================
@@ -267,39 +280,37 @@ func (s *permissionService) CanAccessTask(ctx context.Context, userID, taskID st
 }
 
 func (s *permissionService) CanEditTask(ctx context.Context, userID, taskID string) bool {
-	task, err := s.taskRepo.FindByID(ctx, taskID)
-	if err != nil || task == nil {
-		return false
-	}
+    task, err := s.taskRepo.FindByID(ctx, taskID)
+    if err != nil || task == nil {
+        return false
+    }
 
-	// Task assignee can always edit
-	if task.AssigneeID != nil && *task.AssigneeID == userID {
-		return true
-	}
+    // ✅ Check if user is one of the assignees (it's an array!)
+    for _, assigneeID := range task.AssigneeIDs {
+        if assigneeID == userID {
+            return true
+        }
+    }
 
-	// Task reporter can always edit
-	if task.ReporterID == userID {
-		return true
-	}
+    // ✅ NO ReporterID field exists - remove this check or add CreatedBy field
+    // You might want to add a CreatedBy/ReporterID field to Task struct
 
-	// Check project-level edit permission
-	return s.CanEditProject(ctx, userID, task.ProjectID)
+    // Check project-level edit permission
+    return s.CanEditProject(ctx, userID, task.ProjectID)
 }
+
 
 func (s *permissionService) CanDeleteTask(ctx context.Context, userID, taskID string) bool {
-	task, err := s.taskRepo.FindByID(ctx, taskID)
-	if err != nil || task == nil {
-		return false
-	}
+    task, err := s.taskRepo.FindByID(ctx, taskID)
+    if err != nil || task == nil {
+        return false
+    }
 
-	// Task reporter can delete
-	if task.ReporterID == userID {
-		return true
-	}
-
-	// Project managers can delete
-	return s.CanManageProject(ctx, userID, task.ProjectID)
+    // ✅ NO ReporterID field exists - remove or add to struct
+    // Project managers can delete
+    return s.CanManageProject(ctx, userID, task.ProjectID)
 }
+
 
 // ============================================
 // Team Permissions

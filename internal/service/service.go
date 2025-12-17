@@ -19,6 +19,9 @@ var (
 	ErrUnauthorized       = errors.New("unauthorized")
 	ErrForbidden          = errors.New("forbidden")
 	ErrConflict           = errors.New("resource already exists")
+	ErrInvalidEntityType  = errors.New("invalid entity type")
+	ErrInvalidInput       = errors.New("invalid input")
+	ErrHasSubtasks        = errors.New("task has subtasks and cannot be deleted")
 )
 
 // ============================================
@@ -28,20 +31,19 @@ var (
 type Services struct {
 	Auth         AuthService
 	User         UserService
+	Folder       FolderService
 	Workspace    WorkspaceService
 	Space        SpaceService
 	Project      ProjectService
-	Sprint       SprintService
 	Task         TaskService
-	Comment      CommentService
 	Label        LabelService
 	Notification NotificationService
 	Team         TeamService
 	Invitation   InvitationService
 	Activity     ActivityService
-	TaskWatcher  TaskWatcherService
 	Chat         ChatService
 	Permission   PermissionService
+	Member       MemberService
 	Broadcaster  *socket.Broadcaster
 }
 
@@ -55,15 +57,60 @@ type ServiceDeps struct {
 }
 
 func NewServices(deps *ServiceDeps) *Services {
+	// ✅ Create MemberService first (needed by other services)
+	memberService := NewMemberService(
+		deps.Repos.WorkspaceRepo,
+		deps.Repos.SpaceRepo,
+		deps.Repos.FolderRepo,
+		deps.Repos.ProjectRepo,
+		deps.Repos.UserRepo,
+		deps.NotifSvc,
+	)
+
+	// ✅ Create PermissionService (needed by TaskService)
+	permissionService := NewPermissionService(
+		deps.Repos.WorkspaceRepo,
+		deps.Repos.SpaceRepo,
+		deps.Repos.ProjectRepo,
+		deps.Repos.TaskRepo,
+		deps.Repos.TeamRepo,
+		deps.Repos.FolderRepo, // ✅ Added missing folderRepo
+	)
+
 	return &Services{
-		Auth:         NewAuthService(deps.Config, deps.Repos.UserRepo),
-		User:         NewUserService(deps.Repos.UserRepo),
-		Workspace:    NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc),
-		Space:        NewSpaceService(deps.Repos.SpaceRepo),
-		Project:      NewProjectService(deps.Repos.ProjectRepo, deps.Repos.UserRepo, deps.NotifSvc),
-		Sprint:       NewSprintService(deps.Repos.SprintRepo, deps.Repos.TaskRepo, deps.Repos.ProjectRepo, deps.NotifSvc),
-		Task:         NewTaskService(deps.Repos.TaskRepo, deps.Repos.ProjectRepo, deps.Repos.UserRepo, deps.NotifSvc),
-		Comment:      NewCommentService(deps.Repos.CommentRepo, deps.Repos.TaskRepo, deps.Repos.UserRepo, deps.NotifSvc),
+		Auth:      NewAuthService(deps.Config, deps.Repos.UserRepo),
+		User:      NewUserService(deps.Repos.UserRepo),
+		Workspace: NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc),
+		Space: NewSpaceService(
+			deps.Repos.SpaceRepo,
+			deps.Repos.WorkspaceRepo,
+			memberService,
+		),
+		Folder: NewFolderService(
+			deps.Repos.FolderRepo,
+			deps.Repos.SpaceRepo,
+			memberService,
+		),
+		Project: NewProjectService(
+			deps.Repos.ProjectRepo,
+			deps.Repos.SpaceRepo,
+			deps.Repos.FolderRepo,
+			memberService,
+		),
+		// ✅ CORRECTED TaskService with ALL required repos and services
+		Task: NewTaskService(
+			deps.Repos.TaskRepo,
+			deps.Repos.TaskCommentRepo,
+			deps.Repos.TaskAttachmentRepo,
+			deps.Repos.TimeEntryRepo,
+			deps.Repos.TaskDependencyRepo,
+			deps.Repos.TaskChecklistRepo,
+			deps.Repos.TaskActivityRepo,
+			deps.Repos.ProjectRepo,
+			deps.Repos.SprintRepo,
+			memberService,
+			permissionService,
+		),
 		Label:        NewLabelService(deps.Repos.LabelRepo),
 		Notification: NewNotificationService(deps.Repos.NotificationRepo),
 		Team:         NewTeamService(deps.Repos.TeamRepo, deps.Repos.UserRepo, deps.Repos.WorkspaceRepo, deps.NotifSvc, deps.EmailSvc, deps.Broadcaster),
@@ -77,9 +124,9 @@ func NewServices(deps *ServiceDeps) *Services {
 			deps.EmailSvc,
 		),
 		Activity:    NewActivityService(deps.Repos.ActivityRepo),
-		TaskWatcher: NewTaskWatcherService(deps.Repos.TaskWatcherRepo),
 		Chat:        NewChatService(deps.Repos.ChatRepo, deps.Repos.UserRepo, deps.NotifSvc, deps.Broadcaster),
-		Permission:  NewPermissionService(deps.Repos.WorkspaceRepo, deps.Repos.SpaceRepo, deps.Repos.ProjectRepo, deps.Repos.TaskRepo, deps.Repos.TeamRepo),
+		Permission:  permissionService,
+		Member:      memberService,
 		Broadcaster: deps.Broadcaster,
 	}
 }

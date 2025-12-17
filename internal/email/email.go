@@ -633,6 +633,16 @@ func (s *Service) SendProjectInvitation(to string, data ProjectInvitationData) e
 	)
 }
 
+
+func (s *Service) SendFolderInvitation(to string, data ProjectInvitationData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Invitation to join project %s", data.ProjectName),
+		"project_invitation",
+		data,
+	)
+}
+
 // SendWorkspaceInvitation sends a workspace invitation email
 func (s *Service) SendWorkspaceInvitation(to string, data WorkspaceInvitationData) error {
 	return s.SendWithTemplate(

@@ -3,461 +3,416 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/lib/pq"
 )
 
+// Task model
 type Task struct {
-	ID          string
-	Key         string
-	Title       string
-	Description *string
-	Status      string
-	Priority    string
-	Type        string
+	ID             string     `json:"id" db:"id"`
+	ProjectID      string     `json:"projectId" db:"project_id"`
+	SprintID       *string    `json:"sprintId,omitempty" db:"sprint_id"`
+	ParentTaskID   *string    `json:"parentTaskId,omitempty" db:"parent_task_id"`
+	Title          string     `json:"title" db:"title"`
+	Description    *string    `json:"description,omitempty" db:"description"`
+	Status         string     `json:"status" db:"status"`
+	Priority       string     `json:"priority" db:"priority"`
+	AssigneeIDs    []string   `json:"assigneeIds" db:"assignee_ids"`
+	WatcherIDs     []string   `json:"watcherIds" db:"watcher_ids"`
+	LabelIDs       []string   `json:"labelIds" db:"label_ids"`
+	EstimatedHours *float64   `json:"estimatedHours,omitempty" db:"estimated_hours"`
+	ActualHours    *float64   `json:"actualHours,omitempty" db:"actual_hours"`
+	StoryPoints    *int       `json:"storyPoints,omitempty" db:"story_points"`
+	StartDate      *time.Time `json:"startDate,omitempty" db:"start_date"`
+	DueDate        *time.Time `json:"dueDate,omitempty" db:"due_date"`
+	CompletedAt    *time.Time `json:"completedAt,omitempty" db:"completed_at"`
+	Blocked        bool       `json:"blocked" db:"blocked"`
+	Position       int        `json:"position" db:"position"`
+	CreatedAt      time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt      time.Time  `json:"updatedAt" db:"updated_at"`
+}
+
+// TaskFilters for advanced filtering
+type TaskFilters struct {
 	ProjectID   string
 	SprintID    *string
-	AssigneeID  *string
-	ReporterID  string
-	ParentID    *string
-	StoryPoints *int
-	DueDate     *time.Time
-	OrderIndex  int
-	Labels      []string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	Assignee    *User
-	Reporter    *User
+	AssigneeIDs []string
+	Status      []string
+	Priority    []string
+	LabelIDs    []string
+	Search      *string
+	DueBefore   *time.Time
+	DueAfter    *time.Time
+	Overdue     *bool
+	Blocked     *bool
+	Limit       int
+	Offset      int
 }
 
-type TaskFilters struct {
-	Status   []string
-	Priority []string
-	Type     []string
-	SprintID *string
-	Search   string
-	Limit    int
-	Offset   int
-}
-
-type BulkTaskUpdate struct {
-	ID         string
-	Status     *string
-	SprintID   *string
-	OrderIndex *int
-}
-
+// TaskRepository interface
 type TaskRepository interface {
+	// Basic CRUD
 	Create(ctx context.Context, task *Task) error
 	FindByID(ctx context.Context, id string) (*Task, error)
-	FindByKey(ctx context.Context, key string) (*Task, error)
-	FindByProjectID(ctx context.Context, projectID string, filters *TaskFilters) ([]*Task, error)
-	FindBySprintID(ctx context.Context, sprintID string) ([]*Task, error)
-	FindBacklog(ctx context.Context, projectID string) ([]*Task, error)
-	FindOverdue(ctx context.Context) ([]*Task, error)
-	FindDueSoon(ctx context.Context, within time.Duration) ([]*Task, error)
-	FindByAssignee(ctx context.Context, assigneeID string) ([]*Task, error)
 	Update(ctx context.Context, task *Task) error
 	Delete(ctx context.Context, id string) error
-	BulkUpdate(ctx context.Context, updates []BulkTaskUpdate) error
-	CountBySprintID(ctx context.Context, sprintID string) (total int, completed int, err error)
+
+	// Listing methods
+	FindByProjectID(ctx context.Context, projectID string) ([]*Task, error)
+	FindBySprintID(ctx context.Context, sprintID string) ([]*Task, error)
+	FindByParentTaskID(ctx context.Context, parentTaskID string) ([]*Task, error)
+	FindByAssigneeID(ctx context.Context, assigneeID string) ([]*Task, error)
+	FindByStatus(ctx context.Context, projectID, status string) ([]*Task, error)
+	FindBacklog(ctx context.Context, projectID string) ([]*Task, error)
+
+	// Quick updates
+	UpdateStatus(ctx context.Context, taskID, status string) error
+	UpdatePriority(ctx context.Context, taskID, priority string) error
+	MarkComplete(ctx context.Context, taskID string) error
+
+	// Assignee/Watcher management
+	AddAssignee(ctx context.Context, taskID, assigneeID string) error
+	RemoveAssignee(ctx context.Context, taskID, assigneeID string) error
+	AddWatcher(ctx context.Context, taskID, watcherID string) error
+	RemoveWatcher(ctx context.Context, taskID, watcherID string) error
+
+	// Advanced filtering
+	FindWithFilters(ctx context.Context, filters *TaskFilters) ([]*Task, int, error)
+	FindOverdue(ctx context.Context, projectID string) ([]*Task, error)
+	FindBlocked(ctx context.Context, projectID string) ([]*Task, error)
+
+	// Sprint/Scrum specific
+	GetSprintVelocity(ctx context.Context, sprintID string) (int, error)
+	GetCompletedStoryPoints(ctx context.Context, sprintID string) (int, error)
+
+	// Bulk operations
+	BulkUpdateStatus(ctx context.Context, taskIDs []string, status string) error
+	BulkMoveToSprint(ctx context.Context, taskIDs []string, sprintID string) error
 }
 
-type pgTaskRepository struct {
-	pool *pgxpool.Pool
+// taskRepository implementation
+type taskRepository struct {
+	db *sql.DB
 }
 
-func NewTaskRepository(pool *pgxpool.Pool) TaskRepository {
-	return &pgTaskRepository{pool: pool}
+// NewTaskRepository creates a new TaskRepository
+func NewTaskRepository(db *sql.DB) TaskRepository {
+	return &taskRepository{db: db}
 }
 
-func (r *pgTaskRepository) Create(ctx context.Context, task *Task) error {
-	if task.Status == "" {
-		task.Status = "backlog"
-	}
-	if task.Priority == "" {
-		task.Priority = "medium"
-	}
-	if task.Type == "" {
-		task.Type = "task"
-	}
-	if task.Labels == nil {
-		task.Labels = []string{}
-	}
-
+// Create inserts a new task
+func (r *taskRepository) Create(ctx context.Context, task *Task) error {
 	query := `
-		INSERT INTO tasks (key, title, description, status, priority, type, project_id, sprint_id, 
-		                   assignee_id, reporter_id, parent_id, story_points, due_date, order_index, labels)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-		RETURNING id, created_at, updated_at
-	`
-	return r.pool.QueryRow(ctx, query,
-		task.Key, task.Title, task.Description, task.Status, task.Priority, task.Type,
-		task.ProjectID, task.SprintID, task.AssigneeID, task.ReporterID, task.ParentID,
-		task.StoryPoints, task.DueDate, task.OrderIndex, task.Labels,
-	).Scan(&task.ID, &task.CreatedAt, &task.UpdatedAt)
+		INSERT INTO tasks (
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, assignee_ids, watcher_ids, label_ids,
+			estimated_hours, actual_hours, story_points, start_date, due_date,
+			blocked, position, created_at, updated_at
+		) VALUES (
+			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+			$11, $12, $13, $14, $15, $16, COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1), 0),
+			NOW(), NOW()
+		) RETURNING id, created_at, updated_at, position`
+
+	return r.db.QueryRowContext(
+		ctx, query,
+		task.ProjectID, task.SprintID, task.ParentTaskID, task.Title, task.Description,
+		task.Status, task.Priority, pq.Array(task.AssigneeIDs), pq.Array(task.WatcherIDs),
+		pq.Array(task.LabelIDs), task.EstimatedHours, task.ActualHours, task.StoryPoints,
+		task.StartDate, task.DueDate, task.Blocked,
+	).Scan(&task.ID, &task.CreatedAt, &task.UpdatedAt, &task.Position)
 }
 
-func (r *pgTaskRepository) FindByID(ctx context.Context, id string) (*Task, error) {
-	query := `
-		SELECT t.id, t.key, t.title, t.description, t.status, t.priority, t.type,
-		       t.project_id, t.sprint_id, t.assignee_id, t.reporter_id, t.parent_id,
-		       t.story_points, t.due_date, t.order_index, t.labels, t.created_at, t.updated_at,
-		       a.id, a.name, a.email, a.avatar,
-		       rep.id, rep.name, rep.email, rep.avatar
-		FROM tasks t
-		LEFT JOIN users a ON t.assignee_id = a.id
-		LEFT JOIN users rep ON t.reporter_id = rep.id
-		WHERE t.id = $1
-	`
+// FindByID retrieves a task by ID
+func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error) {
+	query := `SELECT * FROM tasks WHERE id = $1`
+	
 	task := &Task{}
-	var assigneeID, assigneeName, assigneeEmail, assigneeAvatar sql.NullString
-	var reporterID, reporterName, reporterEmail, reporterAvatar sql.NullString
-
-	err := r.pool.QueryRow(ctx, query, id).Scan(
-		&task.ID, &task.Key, &task.Title, &task.Description, &task.Status, &task.Priority, &task.Type,
-		&task.ProjectID, &task.SprintID, &task.AssigneeID, &task.ReporterID, &task.ParentID,
-		&task.StoryPoints, &task.DueDate, &task.OrderIndex, &task.Labels, &task.CreatedAt, &task.UpdatedAt,
-		&assigneeID, &assigneeName, &assigneeEmail, &assigneeAvatar,
-		&reporterID, &reporterName, &reporterEmail, &reporterAvatar,
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&task.ID, &task.ProjectID, &task.SprintID, &task.ParentTaskID,
+		&task.Title, &task.Description, &task.Status, &task.Priority,
+		pq.Array(&task.AssigneeIDs), pq.Array(&task.WatcherIDs), pq.Array(&task.LabelIDs),
+		&task.EstimatedHours, &task.ActualHours, &task.StoryPoints,
+		&task.StartDate, &task.DueDate, &task.CompletedAt, &task.Blocked,
+		&task.Position, &task.CreatedAt, &task.UpdatedAt,
 	)
-	if err == pgx.ErrNoRows {
+	
+	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	if assigneeID.Valid {
-		task.Assignee = &User{ID: assigneeID.String, Name: assigneeName.String, Email: assigneeEmail.String}
-		if assigneeAvatar.Valid {
-			task.Assignee.Avatar = &assigneeAvatar.String
-		}
-	}
-	if reporterID.Valid {
-		task.Reporter = &User{ID: reporterID.String, Name: reporterName.String, Email: reporterEmail.String}
-		if reporterAvatar.Valid {
-			task.Reporter.Avatar = &reporterAvatar.String
-		}
-	}
-
+	
 	return task, nil
 }
 
-func (r *pgTaskRepository) FindByKey(ctx context.Context, key string) (*Task, error) {
-	query := `SELECT id FROM tasks WHERE UPPER(key) = UPPER($1)`
-	var id string
-	err := r.pool.QueryRow(ctx, query, key).Scan(&id)
-	if err == pgx.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return r.FindByID(ctx, id)
-}
-
-func (r *pgTaskRepository) FindByProjectID(ctx context.Context, projectID string, filters *TaskFilters) ([]*Task, error) {
+// Update updates an existing task
+func (r *taskRepository) Update(ctx context.Context, task *Task) error {
 	query := `
-		SELECT t.id, t.key, t.title, t.description, t.status, t.priority, t.type,
-		       t.project_id, t.sprint_id, t.assignee_id, t.reporter_id, t.parent_id,
-		       t.story_points, t.due_date, t.order_index, t.labels, t.created_at, t.updated_at,
-		       a.id, a.name, a.email, a.avatar,
-		       rep.id, rep.name, rep.email, rep.avatar
-		FROM tasks t
-		LEFT JOIN users a ON t.assignee_id = a.id
-		LEFT JOIN users rep ON t.reporter_id = rep.id
-		WHERE t.project_id = $1
-	`
-	args := []interface{}{projectID}
-	argNum := 1
+		UPDATE tasks SET
+			sprint_id = $2, parent_task_id = $3, title = $4, description = $5,
+			status = $6, priority = $7, assignee_ids = $8, watcher_ids = $9,
+			label_ids = $10, estimated_hours = $11, actual_hours = $12,
+			story_points = $13, start_date = $14, due_date = $15,
+			completed_at = $16, blocked = $17, updated_at = NOW()
+		WHERE id = $1
+		RETURNING updated_at`
 
-	if filters != nil {
-		if len(filters.Status) > 0 {
-			argNum++
-			query += fmt.Sprintf(" AND t.status = ANY($%d)", argNum)
-			args = append(args, filters.Status)
-		}
-		if len(filters.Priority) > 0 {
-			argNum++
-			query += fmt.Sprintf(" AND t.priority = ANY($%d)", argNum)
-			args = append(args, filters.Priority)
-		}
-		if len(filters.Type) > 0 {
-			argNum++
-			query += fmt.Sprintf(" AND t.type = ANY($%d)", argNum)
-			args = append(args, filters.Type)
-		}
-		if filters.SprintID != nil {
-			argNum++
-			query += fmt.Sprintf(" AND t.sprint_id = $%d", argNum)
-			args = append(args, *filters.SprintID)
-		}
-		if filters.Search != "" {
-			argNum++
-			query += fmt.Sprintf(" AND (LOWER(t.title) LIKE LOWER($%d) OR LOWER(t.key) LIKE LOWER($%d))", argNum, argNum)
-			args = append(args, "%"+filters.Search+"%")
-		}
-	}
-
-	query += " ORDER BY t.order_index, t.created_at DESC"
-
-	if filters != nil && filters.Limit > 0 {
-		argNum++
-		query += fmt.Sprintf(" LIMIT $%d", argNum)
-		args = append(args, filters.Limit)
-	}
-	if filters != nil && filters.Offset > 0 {
-		argNum++
-		query += fmt.Sprintf(" OFFSET $%d", argNum)
-		args = append(args, filters.Offset)
-	}
-
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tasks []*Task
-	for rows.Next() {
-		task := &Task{}
-		var assigneeID, assigneeName, assigneeEmail, assigneeAvatar sql.NullString
-		var reporterID, reporterName, reporterEmail, reporterAvatar sql.NullString
-
-		if err := rows.Scan(
-			&task.ID, &task.Key, &task.Title, &task.Description, &task.Status, &task.Priority, &task.Type,
-			&task.ProjectID, &task.SprintID, &task.AssigneeID, &task.ReporterID, &task.ParentID,
-			&task.StoryPoints, &task.DueDate, &task.OrderIndex, &task.Labels, &task.CreatedAt, &task.UpdatedAt,
-			&assigneeID, &assigneeName, &assigneeEmail, &assigneeAvatar,
-			&reporterID, &reporterName, &reporterEmail, &reporterAvatar,
-		); err != nil {
-			return nil, err
-		}
-
-		if assigneeID.Valid {
-			task.Assignee = &User{ID: assigneeID.String, Name: assigneeName.String, Email: assigneeEmail.String}
-			if assigneeAvatar.Valid {
-				task.Assignee.Avatar = &assigneeAvatar.String
-			}
-		}
-		if reporterID.Valid {
-			task.Reporter = &User{ID: reporterID.String, Name: reporterName.String, Email: reporterEmail.String}
-			if reporterAvatar.Valid {
-				task.Reporter.Avatar = &reporterAvatar.String
-			}
-		}
-
-		tasks = append(tasks, task)
-	}
-	return tasks, nil
+	return r.db.QueryRowContext(
+		ctx, query,
+		task.ID, task.SprintID, task.ParentTaskID, task.Title, task.Description,
+		task.Status, task.Priority, pq.Array(task.AssigneeIDs), pq.Array(task.WatcherIDs),
+		pq.Array(task.LabelIDs), task.EstimatedHours, task.ActualHours, task.StoryPoints,
+		task.StartDate, task.DueDate, task.CompletedAt, task.Blocked,
+	).Scan(&task.UpdatedAt)
 }
 
-func (r *pgTaskRepository) FindBySprintID(ctx context.Context, sprintID string) ([]*Task, error) {
-	query := `
-		SELECT t.id, t.key, t.title, t.description, t.status, t.priority, t.type,
-		       t.project_id, t.sprint_id, t.assignee_id, t.reporter_id, t.parent_id,
-		       t.story_points, t.due_date, t.order_index, t.labels, t.created_at, t.updated_at,
-		       a.id, a.name, a.email, a.avatar,
-		       rep.id, rep.name, rep.email, rep.avatar
-		FROM tasks t
-		LEFT JOIN users a ON t.assignee_id = a.id
-		LEFT JOIN users rep ON t.reporter_id = rep.id
-		WHERE t.sprint_id = $1
-		ORDER BY t.order_index
-	`
-	rows, err := r.pool.Query(ctx, query, sprintID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tasks []*Task
-	for rows.Next() {
-		task := &Task{}
-		var assigneeID, assigneeName, assigneeEmail, assigneeAvatar sql.NullString
-		var reporterID, reporterName, reporterEmail, reporterAvatar sql.NullString
-
-		if err := rows.Scan(
-			&task.ID, &task.Key, &task.Title, &task.Description, &task.Status, &task.Priority, &task.Type,
-			&task.ProjectID, &task.SprintID, &task.AssigneeID, &task.ReporterID, &task.ParentID,
-			&task.StoryPoints, &task.DueDate, &task.OrderIndex, &task.Labels, &task.CreatedAt, &task.UpdatedAt,
-			&assigneeID, &assigneeName, &assigneeEmail, &assigneeAvatar,
-			&reporterID, &reporterName, &reporterEmail, &reporterAvatar,
-		); err != nil {
-			return nil, err
-		}
-
-		if assigneeID.Valid {
-			task.Assignee = &User{ID: assigneeID.String, Name: assigneeName.String, Email: assigneeEmail.String}
-			if assigneeAvatar.Valid {
-				task.Assignee.Avatar = &assigneeAvatar.String
-			}
-		}
-		if reporterID.Valid {
-			task.Reporter = &User{ID: reporterID.String, Name: reporterName.String, Email: reporterEmail.String}
-			if reporterAvatar.Valid {
-				task.Reporter.Avatar = &reporterAvatar.String
-			}
-		}
-
-		tasks = append(tasks, task)
-	}
-	return tasks, nil
+// Delete removes a task
+func (r *taskRepository) Delete(ctx context.Context, id string) error {
+	query := `DELETE FROM tasks WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, id)
+	return err
 }
 
-func (r *pgTaskRepository) FindBacklog(ctx context.Context, projectID string) ([]*Task, error) {
-	query := `SELECT id FROM tasks WHERE project_id = $1 AND sprint_id IS NULL ORDER BY order_index`
-	rows, err := r.pool.Query(ctx, query, projectID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tasks []*Task
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		task, _ := r.FindByID(ctx, id)
-		if task != nil {
-			tasks = append(tasks, task)
-		}
-	}
-	return tasks, nil
+// FindByProjectID retrieves all tasks for a project
+func (r *taskRepository) FindByProjectID(ctx context.Context, projectID string) ([]*Task, error) {
+	query := `SELECT * FROM tasks WHERE project_id = $1 ORDER BY position ASC, created_at DESC`
+	return r.queryTasks(ctx, query, projectID)
 }
 
-func (r *pgTaskRepository) FindOverdue(ctx context.Context) ([]*Task, error) {
-	query := `SELECT id FROM tasks WHERE due_date < NOW() AND status NOT IN ('done', 'cancelled')`
-	rows, err := r.pool.Query(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tasks []*Task
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		task, _ := r.FindByID(ctx, id)
-		if task != nil {
-			tasks = append(tasks, task)
-		}
-	}
-	return tasks, nil
+// FindBySprintID retrieves all tasks for a sprint
+func (r *taskRepository) FindBySprintID(ctx context.Context, sprintID string) ([]*Task, error) {
+	query := `SELECT * FROM tasks WHERE sprint_id = $1 ORDER BY position ASC, created_at DESC`
+	return r.queryTasks(ctx, query, sprintID)
 }
 
-func (r *pgTaskRepository) FindDueSoon(ctx context.Context, within time.Duration) ([]*Task, error) {
-	query := `SELECT id FROM tasks WHERE due_date > NOW() AND due_date < $1 AND status NOT IN ('done', 'cancelled')`
-	deadline := time.Now().Add(within)
-	rows, err := r.pool.Query(ctx, query, deadline)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tasks []*Task
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		task, _ := r.FindByID(ctx, id)
-		if task != nil {
-			tasks = append(tasks, task)
-		}
-	}
-	return tasks, nil
+// FindByParentTaskID retrieves all subtasks
+func (r *taskRepository) FindByParentTaskID(ctx context.Context, parentTaskID string) ([]*Task, error) {
+	query := `SELECT * FROM tasks WHERE parent_task_id = $1 ORDER BY position ASC, created_at DESC`
+	return r.queryTasks(ctx, query, parentTaskID)
 }
 
-func (r *pgTaskRepository) FindByAssignee(ctx context.Context, assigneeID string) ([]*Task, error) {
-	query := `SELECT id FROM tasks WHERE assignee_id = $1 ORDER BY created_at DESC`
-	rows, err := r.pool.Query(ctx, query, assigneeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tasks []*Task
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		task, _ := r.FindByID(ctx, id)
-		if task != nil {
-			tasks = append(tasks, task)
-		}
-	}
-	return tasks, nil
+// FindByAssigneeID retrieves tasks assigned to a user
+func (r *taskRepository) FindByAssigneeID(ctx context.Context, assigneeID string) ([]*Task, error) {
+	query := `SELECT * FROM tasks WHERE $1 = ANY(assignee_ids) ORDER BY due_date ASC NULLS LAST, created_at DESC`
+	return r.queryTasks(ctx, query, assigneeID)
 }
 
-func (r *pgTaskRepository) Update(ctx context.Context, task *Task) error {
+// FindByStatus retrieves tasks by status in a project
+func (r *taskRepository) FindByStatus(ctx context.Context, projectID, status string) ([]*Task, error) {
+	query := `SELECT * FROM tasks WHERE project_id = $1 AND status = $2 ORDER BY position ASC`
+	return r.queryTasks(ctx, query, projectID, status)
+}
+
+// FindBacklog retrieves backlog tasks (not in any sprint)
+func (r *taskRepository) FindBacklog(ctx context.Context, projectID string) ([]*Task, error) {
+	query := `SELECT * FROM tasks WHERE project_id = $1 AND sprint_id IS NULL AND parent_task_id IS NULL ORDER BY position ASC`
+	return r.queryTasks(ctx, query, projectID)
+}
+
+// UpdateStatus updates task status
+func (r *taskRepository) UpdateStatus(ctx context.Context, taskID, status string) error {
 	query := `
 		UPDATE tasks SET 
-			title = $2, description = $3, status = $4, priority = $5, type = $6,
-			sprint_id = $7, assignee_id = $8, story_points = $9, due_date = $10,
-			order_index = $11, labels = $12, updated_at = NOW()
-		WHERE id = $1
-	`
-	_, err := r.pool.Exec(ctx, query,
-		task.ID, task.Title, task.Description, task.Status, task.Priority, task.Type,
-		task.SprintID, task.AssigneeID, task.StoryPoints, task.DueDate,
-		task.OrderIndex, task.Labels,
-	)
+			status = $2, 
+			completed_at = CASE WHEN $2 = 'done' THEN NOW() ELSE completed_at END,
+			updated_at = NOW()
+		WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, taskID, status)
 	return err
 }
 
-func (r *pgTaskRepository) Delete(ctx context.Context, id string) error {
-	query := `DELETE FROM tasks WHERE id = $1`
-	_, err := r.pool.Exec(ctx, query, id)
+// UpdatePriority updates task priority
+func (r *taskRepository) UpdatePriority(ctx context.Context, taskID, priority string) error {
+	query := `UPDATE tasks SET priority = $2, updated_at = NOW() WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, taskID, priority)
 	return err
 }
 
-func (r *pgTaskRepository) BulkUpdate(ctx context.Context, updates []BulkTaskUpdate) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	for _, u := range updates {
-		if u.Status != nil {
-			_, err = tx.Exec(ctx, `UPDATE tasks SET status = $2, updated_at = NOW() WHERE id = $1`, u.ID, *u.Status)
-			if err != nil {
-				return err
-			}
-		}
-		if u.SprintID != nil {
-			_, err = tx.Exec(ctx, `UPDATE tasks SET sprint_id = $2, updated_at = NOW() WHERE id = $1`, u.ID, *u.SprintID)
-			if err != nil {
-				return err
-			}
-		}
-		if u.OrderIndex != nil {
-			_, err = tx.Exec(ctx, `UPDATE tasks SET order_index = $2, updated_at = NOW() WHERE id = $1`, u.ID, *u.OrderIndex)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return tx.Commit(ctx)
+// MarkComplete marks a task as complete
+func (r *taskRepository) MarkComplete(ctx context.Context, taskID string) error {
+	query := `UPDATE tasks SET status = 'done', completed_at = NOW(), updated_at = NOW() WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, taskID)
+	return err
 }
 
-func (r *pgTaskRepository) CountBySprintID(ctx context.Context, sprintID string) (total int, completed int, err error) {
+// AddAssignee adds an assignee to a task
+func (r *taskRepository) AddAssignee(ctx context.Context, taskID, assigneeID string) error {
 	query := `
-		SELECT 
-			COUNT(*) as total,
-			COUNT(*) FILTER (WHERE status = 'done') as completed
-		FROM tasks WHERE sprint_id = $1
-	`
-	err = r.pool.QueryRow(ctx, query, sprintID).Scan(&total, &completed)
-	return
+		UPDATE tasks 
+		SET assignee_ids = array_append(assignee_ids, $2),
+		    updated_at = NOW()
+		WHERE id = $1 AND NOT ($2 = ANY(assignee_ids))`
+	_, err := r.db.ExecContext(ctx, query, taskID, assigneeID)
+	return err
+}
+
+// RemoveAssignee removes an assignee from a task
+func (r *taskRepository) RemoveAssignee(ctx context.Context, taskID, assigneeID string) error {
+	query := `
+		UPDATE tasks 
+		SET assignee_ids = array_remove(assignee_ids, $2),
+		    updated_at = NOW()
+		WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, taskID, assigneeID)
+	return err
+}
+
+// AddWatcher adds a watcher to a task
+func (r *taskRepository) AddWatcher(ctx context.Context, taskID, watcherID string) error {
+	query := `
+		UPDATE tasks 
+		SET watcher_ids = array_append(watcher_ids, $2),
+		    updated_at = NOW()
+		WHERE id = $1 AND NOT ($2 = ANY(watcher_ids))`
+	_, err := r.db.ExecContext(ctx, query, taskID, watcherID)
+	return err
+}
+
+// RemoveWatcher removes a watcher from a task
+func (r *taskRepository) RemoveWatcher(ctx context.Context, taskID, watcherID string) error {
+	query := `
+		UPDATE tasks 
+		SET watcher_ids = array_remove(watcher_ids, $2),
+		    updated_at = NOW()
+		WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, taskID, watcherID)
+	return err
+}
+
+// FindWithFilters performs advanced filtering
+func (r *taskRepository) FindWithFilters(ctx context.Context, filters *TaskFilters) ([]*Task, int, error) {
+	// Build dynamic query based on filters
+	baseQuery := `SELECT * FROM tasks WHERE project_id = $1`
+	countQuery := `SELECT COUNT(*) FROM tasks WHERE project_id = $1`
+	args := []interface{}{filters.ProjectID}
+	argIndex := 2
+
+	// Apply filters
+	if filters.SprintID != nil {
+		baseQuery += ` AND sprint_id = $` + string(rune(argIndex))
+		countQuery += ` AND sprint_id = $` + string(rune(argIndex))
+		args = append(args, *filters.SprintID)
+		argIndex++
+	}
+
+	if len(filters.Status) > 0 {
+		baseQuery += ` AND status = ANY($` + string(rune(argIndex)) + `)`
+		countQuery += ` AND status = ANY($` + string(rune(argIndex)) + `)`
+		args = append(args, pq.Array(filters.Status))
+		argIndex++
+	}
+
+	if len(filters.Priority) > 0 {
+		baseQuery += ` AND priority = ANY($` + string(rune(argIndex)) + `)`
+		countQuery += ` AND priority = ANY($` + string(rune(argIndex)) + `)`
+		args = append(args, pq.Array(filters.Priority))
+		argIndex++
+	}
+
+	if filters.Overdue != nil && *filters.Overdue {
+		baseQuery += ` AND due_date < NOW() AND status != 'done'`
+		countQuery += ` AND due_date < NOW() AND status != 'done'`
+	}
+
+	if filters.Blocked != nil && *filters.Blocked {
+		baseQuery += ` AND blocked = true`
+		countQuery += ` AND blocked = true`
+	}
+
+	// Get total count
+	var total int
+	err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Add pagination
+	baseQuery += ` ORDER BY position ASC LIMIT $` + string(rune(argIndex)) + ` OFFSET $` + string(rune(argIndex+1))
+	args = append(args, filters.Limit, filters.Offset)
+
+	tasks, err := r.queryTasks(ctx, baseQuery, args...)
+	return tasks, total, err
+}
+
+// FindOverdue retrieves overdue tasks
+func (r *taskRepository) FindOverdue(ctx context.Context, projectID string) ([]*Task, error) {
+	query := `
+		SELECT * FROM tasks 
+		WHERE project_id = $1 
+		  AND due_date < NOW() 
+		  AND status != 'done'
+		ORDER BY due_date ASC`
+	return r.queryTasks(ctx, query, projectID)
+}
+
+// FindBlocked retrieves blocked tasks
+func (r *taskRepository) FindBlocked(ctx context.Context, projectID string) ([]*Task, error) {
+	query := `SELECT * FROM tasks WHERE project_id = $1 AND blocked = true ORDER BY created_at DESC`
+	return r.queryTasks(ctx, query, projectID)
+}
+
+// GetSprintVelocity calculates total story points in a sprint
+func (r *taskRepository) GetSprintVelocity(ctx context.Context, sprintID string) (int, error) {
+	query := `SELECT COALESCE(SUM(story_points), 0) FROM tasks WHERE sprint_id = $1`
+	var velocity int
+	err := r.db.QueryRowContext(ctx, query, sprintID).Scan(&velocity)
+	return velocity, err
+}
+
+// GetCompletedStoryPoints calculates completed story points in a sprint
+func (r *taskRepository) GetCompletedStoryPoints(ctx context.Context, sprintID string) (int, error) {
+	query := `SELECT COALESCE(SUM(story_points), 0) FROM tasks WHERE sprint_id = $1 AND status = 'done'`
+	var points int
+	err := r.db.QueryRowContext(ctx, query, sprintID).Scan(&points)
+	return points, err
+}
+
+// BulkUpdateStatus updates status for multiple tasks
+func (r *taskRepository) BulkUpdateStatus(ctx context.Context, taskIDs []string, status string) error {
+	query := `
+		UPDATE tasks SET 
+			status = $2,
+			completed_at = CASE WHEN $2 = 'done' THEN NOW() ELSE completed_at END,
+			updated_at = NOW()
+		WHERE id = ANY($1)`
+	_, err := r.db.ExecContext(ctx, query, pq.Array(taskIDs), status)
+	return err
+}
+
+// BulkMoveToSprint moves multiple tasks to a sprint
+func (r *taskRepository) BulkMoveToSprint(ctx context.Context, taskIDs []string, sprintID string) error {
+	query := `UPDATE tasks SET sprint_id = $2, updated_at = NOW() WHERE id = ANY($1)`
+	_, err := r.db.ExecContext(ctx, query, pq.Array(taskIDs), sprintID)
+	return err
+}
+
+// Helper method to query multiple tasks
+func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...interface{}) ([]*Task, error) {
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []*Task
+	for rows.Next() {
+		task := &Task{}
+		err := rows.Scan(
+			&task.ID, &task.ProjectID, &task.SprintID, &task.ParentTaskID,
+			&task.Title, &task.Description, &task.Status, &task.Priority,
+			pq.Array(&task.AssigneeIDs), pq.Array(&task.WatcherIDs), pq.Array(&task.LabelIDs),
+			&task.EstimatedHours, &task.ActualHours, &task.StoryPoints,
+			&task.StartDate, &task.DueDate, &task.CompletedAt, &task.Blocked,
+			&task.Position, &task.CreatedAt, &task.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+
+	return tasks, rows.Err()
 }
