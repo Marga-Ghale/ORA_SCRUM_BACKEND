@@ -299,3 +299,25 @@ type UserAccessMapResponse struct {
 	Folders    []string `json:"folders"`
 	Projects   []string `json:"projects"`
 }
+
+// ============================================
+// Label DTOs
+// ============================================
+
+type CreateLabelRequest struct {
+	Name  string `json:"name" binding:"required,min=1,max=50"`
+	Color string `json:"color" binding:"required,hexcolor"`
+}
+
+type UpdateLabelRequest struct {
+	Name  *string `json:"name"`
+	Color *string `json:"color"`
+}
+
+type LabelResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Color     string    `json:"color"`
+	ProjectID string    `json:"projectId"`
+	CreatedAt time.Time `json:"createdAt"`
+}
