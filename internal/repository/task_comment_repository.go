@@ -41,7 +41,7 @@ func NewTaskCommentRepository(db *sql.DB) TaskCommentRepository {
 // Create inserts a new comment
 func (r *taskCommentRepository) Create(ctx context.Context, comment *TaskComment) error {
 	query := `
-		INSERT INTO task_comments (
+		INSERT INTO comments (
 			id, task_id, user_id, content, mentioned_users, created_at, updated_at
 		) VALUES (
 			gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW()
@@ -58,7 +58,7 @@ func (r *taskCommentRepository) Create(ctx context.Context, comment *TaskComment
 
 // FindByID retrieves a comment by ID
 func (r *taskCommentRepository) FindByID(ctx context.Context, id string) (*TaskComment, error) {
-	query := `SELECT * FROM task_comments WHERE id = $1`
+	query := `SELECT * FROM comments WHERE id = $1`
 
 	comment := &TaskComment{}
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
@@ -83,7 +83,7 @@ func (r *taskCommentRepository) FindByID(ctx context.Context, id string) (*TaskC
 
 // FindByTaskID retrieves all comments for a task
 func (r *taskCommentRepository) FindByTaskID(ctx context.Context, taskID string) ([]*TaskComment, error) {
-	query := `SELECT * FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC`
+	query := `SELECT * FROM comments WHERE task_id = $1 ORDER BY created_at ASC`
 
 	rows, err := r.db.QueryContext(ctx, query, taskID)
 	if err != nil {
@@ -115,7 +115,7 @@ func (r *taskCommentRepository) FindByTaskID(ctx context.Context, taskID string)
 // Update updates an existing comment
 func (r *taskCommentRepository) Update(ctx context.Context, comment *TaskComment) error {
 	query := `
-		UPDATE task_comments SET
+		UPDATE comments SET
 			content = $2,
 			mentioned_users = $3,
 			updated_at = NOW()
@@ -132,7 +132,7 @@ func (r *taskCommentRepository) Update(ctx context.Context, comment *TaskComment
 
 // Delete removes a comment
 func (r *taskCommentRepository) Delete(ctx context.Context, id string) error {
-	query := `DELETE FROM task_comments WHERE id = $1`
+	query := `DELETE FROM comments WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, id)
 	return err
 }

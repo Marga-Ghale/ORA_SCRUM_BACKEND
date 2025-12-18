@@ -106,72 +106,55 @@ func NewTaskRepository(db *sql.DB) TaskRepository {
 }
 
 // Create inserts a new task
+// Fix the Create method to include Type field
 func (r *taskRepository) Create(ctx context.Context, task *Task) error {
 	query := `
 		INSERT INTO tasks (
 			id, project_id, sprint_id, parent_task_id, title, description,
-			status, priority, assignee_ids, watcher_ids, label_ids,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
 			estimated_hours, actual_hours, story_points, start_date, due_date,
 			blocked, position, created_by, created_at, updated_at
 		) VALUES (
-			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1), 0),
-			$17, NOW(), NOW()
+			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+			$12, $13, $14, $15, $16, $17, 
+			COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1), 0),
+			$18, NOW(), NOW()
 		) RETURNING id, created_at, updated_at, position`
 
 	return r.db.QueryRowContext(
 		ctx, query,
 		task.ProjectID, task.SprintID, task.ParentTaskID, task.Title, task.Description,
-		task.Status, task.Priority, pq.Array(task.AssigneeIDs), pq.Array(task.WatcherIDs),
+		task.Status, task.Priority, task.Type, // Added Type here
+		pq.Array(task.AssigneeIDs), pq.Array(task.WatcherIDs),
 		pq.Array(task.LabelIDs), task.EstimatedHours, task.ActualHours, task.StoryPoints,
 		task.StartDate, task.DueDate, task.Blocked, task.CreatedBy,
 	).Scan(&task.ID, &task.CreatedAt, &task.UpdatedAt, &task.Position)
 }
 
-// FindByID retrieves a task by ID
-func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error) {
-	query := `SELECT * FROM tasks WHERE id = $1`
-	
-	task := &Task{}
-	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&task.ID, &task.Title, &task.Description, &task.Status, &task.Priority, &task.Type,
-		&task.ProjectID, &task.SprintID, &task.ParentTaskID,
-		pq.Array(&task.AssigneeIDs), pq.Array(&task.WatcherIDs), pq.Array(&task.LabelIDs),
-		&task.StoryPoints, &task.EstimatedHours, &task.ActualHours,
-		&task.StartDate, &task.DueDate, &task.CompletedAt, &task.Blocked,
-		&task.Position, &task.CreatedBy, &task.CreatedAt, &task.UpdatedAt,
-	)
-	
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	
-	return task, nil
-}
 
 // Update updates an existing task
+// Fix the Update method to include Type field
 func (r *taskRepository) Update(ctx context.Context, task *Task) error {
 	query := `
 		UPDATE tasks SET
 			sprint_id = $2, parent_task_id = $3, title = $4, description = $5,
-			status = $6, priority = $7, assignee_ids = $8, watcher_ids = $9,
-			label_ids = $10, estimated_hours = $11, actual_hours = $12,
-			story_points = $13, start_date = $14, due_date = $15,
-			completed_at = $16, blocked = $17, updated_at = NOW()
+			status = $6, priority = $7, type = $8, assignee_ids = $9, watcher_ids = $10,
+			label_ids = $11, estimated_hours = $12, actual_hours = $13,
+			story_points = $14, start_date = $15, due_date = $16,
+			completed_at = $17, blocked = $18, updated_at = NOW()
 		WHERE id = $1
 		RETURNING updated_at`
 
 	return r.db.QueryRowContext(
 		ctx, query,
 		task.ID, task.SprintID, task.ParentTaskID, task.Title, task.Description,
-		task.Status, task.Priority, pq.Array(task.AssigneeIDs), pq.Array(task.WatcherIDs),
+		task.Status, task.Priority, task.Type, // Added Type here
+		pq.Array(task.AssigneeIDs), pq.Array(task.WatcherIDs),
 		pq.Array(task.LabelIDs), task.EstimatedHours, task.ActualHours, task.StoryPoints,
 		task.StartDate, task.DueDate, task.CompletedAt, task.Blocked,
 	).Scan(&task.UpdatedAt)
 }
+
 
 // Delete removes a task
 func (r *taskRepository) Delete(ctx context.Context, id string) error {
@@ -217,11 +200,12 @@ func (r *taskRepository) FindBacklog(ctx context.Context, projectID string) ([]*
 }
 
 // UpdateStatus updates task status
+
 func (r *taskRepository) UpdateStatus(ctx context.Context, taskID, status string) error {
 	query := `
 		UPDATE tasks SET 
-			status = $2, 
-			completed_at = CASE WHEN $2 = 'done' THEN NOW() ELSE completed_at END,
+			status = $2::varchar, 
+			completed_at = CASE WHEN $2::varchar = 'done' THEN NOW() ELSE completed_at END,
 			updated_at = NOW()
 		WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, taskID, status)
@@ -394,7 +378,13 @@ func (r *taskRepository) BulkMoveToSprint(ctx context.Context, taskIDs []string,
 }
 
 // Helper method to query multiple tasks
-// queryTasks helper - line 380
+
+// CRITICAL: Fix the scan order to match database column order
+// The database columns are: id, title, description, status, priority, type, 
+// project_id, sprint_id, parent_task_id, assignee_ids, watcher_ids, label_ids,
+// story_points, estimated_hours, actual_hours, start_date, due_date, completed_at,
+// position, created_by, created_at, updated_at, blocked
+
 func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...interface{}) ([]*Task, error) {
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -405,13 +395,31 @@ func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...i
 	var tasks []*Task
 	for rows.Next() {
 		task := &Task{}
+		// SCAN IN THE EXACT ORDER AS YOUR DATABASE COLUMNS
 		err := rows.Scan(
-			&task.ID, &task.Title, &task.Description, &task.Status, &task.Priority, &task.Type,
-			&task.ProjectID, &task.SprintID, &task.ParentTaskID,
-			pq.Array(&task.AssigneeIDs), pq.Array(&task.WatcherIDs), pq.Array(&task.LabelIDs),
-			&task.StoryPoints, &task.EstimatedHours, &task.ActualHours,
-			&task.StartDate, &task.DueDate, &task.CompletedAt, &task.Blocked,
-			&task.Position, &task.CreatedBy, &task.CreatedAt, &task.UpdatedAt,
+			&task.ID,           // 1
+			&task.Title,        // 2
+			&task.Description,  // 3
+			&task.Status,       // 4
+			&task.Priority,     // 5
+			&task.Type,         // 6
+			&task.ProjectID,    // 7
+			&task.SprintID,     // 8
+			&task.ParentTaskID, // 9
+			pq.Array(&task.AssigneeIDs), // 10
+			pq.Array(&task.WatcherIDs),  // 11
+			pq.Array(&task.LabelIDs),    // 12
+			&task.StoryPoints,    // 13
+			&task.EstimatedHours, // 14
+			&task.ActualHours,    // 15
+			&task.StartDate,      // 16
+			&task.DueDate,        // 17
+			&task.CompletedAt,    // 18
+			&task.Position,       // 19
+			&task.CreatedBy,      // 20
+			&task.CreatedAt,      // 21
+			&task.UpdatedAt,      // 22
+			&task.Blocked,        // 23
 		)
 		if err != nil {
 			return nil, err
@@ -420,4 +428,44 @@ func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...i
 	}
 
 	return tasks, rows.Err()
+}
+// Fix FindByID with correct scan order
+func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error) {
+	query := `SELECT * FROM tasks WHERE id = $1`
+	
+	task := &Task{}
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&task.ID,
+		&task.Title,
+		&task.Description,
+		&task.Status,
+		&task.Priority,
+		&task.Type,
+		&task.ProjectID,
+		&task.SprintID,
+		&task.ParentTaskID,
+		pq.Array(&task.AssigneeIDs),
+		pq.Array(&task.WatcherIDs),
+		pq.Array(&task.LabelIDs),
+		&task.StoryPoints,
+		&task.EstimatedHours,
+		&task.ActualHours,
+		&task.StartDate,
+		&task.DueDate,
+		&task.CompletedAt,
+		&task.Position,
+		&task.CreatedBy,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+		&task.Blocked,
+	)
+	
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	
+	return task, nil
 }

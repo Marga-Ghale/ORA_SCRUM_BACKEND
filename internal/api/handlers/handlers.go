@@ -49,33 +49,34 @@ func toUserResponse(u *repository.User) models.UserResponse {
 	}
 }
 
-
+// internal/api/handlers/handlers.go - toTaskResponse function
 func toTaskResponse(t *repository.Task) models.TaskResponse {
 	return models.TaskResponse{
 		ID:             t.ID,
-		ProjectID:      t.ProjectID,
-		SprintID:       t.SprintID,
-		ParentTaskID:   t.ParentTaskID,
 		Title:          t.Title,
 		Description:    t.Description,
 		Status:         t.Status,
 		Priority:       t.Priority,
+		Type:           t.Type,
+		ProjectID:      t.ProjectID,
+		SprintID:       t.SprintID,
+		ParentTaskID:   t.ParentTaskID,
 		AssigneeIDs:    t.AssigneeIDs,
 		WatcherIDs:     t.WatcherIDs,
 		LabelIDs:       t.LabelIDs,
+		StoryPoints:    t.StoryPoints,
 		EstimatedHours: t.EstimatedHours,
 		ActualHours:    t.ActualHours,
-		StoryPoints:    t.StoryPoints,
 		StartDate:      t.StartDate,
 		DueDate:        t.DueDate,
 		CompletedAt:    t.CompletedAt,
-		Blocked:        t.Blocked,  // ← ADD THIS LINE
+		Blocked:        t.Blocked,
 		Position:       t.Position,
+		CreatedBy:      t.CreatedBy,
 		CreatedAt:      t.CreatedAt,
 		UpdatedAt:      t.UpdatedAt,
 	}
 }
-
 func toLabelResponse(l *repository.Label) models.LabelResponse {
 	return models.LabelResponse{
 		ID:        l.ID,

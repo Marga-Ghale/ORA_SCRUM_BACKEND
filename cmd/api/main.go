@@ -339,7 +339,7 @@ func main() {
 
 				// Listing
 				tasks.GET("/my", h.Task.ListMyTasks)
-				tasks.GET("/status/:projectId", h.Task.ListByStatus)
+				tasks.GET("/status/:id", h.Task.ListByStatus)
 				tasks.GET("/:id/subtasks", h.Task.ListSubtasks)
 
 				// Status & Priority

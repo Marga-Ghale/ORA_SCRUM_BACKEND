@@ -2,7 +2,7 @@
 
 # Variables
 DB_URL=postgresql://postgres:postgres@localhost:5432/ora_scrum?sslmode=disable
-MIGRATIONS_PATH=./internal/db/migrations
+MIGRATIONS_PATH=./internal/db/migrations/
 
 # Docker commands
 .PHONY: docker-up

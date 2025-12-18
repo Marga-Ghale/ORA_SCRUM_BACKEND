@@ -1,6 +1,6 @@
+
 -- ============================================
--- ORA SCRUM - CORE SCHEMA (Migration 000001)
--- Hierarchy: Workspace → Space → Folder → Project → Task
+-- NOW RECREATE WITH FIXES
 -- ============================================
 
 -- Enable UUID extension
@@ -207,7 +207,7 @@ CREATE TABLE labels (
 CREATE INDEX idx_labels_project_id ON labels(project_id);
 
 -- ============================================
--- TASKS TABLE
+-- TASKS TABLE (✅ FIXED - Added blocked column)
 -- ============================================
 CREATE TABLE tasks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -228,6 +228,7 @@ CREATE TABLE tasks (
     start_date TIMESTAMPTZ,
     due_date TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
+    blocked BOOLEAN DEFAULT FALSE,  -- ✅ ADDED THIS COLUMN
     position INT DEFAULT 0,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -239,6 +240,7 @@ CREATE INDEX idx_tasks_parent_task_id ON tasks(parent_task_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 CREATE INDEX idx_tasks_priority ON tasks(priority);
 CREATE INDEX idx_tasks_created_by ON tasks(created_by);
+CREATE INDEX idx_tasks_blocked ON tasks(blocked);  -- ✅ INDEX FOR blocked
 
 -- ============================================
 -- COMMENTS TABLE
@@ -402,3 +404,7 @@ CREATE TRIGGER update_comments_updated_at
 CREATE TRIGGER update_teams_updated_at 
     BEFORE UPDATE ON teams 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- DONE! Database reset with fixes applied
+-- ============================================
