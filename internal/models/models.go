@@ -45,44 +45,6 @@ type UpdateUserRequest struct {
 	Avatar *string `json:"avatar,omitempty"`
 }
 
-// ============================================
-// Workspace DTOs (Top Level)
-// ============================================
-
-type CreateWorkspaceRequest struct {
-	Name         string   `json:"name" binding:"required"`
-	Description  *string  `json:"description"`
-	Icon         *string  `json:"icon"`
-	Color        *string  `json:"color"`
-	Visibility   *string  `json:"visibility"` // "private", "workspace", "public"
-	AllowedUsers []string `json:"allowedUsers"`
-	AllowedTeams []string `json:"allowedTeams"`
-}
-
-type UpdateWorkspaceRequest struct {
-	Name         *string   `json:"name"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers *[]string `json:"allowedUsers"`
-	AllowedTeams *[]string `json:"allowedTeams"`
-}
-
-type WorkspaceResponse struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	OwnerID      string    `json:"ownerId"`
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers []string  `json:"allowedUsers"`
-	AllowedTeams []string  `json:"allowedTeams"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-}
-
 type WorkspaceMemberResponse struct {
 	ID          string        `json:"id"`
 	WorkspaceID string        `json:"workspaceId"`
@@ -101,45 +63,6 @@ type UpdateMemberRoleRequest struct {
 	Role string `json:"role" binding:"required,oneof=admin member viewer"`
 }
 
-// ============================================
-// Space DTOs (Under Workspace)
-// ============================================
-
-type CreateSpaceRequest struct {
-	Name         string   `json:"name" binding:"required"`
-	Description  *string  `json:"description"`
-	Icon         *string  `json:"icon"`
-	Color        *string  `json:"color"`
-	Visibility   *string  `json:"visibility"` // "private", "workspace", "public"
-	AllowedUsers []string `json:"allowedUsers"`
-	AllowedTeams []string `json:"allowedTeams"`
-	// WorkspaceID comes from URL param, not body
-}
-
-type UpdateSpaceRequest struct {
-	Name         *string   `json:"name"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers *[]string `json:"allowedUsers"`
-	AllowedTeams *[]string `json:"allowedTeams"`
-}
-
-type SpaceResponse struct {
-	ID           string    `json:"id"`
-	WorkspaceID  string    `json:"workspaceId"` // ✓ ADDED - parent reference
-	Name         string    `json:"name"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	OwnerID      string    `json:"ownerId"`
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers []string  `json:"allowedUsers"`
-	AllowedTeams []string  `json:"allowedTeams"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-}
 
 type SpaceMemberResponse struct {
 	ID       string        `json:"id"`
@@ -155,46 +78,6 @@ type InviteSpaceRequest struct {
 	Role  string `json:"role" binding:"required,oneof=admin member viewer"`
 }
 
-// ============================================
-// Folder DTOs (Under Space)
-// ============================================
-
-type CreateFolderRequest struct {
-	Name         string   `json:"name" binding:"required"`
-	Description  *string  `json:"description"`
-	Icon         *string  `json:"icon"`
-	Color        *string  `json:"color"`
-	Visibility   *string  `json:"visibility"` // "private", "workspace", "public"
-	AllowedUsers []string `json:"allowedUsers"`
-	AllowedTeams []string `json:"allowedTeams"`
-	// SpaceID comes from URL param, not body
-}
-
-type UpdateFolderRequest struct {
-	Name         *string   `json:"name"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers *[]string `json:"allowedUsers"`
-	AllowedTeams *[]string `json:"allowedTeams"`
-}
-
-type FolderResponse struct {
-	ID           string    `json:"id"`
-	SpaceID      string    `json:"spaceId"` // ✓ ADDED - parent reference
-	Name         string    `json:"name"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	OwnerID      string    `json:"ownerId"`
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers []string  `json:"allowedUsers"`
-	AllowedTeams []string  `json:"allowedTeams"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-}
-
 type FolderMemberResponse struct {
 	ID       string        `json:"id"`
 	FolderID string        `json:"folderId"`
@@ -207,54 +90,6 @@ type FolderMemberResponse struct {
 type InviteFolderRequest struct {
 	Email string `json:"email" binding:"required,email"`
 	Role  string `json:"role" binding:"required,oneof=admin member viewer"`
-}
-
-// ============================================
-// Project DTOs (Under Space OR Folder)
-// ============================================
-
-type CreateProjectRequest struct {
-	Name         string   `json:"name" binding:"required"`
-	Key          string   `json:"key" binding:"required,min=2,max=10,uppercase"`
-	Description  *string  `json:"description"`
-	Icon         *string  `json:"icon"`
-	Color        *string  `json:"color"`
-	LeadID       *string  `json:"leadId"`
-	FolderID     *string  `json:"folderId"` // ✓ ADDED - optional folder
-	Visibility   *string  `json:"visibility"`
-	AllowedUsers []string `json:"allowedUsers"`
-	AllowedTeams []string `json:"allowedTeams"`
-	// SpaceID comes from URL param, not body
-}
-
-type UpdateProjectRequest struct {
-	Name         *string   `json:"name"`
-	Key          *string   `json:"key"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	LeadID       *string   `json:"leadId"`
-	FolderID     *string   `json:"folderId"` // Can move to different folder
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers *[]string `json:"allowedUsers"`
-	AllowedTeams *[]string `json:"allowedTeams"`
-}
-
-type ProjectResponse struct {
-	ID           string    `json:"id"`
-	SpaceID      string    `json:"spaceId"`   // ✓ ADDED - parent space
-	FolderID     *string   `json:"folderId"`  // ✓ ADDED - optional folder
-	Name         string    `json:"name"`
-	Key          string    `json:"key"`
-	Description  *string   `json:"description"`
-	Icon         *string   `json:"icon"`
-	Color        *string   `json:"color"`
-	LeadID       *string   `json:"leadId"`
-	Visibility   *string   `json:"visibility"`
-	AllowedUsers []string  `json:"allowedUsers"`
-	AllowedTeams []string  `json:"allowedTeams"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 type ProjectMemberResponse struct {
@@ -312,11 +147,11 @@ type SprintResponse struct {
 // models/create_task_request.go
 
 type CreateTaskRequest struct {
-	ProjectID      string     `json:"projectId" binding:"required"`
+	ProjectID      string     `json:"projectId,omitempty"`
 	SprintID       *string    `json:"sprintId"`
 	ParentTaskID   *string    `json:"parentTaskId"`
 	Title          string     `json:"title" binding:"required"`
-	Description    *string    `json:"description"`
+	Description    *string   `json:"description"`
 	Status         string     `json:"status"`
 	Priority       string     `json:"priority"`
 	AssigneeIDs    []string   `json:"assigneeIds"`
@@ -326,7 +161,6 @@ type CreateTaskRequest struct {
 	StartDate      *time.Time `json:"startDate"`
 	DueDate        *time.Time `json:"dueDate"`
 }
-
 
 
 // models/update_task_request.go

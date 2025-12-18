@@ -23,6 +23,8 @@ func NewProjectHandler(projectService service.ProjectService) *ProjectHandler {
 	}
 }
 
+// ListBySpace - List projects in a space
+// GET /spaces/:id/projects
 func (h *ProjectHandler) ListBySpace(c *gin.Context) {
 	spaceID := c.Param("id")
 
@@ -40,6 +42,8 @@ func (h *ProjectHandler) ListBySpace(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// Create - Create a new project
+// POST /spaces/:id/projects
 func (h *ProjectHandler) Create(c *gin.Context) {
 	spaceID := c.Param("id")
 
@@ -57,8 +61,8 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	project, err := h.projectService.Create(
 		c.Request.Context(),
 		spaceID,
-		req.FolderID,     // ✅ folderID
-		userID,           // ✅ creatorID
+		req.FolderID,
+		userID,
 		req.Name,
 		req.Key,
 		req.Description,
@@ -82,6 +86,8 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, toProjectResponse(project))
 }
 
+// Get - Get a project by ID
+// GET /projects/:id
 func (h *ProjectHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 
@@ -94,6 +100,8 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, toProjectResponse(project))
 }
 
+// Update - Update a project
+// PUT /projects/:id
 func (h *ProjectHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 
@@ -112,7 +120,7 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		req.Icon,
 		req.Color,
 		req.LeadID,
-		req.FolderID, // ✅ required
+		*req.FolderID,
 	)
 	if err != nil {
 		if err == service.ErrConflict {
@@ -130,6 +138,8 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, toProjectResponse(project))
 }
 
+// Delete - Delete a project
+// DELETE /projects/:id
 func (h *ProjectHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 
@@ -140,5 +150,3 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 
 	c.Status(http.StatusNoContent)
 }
-
-

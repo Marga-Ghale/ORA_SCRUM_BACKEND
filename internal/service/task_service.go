@@ -129,6 +129,7 @@ type CreateTaskRequest struct {
 	StoryPoints    *int
 	StartDate      *time.Time
 	DueDate        *time.Time
+	CreatedBy      *string
 }
 
 type UpdateTaskRequest struct {
@@ -227,6 +228,8 @@ func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repo
 		StoryPoints:    req.StoryPoints,
 		StartDate:      req.StartDate,
 		DueDate:        req.DueDate,
+		CreatedBy:      req.CreatedBy,  
+
 	}
 
 	if err := s.taskRepo.Create(ctx, task); err != nil {

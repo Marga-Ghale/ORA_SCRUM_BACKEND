@@ -3,5 +3,7 @@
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "[go.mod]": {
     "editor.defaultFormatter": "golang.go"
-  }
+  },
+  "goCustomFormat.onSave": true,
+  "goCustomFormat.fmtCmds": ["grabbyright"]
 }

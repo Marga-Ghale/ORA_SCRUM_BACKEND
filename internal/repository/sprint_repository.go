@@ -25,10 +25,14 @@ type SprintRepository interface {
 	Create(ctx context.Context, sprint *Sprint) error
 	FindByID(ctx context.Context, id string) (*Sprint, error)
 	FindByProjectID(ctx context.Context, projectID string) ([]*Sprint, error)
-	FindActiveSprint(ctx context.Context, projectID string) (*Sprint, error)
 	Update(ctx context.Context, sprint *Sprint) error
 	UpdateStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) error
+	FindActiveSprint(ctx context.Context, projectID string) (*Sprint, error)
+	querySprints(ctx context.Context, query string, args ...interface{}) ([]*Sprint, error)
+	FindSprintsEndingSoon(ctx context.Context, within time.Duration) ([]*Sprint, error)
+	FindExpiredSprints(ctx context.Context) ([]*Sprint, error)
+
 }
 
 // sprintRepository implementation
@@ -189,4 +193,43 @@ func (r *sprintRepository) Delete(ctx context.Context, id string) error {
 	query := `DELETE FROM sprints WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, id)
 	return err
+}
+
+// FindSprintsEndingSoon returns sprints ending within the next 'within' duration
+func (r *sprintRepository) FindSprintsEndingSoon(ctx context.Context, within time.Duration) ([]*Sprint, error) {
+	query := `
+		SELECT * FROM sprints 
+		WHERE end_date BETWEEN NOW() AND NOW() + $1::interval 
+		  AND status != 'completed'
+		ORDER BY end_date ASC`
+	return r.querySprints(ctx, query, within.String())
+}
+
+// FindExpiredSprints returns sprints whose end_date has passed but not completed
+func (r *sprintRepository) FindExpiredSprints(ctx context.Context) ([]*Sprint, error) {
+	query := `SELECT * FROM sprints WHERE end_date < NOW() AND status != 'completed' ORDER BY end_date ASC`
+	return r.querySprints(ctx, query)
+}
+
+// Helper to run sprint queries
+func (r *sprintRepository) querySprints(ctx context.Context, query string, args ...interface{}) ([]*Sprint, error) {
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sprints []*Sprint
+	for rows.Next() {
+		s := &Sprint{}
+		err := rows.Scan(
+			&s.ID, &s.ProjectID, &s.Name, &s.Goal, &s.Status,
+			&s.StartDate, &s.EndDate, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		sprints = append(sprints, s)
+	}
+	return sprints, rows.Err()
 }

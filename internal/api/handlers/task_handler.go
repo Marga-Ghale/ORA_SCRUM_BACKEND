@@ -26,10 +26,13 @@ func NewTaskHandler(taskService service.TaskService) *TaskHandler {
 // ============================================
 
 func (h *TaskHandler) Create(c *gin.Context) {
-	_, ok := middleware.RequireUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
 	}
+
+	// ✅ Get projectID from URL
+	projectID := c.Param("id")
 
 	var req models.CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -38,7 +41,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	createReq := &service.CreateTaskRequest{
-		ProjectID:      req.ProjectID,
+		ProjectID:      projectID,        // ✅ From URL
 		SprintID:       req.SprintID,
 		ParentTaskID:   req.ParentTaskID,
 		Title:          req.Title,
@@ -51,6 +54,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		StoryPoints:    req.StoryPoints,
 		StartDate:      req.StartDate,
 		DueDate:        req.DueDate,
+		CreatedBy:      &userID,          // ✅ From authenticated user
 	}
 
 	task, err := h.taskService.Create(c.Request.Context(), createReq)

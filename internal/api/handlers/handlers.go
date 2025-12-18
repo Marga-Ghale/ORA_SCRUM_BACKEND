@@ -50,76 +50,6 @@ func toUserResponse(u *repository.User) models.UserResponse {
 }
 
 
-func toWorkspaceResponse(ws *repository.Workspace) models.WorkspaceResponse {
-	return models.WorkspaceResponse{
-		ID:           ws.ID,
-		Name:         ws.Name,
-		Description:  ws.Description,
-		Icon:         ws.Icon,
-		Color:        ws.Color,
-		OwnerID:      ws.OwnerID,
-		Visibility:   ws.Visibility,
-		AllowedUsers: ws.AllowedUsers,
-		AllowedTeams: ws.AllowedTeams,
-		CreatedAt:    ws.CreatedAt,
-		UpdatedAt:    ws.UpdatedAt,
-	}
-}
-
-
-
-
-func toFolderResponse(f *repository.Folder) models.FolderResponse {
-	return models.FolderResponse{
-		ID:           f.ID,
-		Name:         f.Name,
-		Description:  f.Description,
-		Icon:         f.Icon,
-		Color:        f.Color,
-		OwnerID:      f.OwnerID,
-		Visibility:   f.Visibility,
-		AllowedUsers: f.AllowedUsers,
-		AllowedTeams: f.AllowedTeams,
-		CreatedAt:    f.CreatedAt,
-		UpdatedAt:    f.UpdatedAt,
-	}
-}
-
-
-func toSpaceResponse(s *repository.Space) models.SpaceResponse {
-	return models.SpaceResponse{
-		ID:           s.ID,
-		WorkspaceID:  s.WorkspaceID, // ✓ Include parent
-		Name:         s.Name,
-		Description:  s.Description,
-		Icon:         s.Icon,
-		Color:        s.Color,
-		OwnerID:      s.OwnerID,
-		Visibility:   s.Visibility,
-		AllowedUsers: s.AllowedUsers,
-		AllowedTeams: s.AllowedTeams,
-		CreatedAt:    s.CreatedAt,
-		UpdatedAt:    s.UpdatedAt,
-	}
-}
-
-
-func toProjectResponse(p *repository.Project) models.ProjectResponse {
-	return models.ProjectResponse{
-		ID:          p.ID,
-		Name:        p.Name,
-		Key:         p.Key,
-		Description: p.Description,
-		Icon:        p.Icon,
-		Color:       p.Color,
-		SpaceID:     p.SpaceID,
-		LeadID:      p.LeadID,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
-	}
-}
-
-
 func toTaskResponse(t *repository.Task) models.TaskResponse {
 	return models.TaskResponse{
 		ID:             t.ID,
@@ -169,5 +99,175 @@ func toNotificationResponse(n *repository.Notification) models.NotificationRespo
 	if n.Data != nil {
 		resp.Data = &n.Data
 	}
+	return resp
+}
+
+
+
+// ============================================
+// Helper Functions
+// ============================================
+
+// Helper function to convert repository.Folder to models.FolderResponse
+func toFolderResponse(f *repository.Folder) models.FolderResponse {
+	resp := models.FolderResponse{
+		ID:        f.ID,
+		SpaceID:   f.SpaceID,
+		Name:      f.Name,
+		OwnerID:   f.OwnerID,
+		CreatedAt: f.CreatedAt,
+		UpdatedAt: f.UpdatedAt,
+	}
+
+	// Handle optional fields
+	if f.Description != nil {
+		resp.Description = *f.Description
+	}
+	if f.Icon != nil {
+		resp.Icon = *f.Icon
+	}
+	if f.Color != nil {
+		resp.Color = *f.Color
+	}
+	if f.Visibility != nil {
+		resp.Visibility = *f.Visibility
+	}
+
+	// Handle arrays
+	if f.AllowedUsers != nil {
+		resp.AllowedUsers = f.AllowedUsers
+	} else {
+		resp.AllowedUsers = []string{}
+	}
+
+	if f.AllowedTeams != nil {
+		resp.AllowedTeams = f.AllowedTeams
+	} else {
+		resp.AllowedTeams = []string{}
+	}
+
+	return resp
+}
+
+
+
+// ============================================
+// Helper Functions
+// ============================================
+
+// Helper function to convert repository.Space to models.SpaceResponse
+func toSpaceResponse(s *repository.Space) models.SpaceResponse {
+	resp := models.SpaceResponse{
+		ID:          s.ID,
+		WorkspaceID: s.WorkspaceID,
+		Name:        s.Name,
+		OwnerID:     s.OwnerID,
+		CreatedAt:   s.CreatedAt,
+		UpdatedAt:   s.UpdatedAt,
+	}
+
+	// Handle optional fields
+	if s.Description != nil {
+		resp.Description = *s.Description
+	}
+	if s.Icon != nil {
+		resp.Icon = *s.Icon
+	}
+	if s.Color != nil {
+		resp.Color = *s.Color
+	}
+	if s.Visibility != nil {
+		resp.Visibility = *s.Visibility
+	}
+
+	// Handle arrays
+	if s.AllowedUsers != nil {
+		resp.AllowedUsers = s.AllowedUsers
+	} else {
+		resp.AllowedUsers = []string{}
+	}
+
+	if s.AllowedTeams != nil {
+		resp.AllowedTeams = s.AllowedTeams
+	} else {
+		resp.AllowedTeams = []string{}
+	}
+
+	return resp
+}
+
+
+// ============================================
+// Helper Functions
+// ============================================
+func toProjectResponse(p *repository.Project) models.ProjectResponse {
+	resp := models.ProjectResponse{
+		ID:        p.ID,
+		SpaceID:   p.SpaceID,
+		FolderID:  p.FolderID,   // pointer directly
+		Name:      p.Name,
+		Key:       p.Key,
+		Description: p.Description, // pointer directly
+		Icon:        p.Icon,        // pointer directly
+		Color:       p.Color,       // pointer directly
+		LeadID:      p.LeadID,      // pointer directly
+		Visibility:  p.Visibility,  // pointer directly
+		CreatedAt:   p.CreatedAt,
+		UpdatedAt:   p.UpdatedAt,
+		AllowedUsers: func() []string {
+			if p.AllowedUsers != nil {
+				return p.AllowedUsers
+			}
+			return []string{}
+		}(),
+		AllowedTeams: func() []string {
+			if p.AllowedTeams != nil {
+				return p.AllowedTeams
+			}
+			return []string{}
+		}(),
+	}
+
+	return resp
+}
+
+
+// Helper function to convert repository.Workspace to models.WorkspaceResponse
+func toWorkspaceResponse(ws *repository.Workspace) models.WorkspaceResponse {
+	resp := models.WorkspaceResponse{
+		ID:        ws.ID,
+		Name:      ws.Name,
+		OwnerID:   ws.OwnerID,
+		CreatedAt: ws.CreatedAt,
+		UpdatedAt: ws.UpdatedAt,
+	}
+
+	// Handle optional fields
+	if ws.Description != nil {
+		resp.Description = *ws.Description
+	}
+	if ws.Icon != nil {
+		resp.Icon = *ws.Icon
+	}
+	if ws.Color != nil {
+		resp.Color = *ws.Color
+	}
+	if ws.Visibility != nil {
+		resp.Visibility = *ws.Visibility
+	}
+	
+	// Handle arrays
+	if ws.AllowedUsers != nil {
+		resp.AllowedUsers = ws.AllowedUsers
+	} else {
+		resp.AllowedUsers = []string{}
+	}
+	
+	if ws.AllowedTeams != nil {
+		resp.AllowedTeams = ws.AllowedTeams
+	} else {
+		resp.AllowedTeams = []string{}
+	}
+
 	return resp
 }

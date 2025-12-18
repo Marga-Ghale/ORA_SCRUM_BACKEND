@@ -3,7 +3,6 @@ package seed
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
@@ -23,7 +22,9 @@ func SeedData(repos *repository.Repositories) {
 
 	log.Println("[Seed] Creating initial data...")
 
-	// Create users
+	// ============================================
+	// CREATE USERS
+	// ============================================
 	password, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 
 	user1 := &repository.User{
@@ -50,10 +51,14 @@ func SeedData(repos *repository.Repositories) {
 	}
 	repos.UserRepo.Create(ctx, user3)
 
-	// Create workspace
+	// ============================================
+	// CREATE WORKSPACE
+	// ============================================
+	defaultVisibility := "private"
 	workspace := &repository.Workspace{
-		Name:    "My Workspace",
-		OwnerID: user1.ID,
+		Name:       "My Workspace",
+		OwnerID:    user1.ID,
+		Visibility: &defaultVisibility,
 	}
 	repos.WorkspaceRepo.Create(ctx, workspace)
 
@@ -74,19 +79,67 @@ func SeedData(repos *repository.Repositories) {
 		Role:        "member",
 	})
 
-	// Create space
+	// ============================================
+	// CREATE SPACE (under workspace)
+	// ============================================
 	space := &repository.Space{
 		Name:        "Engineering",
-		WorkspaceID: workspace.ID,
+		WorkspaceID: workspace.ID, // ✅ Must have workspace
+		OwnerID:     user1.ID,     // ✅ Must have owner
+		Visibility:  &defaultVisibility,
 	}
 	repos.SpaceRepo.Create(ctx, space)
 
-	// Create project
-	project := &repository.Project{
-		Name:    "ORA Scrum",
-		Key:     "ORA",
+	// Add space members
+	repos.SpaceRepo.AddMember(ctx, &repository.SpaceMember{
 		SpaceID: space.ID,
-		LeadID:  &user1.ID,
+		UserID:  user1.ID,
+		Role:    "owner",
+	})
+	repos.SpaceRepo.AddMember(ctx, &repository.SpaceMember{
+		SpaceID: space.ID,
+		UserID:  user2.ID,
+		Role:    "admin",
+	})
+	repos.SpaceRepo.AddMember(ctx, &repository.SpaceMember{
+		SpaceID: space.ID,
+		UserID:  user3.ID,
+		Role:    "member",
+	})
+
+	// ============================================
+	// CREATE FOLDER (optional, under space)
+	// ============================================
+	folder := &repository.Folder{
+		Name:       "Backend Projects",
+		SpaceID:    space.ID, // ✅ Must have space
+		OwnerID:    user1.ID, // ✅ Must have owner
+		Visibility: &defaultVisibility,
+	}
+	repos.FolderRepo.Create(ctx, folder)
+
+	// Add folder members
+	repos.FolderRepo.AddMember(ctx, &repository.FolderMember{
+		FolderID: folder.ID,
+		UserID:   user1.ID,
+		Role:     "owner",
+	})
+	repos.FolderRepo.AddMember(ctx, &repository.FolderMember{
+		FolderID: folder.ID,
+		UserID:   user2.ID,
+		Role:     "member",
+	})
+
+	// ============================================
+	// CREATE PROJECT (under space, optionally in folder)
+	// ============================================
+	project := &repository.Project{
+		Name:       "ORA Scrum",
+		Key:        "ORA",
+		SpaceID:    space.ID,   // ✅ Must have space
+		FolderID:   &folder.ID, // ✅ Optional folder (can be nil)
+		LeadID:     &user1.ID,
+		Visibility: &defaultVisibility,
 	}
 	repos.ProjectRepo.Create(ctx, project)
 
@@ -107,7 +160,34 @@ func SeedData(repos *repository.Repositories) {
 		Role:      "member",
 	})
 
-	// Create labels
+	// ============================================
+	// CREATE PROJECT WITHOUT FOLDER (direct in space)
+	// ============================================
+	project2 := &repository.Project{
+		Name:       "Mobile App",
+		Key:        "MOB",
+		SpaceID:    space.ID, // ✅ Must have space
+		FolderID:   nil,      // ✅ No folder - direct in space
+		LeadID:     &user2.ID,
+		Visibility: &defaultVisibility,
+	}
+	repos.ProjectRepo.Create(ctx, project2)
+
+	// Add project2 members
+	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
+		ProjectID: project2.ID,
+		UserID:    user2.ID,
+		Role:      "lead",
+	})
+	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
+		ProjectID: project2.ID,
+		UserID:    user1.ID,
+		Role:      "member",
+	})
+
+	// ============================================
+	// CREATE LABELS
+	// ============================================
 	labels := []struct {
 		Name  string
 		Color string
@@ -127,51 +207,55 @@ func SeedData(repos *repository.Repositories) {
 		})
 	}
 
-	// Create sprint
+	// ============================================
+	// CREATE SPRINT
+	// ============================================
 	now := time.Now()
 	sprintStart := now.AddDate(0, 0, -7)
 	sprintEnd := now.AddDate(0, 0, 7)
+
 	sprint := &repository.Sprint{
 		Name:      "Sprint 1",
 		ProjectID: project.ID,
 		Status:    "active",
-		StartDate: &sprintStart,
-		EndDate:   &sprintEnd,
+		StartDate: sprintStart,
+		EndDate:   sprintEnd,
 	}
 	repos.SprintRepo.Create(ctx, sprint)
 
-	// Create tasks
+	// ============================================
+	// CREATE TASKS
+	// ============================================
 	tasks := []struct {
-		Title      string
-		Status     string
-		Priority   string
-		Type       string
-		AssigneeID *string
-		SprintID   *string
+		Title       string
+		Status      string
+		Priority    string
+		AssigneeIDs []string
+		SprintID    *string
 	}{
-		{"Setup project structure", "done", "high", "task", &user1.ID, &sprint.ID},
-		{"Implement authentication", "done", "urgent", "task", &user1.ID, &sprint.ID},
-		{"Create dashboard UI", "in_progress", "high", "task", &user2.ID, &sprint.ID},
-		{"API integration", "in_progress", "medium", "task", &user2.ID, &sprint.ID},
-		{"Fix login bug", "todo", "urgent", "bug", &user1.ID, &sprint.ID},
-		{"Add dark mode", "todo", "low", "feature", &user3.ID, &sprint.ID},
-		{"Write documentation", "backlog", "low", "task", nil, nil},
-		{"Performance optimization", "backlog", "medium", "task", nil, nil},
+		{"Setup project structure", "done", "high", []string{user1.ID}, &sprint.ID},
+		{"Implement authentication", "done", "urgent", []string{user1.ID}, &sprint.ID},
+		{"Create dashboard UI", "in_progress", "high", []string{user2.ID}, &sprint.ID},
+		{"API integration", "in_progress", "medium", []string{user2.ID}, &sprint.ID},
+		{"Fix login bug", "todo", "urgent", []string{user1.ID}, &sprint.ID},
+		{"Add dark mode", "todo", "low", []string{user3.ID}, &sprint.ID},
+		{"Write documentation", "backlog", "low", []string{}, nil},
+		{"Performance optimization", "backlog", "medium", []string{}, nil},
 	}
 
 	for i, t := range tasks {
 		task := &repository.Task{
-			Key:        fmt.Sprintf("ORA-%d", i+1), // FIX: ORA-1, ORA-2, etc.
-			Title:      t.Title,
-			Status:     t.Status,
-			Priority:   t.Priority,
-			Type:       t.Type,
-			ProjectID:  project.ID,
-			SprintID:   t.SprintID,
-			AssigneeID: t.AssigneeID,
-			ReporterID: user1.ID,
-			OrderIndex: i,
-			Labels:     []string{},
+			Title:       t.Title,
+			Status:      t.Status,
+			Priority:    t.Priority,
+			ProjectID:   project.ID,
+			SprintID:    t.SprintID,
+			AssigneeIDs: t.AssigneeIDs,
+			LabelIDs:    []string{},
+			CreatedBy:   &user1.ID,
+			Position:    i,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
 		}
 		repos.TaskRepo.Create(ctx, task)
 	}
@@ -179,13 +263,19 @@ func SeedData(repos *repository.Repositories) {
 	// ============================================
 	// CREATE SAMPLE NOTIFICATIONS
 	// ============================================
-	seedNotifications(ctx, repos, user1.ID, user2.ID, user3.ID, project.ID, sprint.ID)
+	seedNotifications(ctx, repos, user1.ID, user2.ID, user3.ID, project.ID, workspace.ID, sprint.ID)
 
 	log.Println("[Seed] ✅ Initial data created successfully!")
+	log.Printf("[Seed] Created hierarchy: Workspace → Space → Folder → Project")
+	log.Printf("[Seed] Workspace ID: %s", workspace.ID)
+	log.Printf("[Seed] Space ID: %s", space.ID)
+	log.Printf("[Seed] Folder ID: %s", folder.ID)
+	log.Printf("[Seed] Project 1 ID (in folder): %s", project.ID)
+	log.Printf("[Seed] Project 2 ID (direct in space): %s", project2.ID)
 }
 
 // seedNotifications creates sample notifications for testing
-func seedNotifications(ctx context.Context, repos *repository.Repositories, user1ID, user2ID, user3ID, projectID, sprintID string) {
+func seedNotifications(ctx context.Context, repos *repository.Repositories, user1ID, user2ID, user3ID, projectID, workspaceID, sprintID string) {
 	now := time.Now()
 
 	notifications := []repository.Notification{
@@ -299,7 +389,7 @@ func seedNotifications(ctx context.Context, repos *repository.Repositories, user
 			Title:     "Workspace Invitation",
 			Message:   "Test User added you to workspace: My Workspace",
 			Read:      true,
-			Data:      map[string]interface{}{"workspaceId": "workspace-1"},
+			Data:      map[string]interface{}{"workspaceId": workspaceID},
 			CreatedAt: now.Add(-10 * 24 * time.Hour),
 		},
 	}

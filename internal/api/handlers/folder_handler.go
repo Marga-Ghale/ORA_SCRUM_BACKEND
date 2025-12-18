@@ -20,8 +20,9 @@ func NewFolderHandler(folderService service.FolderService) *FolderHandler {
 }
 
 // ListBySpace - List folders in a specific space
+// GET /spaces/:id/folders
 func (h *FolderHandler) ListBySpace(c *gin.Context) {
-	spaceID := c.Param("spaceId")
+	spaceID := c.Param("id") // Changed from "spaceId" to "id"
 
 	folders, err := h.folderService.ListBySpace(c.Request.Context(), spaceID)
 	if err != nil {
@@ -38,6 +39,7 @@ func (h *FolderHandler) ListBySpace(c *gin.Context) {
 }
 
 // ListByUser - List folders accessible by a user
+// GET /folders/my
 func (h *FolderHandler) ListByUser(c *gin.Context) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
@@ -59,9 +61,10 @@ func (h *FolderHandler) ListByUser(c *gin.Context) {
 }
 
 // Create - Create a new folder in a space
+// POST /spaces/:id/folders
 func (h *FolderHandler) Create(c *gin.Context) {
 	// Get spaceID from URL parameter
-	spaceID := c.Param("spaceId")
+	spaceID := c.Param("id") // Changed from "spaceId" to "id"
 	if spaceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "spaceId is required"})
 		return
@@ -80,12 +83,12 @@ func (h *FolderHandler) Create(c *gin.Context) {
 
 	folder, err := h.folderService.Create(
 		c.Request.Context(),
-		spaceID,        // spaceID from URL parameter
-		userID,         // creatorID from auth
-		req.Name,       // name from body
+		spaceID,         // spaceID from URL parameter
+		userID,          // creatorID from auth
+		req.Name,        // name from body
 		req.Description, // description from body
-		req.Icon,       // icon from body
-		req.Color,      // color from body
+		req.Icon,        // icon from body
+		req.Color,       // color from body
 	)
 	if err != nil {
 		if err == service.ErrNotFound {
@@ -104,6 +107,7 @@ func (h *FolderHandler) Create(c *gin.Context) {
 }
 
 // Get - Get a folder by ID
+// GET /folders/:id
 func (h *FolderHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 
@@ -121,6 +125,7 @@ func (h *FolderHandler) Get(c *gin.Context) {
 }
 
 // Update - Update a folder
+// PUT /folders/:id
 func (h *FolderHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 
@@ -154,6 +159,7 @@ func (h *FolderHandler) Update(c *gin.Context) {
 }
 
 // Delete - Delete a folder
+// DELETE /folders/:id
 func (h *FolderHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 
@@ -170,6 +176,7 @@ func (h *FolderHandler) Delete(c *gin.Context) {
 }
 
 // UpdateVisibility - Update folder visibility settings
+// PATCH /folders/:id/visibility
 func (h *FolderHandler) UpdateVisibility(c *gin.Context) {
 	id := c.Param("id")
 

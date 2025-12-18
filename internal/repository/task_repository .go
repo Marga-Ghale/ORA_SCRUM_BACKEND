@@ -31,6 +31,7 @@ type Task struct {
 	Position       int        `json:"position" db:"position"`
 	CreatedAt      time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt      time.Time  `json:"updatedAt" db:"updated_at"`
+	CreatedBy      *string    `json:"createdBy,omitempty" db:"created_by"`
 }
 
 // TaskFilters for advanced filtering

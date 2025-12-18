@@ -25,10 +25,10 @@ func NewSpaceHandler(spaceService service.SpaceService) *SpaceHandler {
 
 // --------------------------------------------
 // Create Space (under Workspace)
-// POST /workspaces/:workspaceId/spaces
+// POST /workspaces/:id/spaces
 // --------------------------------------------
 func (h *SpaceHandler) Create(c *gin.Context) {
-	workspaceID := c.Param("workspaceId")
+	workspaceID := c.Param("id") // Changed from "workspaceId" to "id"
 
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
@@ -67,10 +67,10 @@ func (h *SpaceHandler) Create(c *gin.Context) {
 
 // --------------------------------------------
 // List Spaces by Workspace
-// GET /workspaces/:workspaceId/spaces
+// GET /workspaces/:id/spaces
 // --------------------------------------------
 func (h *SpaceHandler) ListByWorkspace(c *gin.Context) {
-	workspaceID := c.Param("workspaceId")
+	workspaceID := c.Param("id") // Changed from "workspaceId" to "id"
 
 	spaces, err := h.spaceService.ListByWorkspace(c.Request.Context(), workspaceID)
 	if err != nil {
@@ -152,4 +152,3 @@ func (h *SpaceHandler) Delete(c *gin.Context) {
 
 	c.JSON(http.StatusNoContent, nil)
 }
-// ============================================
