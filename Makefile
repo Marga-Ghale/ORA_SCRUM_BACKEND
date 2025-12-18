@@ -106,8 +106,6 @@ help:
 	@echo "  make migrate-version  - Check current migration version"
 	@echo "  make migrate-create   - Create new migration"
 	@echo ""
-	@echo "  make run              - Run application"
-	@echo "  make build            - Build application"
 	@echo "  make test             - Run tests"
 	@echo ""
 	@echo "  make dev              - Full dev setup (reset + migrate + run)"

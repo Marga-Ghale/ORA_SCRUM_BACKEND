@@ -121,7 +121,7 @@ type ChecklistResponse struct {
 	Title     string                  `json:"title"`
 	Items     []ChecklistItemResponse `json:"items"`
 	CreatedAt time.Time               `json:"createdAt"`
-	UpdatedAt time.Time               `json:"updatedAt"`  // ✅ Added missing field
+	UpdatedAt time.Time               `json:"updatedAt"`  
 }
 
 type ChecklistItemResponse struct {

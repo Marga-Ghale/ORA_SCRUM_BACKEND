@@ -145,7 +145,7 @@ func (h *TaskHandler) ListByProject(c *gin.Context) {
 		return
 	}
 
-	projectID := c.Param("projectId")
+	projectID := c.Param("id")
 	tasks, err := h.taskService.ListByProject(c.Request.Context(), projectID, userID)
 	if err != nil {
 		handleServiceError(c, err)
@@ -208,7 +208,7 @@ func (h *TaskHandler) ListByStatus(c *gin.Context) {
 		return
 	}
 
-	projectID := c.Param("projectId")
+	projectID := c.Param("id")
 	status := c.Query("status")
 
 	tasks, err := h.taskService.ListByStatus(c.Request.Context(), projectID, status, userID)
@@ -907,7 +907,7 @@ func (h *TaskHandler) FindOverdue(c *gin.Context) {
 		return
 	}
 
-	projectID := c.Param("projectId")
+	projectID := c.Param("id")
 	tasks, err := h.taskService.FindOverdue(c.Request.Context(), projectID, userID)
 	if err != nil {
 		handleServiceError(c, err)
@@ -923,7 +923,7 @@ func (h *TaskHandler) FindBlocked(c *gin.Context) {
 		return
 	}
 
-	projectID := c.Param("projectId")
+	projectID := c.Param("id")
 	tasks, err := h.taskService.FindBlocked(c.Request.Context(), projectID, userID)
 	if err != nil {
 		handleServiceError(c, err)
@@ -943,7 +943,7 @@ func (h *TaskHandler) GetBacklog(c *gin.Context) {
 		return
 	}
 
-	projectID := c.Param("projectId")
+	projectID := c.Param("id")
 	tasks, err := h.taskService.GetBacklog(c.Request.Context(), projectID, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch backlog"})

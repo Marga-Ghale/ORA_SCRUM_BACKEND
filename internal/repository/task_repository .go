@@ -109,11 +109,11 @@ func (r *taskRepository) Create(ctx context.Context, task *Task) error {
 			id, project_id, sprint_id, parent_task_id, title, description,
 			status, priority, assignee_ids, watcher_ids, label_ids,
 			estimated_hours, actual_hours, story_points, start_date, due_date,
-			blocked, position, created_at, updated_at
+			blocked, position, created_by, created_at, updated_at
 		) VALUES (
 			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 			$11, $12, $13, $14, $15, $16, COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1), 0),
-			NOW(), NOW()
+			$17, NOW(), NOW()
 		) RETURNING id, created_at, updated_at, position`
 
 	return r.db.QueryRowContext(
@@ -121,7 +121,7 @@ func (r *taskRepository) Create(ctx context.Context, task *Task) error {
 		task.ProjectID, task.SprintID, task.ParentTaskID, task.Title, task.Description,
 		task.Status, task.Priority, pq.Array(task.AssigneeIDs), pq.Array(task.WatcherIDs),
 		pq.Array(task.LabelIDs), task.EstimatedHours, task.ActualHours, task.StoryPoints,
-		task.StartDate, task.DueDate, task.Blocked,
+		task.StartDate, task.DueDate, task.Blocked, task.CreatedBy,
 	).Scan(&task.ID, &task.CreatedAt, &task.UpdatedAt, &task.Position)
 }
 

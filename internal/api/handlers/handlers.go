@@ -69,12 +69,12 @@ func toTaskResponse(t *repository.Task) models.TaskResponse {
 		StartDate:      t.StartDate,
 		DueDate:        t.DueDate,
 		CompletedAt:    t.CompletedAt,
+		Blocked:        t.Blocked,  // ← ADD THIS LINE
 		Position:       t.Position,
 		CreatedAt:      t.CreatedAt,
 		UpdatedAt:      t.UpdatedAt,
 	}
 }
-
 
 func toLabelResponse(l *repository.Label) models.LabelResponse {
 	return models.LabelResponse{
@@ -204,7 +204,7 @@ func toProjectResponse(p *repository.Project) models.ProjectResponse {
 	resp := models.ProjectResponse{
 		ID:        p.ID,
 		SpaceID:   p.SpaceID,
-		FolderID:  p.FolderID,   // pointer directly
+        FolderID:  p.FolderID,  // ✅ IMPORTANT: Include this line
 		Name:      p.Name,
 		Key:       p.Key,
 		Description: p.Description, // pointer directly

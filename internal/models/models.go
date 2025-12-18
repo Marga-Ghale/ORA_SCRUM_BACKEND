@@ -202,6 +202,7 @@ type TaskResponse struct {
 	CreatedBy      string     `json:"createdBy"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
+	Blocked		   bool       `json:"blocked"`
 }
 
 type TaskFilters struct {
