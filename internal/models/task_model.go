@@ -201,3 +201,30 @@ type SprintBoardResponse struct {
 // HELPER: USER RESPONSE
 // ============================================
 
+
+// internal/models/task_model.go - TaskResponse
+type TaskResponse struct {
+	ID             string     `json:"id"`
+	ProjectID      string     `json:"projectId"`
+	SprintID       *string    `json:"sprintId,omitempty"`
+	ParentTaskID   *string    `json:"parentTaskId,omitempty"`
+	Title          string     `json:"title"`
+	Description    *string    `json:"description,omitempty"`
+	Status         string     `json:"status"`
+	Priority       string     `json:"priority"`
+	Type           *string    `json:"type,omitempty"` // ← ADD THIS
+	AssigneeIDs    []string   `json:"assigneeIds"`
+	WatcherIDs     []string   `json:"watcherIds"`
+	LabelIDs       []string   `json:"labelIds"`
+	EstimatedHours *float64   `json:"estimatedHours,omitempty"`
+	ActualHours    *float64   `json:"actualHours,omitempty"`
+	StoryPoints    *int       `json:"storyPoints,omitempty"`
+	StartDate      *time.Time `json:"startDate,omitempty"`
+	DueDate        *time.Time `json:"dueDate,omitempty"`
+	CompletedAt    *time.Time `json:"completedAt,omitempty"`
+	Blocked        bool       `json:"blocked"`
+	Position       int        `json:"position"`
+	CreatedBy      *string    `json:"createdBy,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}

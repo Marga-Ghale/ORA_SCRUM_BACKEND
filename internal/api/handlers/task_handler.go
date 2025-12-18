@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -146,14 +147,18 @@ func (h *TaskHandler) ListByProject(c *gin.Context) {
 	}
 
 	projectID := c.Param("id")
+	fmt.Printf("DEBUG: projectID=%s, userID=%s\n", projectID, userID) // ADD THIS
+	
 	tasks, err := h.taskService.ListByProject(c.Request.Context(), projectID, userID)
 	if err != nil {
+		fmt.Printf("DEBUG ERROR: %v\n", err) // ADD THIS
 		handleServiceError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, toTaskResponseList(tasks))
 }
+
 
 func (h *TaskHandler) ListBySprint(c *gin.Context) {
 	userID, ok := middleware.RequireUserID(c)

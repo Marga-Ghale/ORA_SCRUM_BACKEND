@@ -9,29 +9,32 @@ import (
 )
 
 // Task model
+
+// Task struct - ADD Type field after Priority
 type Task struct {
 	ID             string     `json:"id" db:"id"`
-	ProjectID      string     `json:"projectId" db:"project_id"`
-	SprintID       *string    `json:"sprintId,omitempty" db:"sprint_id"`
-	ParentTaskID   *string    `json:"parentTaskId,omitempty" db:"parent_task_id"`
 	Title          string     `json:"title" db:"title"`
 	Description    *string    `json:"description,omitempty" db:"description"`
 	Status         string     `json:"status" db:"status"`
 	Priority       string     `json:"priority" db:"priority"`
+	Type           *string    `json:"type,omitempty" db:"type"` // ← ADD THIS
+	ProjectID      string     `json:"projectId" db:"project_id"`
+	SprintID       *string    `json:"sprintId,omitempty" db:"sprint_id"`
+	ParentTaskID   *string    `json:"parentTaskId,omitempty" db:"parent_task_id"`
 	AssigneeIDs    []string   `json:"assigneeIds" db:"assignee_ids"`
 	WatcherIDs     []string   `json:"watcherIds" db:"watcher_ids"`
 	LabelIDs       []string   `json:"labelIds" db:"label_ids"`
+	StoryPoints    *int       `json:"storyPoints,omitempty" db:"story_points"`
 	EstimatedHours *float64   `json:"estimatedHours,omitempty" db:"estimated_hours"`
 	ActualHours    *float64   `json:"actualHours,omitempty" db:"actual_hours"`
-	StoryPoints    *int       `json:"storyPoints,omitempty" db:"story_points"`
 	StartDate      *time.Time `json:"startDate,omitempty" db:"start_date"`
 	DueDate        *time.Time `json:"dueDate,omitempty" db:"due_date"`
 	CompletedAt    *time.Time `json:"completedAt,omitempty" db:"completed_at"`
 	Blocked        bool       `json:"blocked" db:"blocked"`
 	Position       int        `json:"position" db:"position"`
+	CreatedBy      *string    `json:"createdBy,omitempty" db:"created_by"`
 	CreatedAt      time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt      time.Time  `json:"updatedAt" db:"updated_at"`
-	CreatedBy      *string    `json:"createdBy,omitempty" db:"created_by"`
 }
 
 // TaskFilters for advanced filtering
@@ -131,12 +134,12 @@ func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error)
 	
 	task := &Task{}
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&task.ID, &task.ProjectID, &task.SprintID, &task.ParentTaskID,
-		&task.Title, &task.Description, &task.Status, &task.Priority,
+		&task.ID, &task.Title, &task.Description, &task.Status, &task.Priority, &task.Type,
+		&task.ProjectID, &task.SprintID, &task.ParentTaskID,
 		pq.Array(&task.AssigneeIDs), pq.Array(&task.WatcherIDs), pq.Array(&task.LabelIDs),
-		&task.EstimatedHours, &task.ActualHours, &task.StoryPoints,
+		&task.StoryPoints, &task.EstimatedHours, &task.ActualHours,
 		&task.StartDate, &task.DueDate, &task.CompletedAt, &task.Blocked,
-		&task.Position, &task.CreatedAt, &task.UpdatedAt,
+		&task.Position, &task.CreatedBy, &task.CreatedAt, &task.UpdatedAt,
 	)
 	
 	if err == sql.ErrNoRows {
@@ -391,6 +394,7 @@ func (r *taskRepository) BulkMoveToSprint(ctx context.Context, taskIDs []string,
 }
 
 // Helper method to query multiple tasks
+// queryTasks helper - line 380
 func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...interface{}) ([]*Task, error) {
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -402,12 +406,12 @@ func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...i
 	for rows.Next() {
 		task := &Task{}
 		err := rows.Scan(
-			&task.ID, &task.ProjectID, &task.SprintID, &task.ParentTaskID,
-			&task.Title, &task.Description, &task.Status, &task.Priority,
+			&task.ID, &task.Title, &task.Description, &task.Status, &task.Priority, &task.Type,
+			&task.ProjectID, &task.SprintID, &task.ParentTaskID,
 			pq.Array(&task.AssigneeIDs), pq.Array(&task.WatcherIDs), pq.Array(&task.LabelIDs),
-			&task.EstimatedHours, &task.ActualHours, &task.StoryPoints,
+			&task.StoryPoints, &task.EstimatedHours, &task.ActualHours,
 			&task.StartDate, &task.DueDate, &task.CompletedAt, &task.Blocked,
-			&task.Position, &task.CreatedAt, &task.UpdatedAt,
+			&task.Position, &task.CreatedBy, &task.CreatedAt, &task.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
