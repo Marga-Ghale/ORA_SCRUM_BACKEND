@@ -75,6 +75,7 @@ func NewServices(deps *ServiceDeps) *Services {
 		deps.Repos.TaskRepo,
 		deps.Repos.TeamRepo,
 		deps.Repos.FolderRepo, // ✅ Added missing folderRepo
+		memberService, // ✅ ADD THIS
 	)
 
 	return &Services{

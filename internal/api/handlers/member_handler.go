@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/api/middleware"
@@ -67,34 +68,42 @@ func (h *MemberHandler) ListEffectiveMembers(c *gin.Context) {
 
 // AddMember adds a member by user ID
 func (h *MemberHandler) AddMember(c *gin.Context) {
-	entityType := c.Param("entityType")
-	entityID := c.Param("entityId")
-	inviterID, ok := middleware.RequireUserID(c)
-	if !ok {
-		return
-	}
+    entityType := c.Param("entityType")
+    entityID := c.Param("entityId")
+    inviterID, ok := middleware.RequireUserID(c)
+    if !ok {
+        return
+    }
 
-	var req models.AddMemberRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+    var req models.AddMemberRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
 
-	err := h.memberService.AddMember(c.Request.Context(), entityType, entityID, req.UserID, req.Role, inviterID)
-	if err != nil {
-		if err == service.ErrUserNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
-			return
-		}
-		if err == service.ErrConflict {
-			c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
-		return
-	}
+    err := h.memberService.AddMember(c.Request.Context(), entityType, entityID, req.UserID, req.Role, inviterID)
+    if err != nil {
+        // ✅ ADD THIS LOGGING
+        log.Printf("[MemberHandler][AddMember] entityType=%s entityID=%s userID=%s inviterID=%s error=%v", 
+            entityType, entityID, req.UserID, inviterID, err)
+        
+        if err == service.ErrUserNotFound {
+            c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+            return
+        }
+        if err == service.ErrConflict {
+            c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
+            return
+        }
+        if err == service.ErrUnauthorized {  // ✅ ADD THIS CHECK
+            c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to add members"})
+            return
+        }
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
+        return
+    }
 
-	c.JSON(http.StatusCreated, gin.H{"message": "Member added successfully"})
+    c.JSON(http.StatusCreated, gin.H{"message": "Member added successfully"})
 }
 
 // InviteMemberByEmail invites by email

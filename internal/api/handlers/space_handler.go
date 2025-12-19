@@ -152,3 +152,5 @@ func (h *SpaceHandler) Delete(c *gin.Context) {
 
 	c.JSON(http.StatusNoContent, nil)
 }
+
+

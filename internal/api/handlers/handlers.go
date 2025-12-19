@@ -17,6 +17,7 @@ type Handlers struct {
 	Task         *TaskHandler
 	Label        *LabelHandler
 	Notification *NotificationHandler
+	Member	   	 *MemberHandler
 }
 
 // NewHandlers creates all handlers
@@ -31,6 +32,7 @@ func NewHandlers(services *service.Services) *Handlers {
 		Task:         &TaskHandler{taskService: services.Task},
 		Label:        &LabelHandler{labelService: services.Label},
 		Notification: &NotificationHandler{notificationService: services.Notification},
+		Member:       &MemberHandler{memberService: services.Member},
 	}
 }
 

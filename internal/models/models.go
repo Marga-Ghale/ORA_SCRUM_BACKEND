@@ -45,23 +45,6 @@ type UpdateUserRequest struct {
 	Avatar *string `json:"avatar,omitempty"`
 }
 
-type WorkspaceMemberResponse struct {
-	ID          string        `json:"id"`
-	WorkspaceID string        `json:"workspaceId"`
-	UserID      string        `json:"userId"`
-	Role        string        `json:"role"`
-	JoinedAt    time.Time     `json:"joinedAt"`
-	User        *UserResponse `json:"user,omitempty"`
-}
-
-type InviteMemberRequest struct {
-	Email string `json:"email" binding:"required,email"`
-	Role  string `json:"role" binding:"required,oneof=owner admin member viewer"`
-}
-
-type UpdateMemberRoleRequest struct {
-	Role string `json:"role" binding:"required,oneof=admin member viewer"`
-}
 
 
 type SpaceMemberResponse struct {
@@ -259,27 +242,6 @@ func NewPaginatedResponse(data interface{}, total, page, perPage int) PaginatedR
 }
 
 
-// Add to models package
-
-
-// Member requests
-type AddMemberRequest struct {
-	UserID string `json:"userId" binding:"required"`
-	Role   string `json:"role" binding:"required"`
-}
-
-// Member responses
-type UnifiedMemberResponse struct {
-	ID            string        `json:"id"`
-	EntityType    string        `json:"entityType"`    // "workspace", "space", "folder", "project"
-	EntityID      string        `json:"entityId"`
-	UserID        string        `json:"userId"`
-	Role          string        `json:"role"`
-	JoinedAt      time.Time     `json:"joinedAt"`
-	IsInherited   bool          `json:"isInherited"`   // True if access from parent
-	InheritedFrom string        `json:"inheritedFrom"` // "workspace", "space", "folder" or empty
-	User          *UserResponse `json:"user,omitempty"`
-}
 
 type AccessCheckResponse struct {
 	HasAccess     bool   `json:"hasAccess"`

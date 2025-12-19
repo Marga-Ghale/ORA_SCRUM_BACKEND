@@ -36,8 +36,8 @@ type ProjectResponse struct {
 	Color        *string    `json:"color,omitempty"`
 	LeadID       *string    `json:"leadId,omitempty"`
 	Visibility   *string    `json:"visibility,omitempty"`
-	AllowedUsers []string   `json:"allowedUsers,omitempty"`  // ✅ ADD IF NEEDED
-	AllowedTeams []string   `json:"allowedTeams,omitempty"`  // ✅ ADD IF NEEDED
+	AllowedUsers []string   `json:"allowedUsers"`  
+	AllowedTeams []string   `json:"allowedTeams"`  
 	CreatedBy    *string    `json:"createdBy,omitempty"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`

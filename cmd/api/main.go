@@ -475,6 +475,32 @@ func main() {
 				invitations.GET("/stats", invitationHandler.GetInvitationStats)
 			}
 
+			     // ============================================
+				// Member Management Routes (Unified)
+				// ============================================
+				members := protected.Group("/members")
+				{
+					// List members
+					members.GET("/:entityType/:entityId/direct", h.Member.ListDirectMembers)
+					members.GET("/:entityType/:entityId/effective", h.Member.ListEffectiveMembers)
+					
+					// Add/Remove members
+					members.POST("/:entityType/:entityId", h.Member.AddMember)
+					members.POST("/:entityType/:entityId/invite", h.Member.InviteMemberByEmail)
+					members.DELETE("/:entityType/:entityId/:userId", h.Member.RemoveMember)
+					
+					// Update role
+					members.PATCH("/:entityType/:entityId/:userId/role", h.Member.UpdateMemberRole)
+					
+					// Access checks
+					members.GET("/:entityType/:entityId/access", h.Member.CheckAccess)
+					members.GET("/:entityType/:entityId/access-level", h.Member.GetAccessLevel)
+					
+					// User's memberships
+					members.GET("/my/memberships", h.Member.GetUserMemberships)
+					members.GET("/my/access", h.Member.GetUserAllAccess)
+				}
+
 			// Activity routes
 			activities := protected.Group("/activities")
 			{

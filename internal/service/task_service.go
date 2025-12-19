@@ -213,6 +213,15 @@ func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repo
 			return nil, ErrUnauthorized
 		}
 	}
+	// ✅ Verify creator has access to project
+if req.CreatedBy != nil {
+    hasAccess, _, err := s.memberService.HasEffectiveAccess(
+        ctx, EntityTypeProject, req.ProjectID, *req.CreatedBy,
+    )
+    if err != nil || !hasAccess {
+        return nil, ErrUnauthorized
+    }
+}
 
 	task := &repository.Task{
 		ProjectID:      req.ProjectID,

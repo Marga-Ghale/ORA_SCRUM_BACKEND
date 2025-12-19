@@ -119,7 +119,7 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 			member, _ := s.workspaceRepo.FindMember(ctx, entityID, inviterID)
 			if member != nil {
 				roleVal := getRoleLevel(member.Role)
-				hasPermission = roleVal >= 4
+				hasPermission = roleVal >= 4  // admin or owner
 			}
 		case EntityTypeSpace:
 			space, _ := s.spaceRepo.FindByID(ctx, entityID)
@@ -127,7 +127,7 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 				wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
 				if wsMember != nil {
 					roleVal := getRoleLevel(wsMember.Role)
-					hasPermission = roleVal >= 4
+					hasPermission = roleVal >= 4  // admin or owner
 				}
 			}
 		case EntityTypeFolder:
@@ -136,14 +136,14 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 				spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
 				if spaceMember != nil {
 					roleVal := getRoleLevel(spaceMember.Role)
-					hasPermission = roleVal >= 4
+					hasPermission = roleVal >= 4  // admin or owner
 				}
 			}
 		case EntityTypeProject:
 			projMember, _ := s.projectRepo.FindMember(ctx, entityID, inviterID)
 			if projMember != nil {
 				roleVal := getRoleLevel(projMember.Role)
-				hasPermission = roleVal >= 4
+				hasPermission = roleVal >= 3  // ✅ FIXED: lead, admin, or owner
 			}
 		}
 

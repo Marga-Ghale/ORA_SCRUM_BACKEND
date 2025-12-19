@@ -37,3 +37,36 @@ type WorkspaceResponse struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
+
+
+// ============================================
+// Member Management Models
+// ============================================
+
+type AddWorkspaceMemberRequest struct {
+	UserID string `json:"userId" binding:"required"`
+	Role   string `json:"role" binding:"required"` // owner, admin, member, viewer
+}
+
+type AddWorkspaceMemberByEmailRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Role  string `json:"role" binding:"required"`
+}
+
+
+type WorkspaceMemberResponse struct {
+	ID          string    `json:"id"`
+	WorkspaceID string    `json:"workspaceId"`
+	UserID      string    `json:"userId"`
+	Role        string    `json:"role"`
+	JoinedAt    time.Time `json:"joinedAt"`
+	User        *UserInfo `json:"user,omitempty"`
+}
+
+type UserInfo struct {
+	ID     string  `json:"id"`
+	Email  string  `json:"email"`
+	Name   string  `json:"name"`
+	Avatar *string `json:"avatar,omitempty"`
+	Status *string `json:"status,omitempty"`
+}
