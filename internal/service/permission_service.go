@@ -214,9 +214,91 @@ func (s *permissionService) isAllowedInSpace(ctx context.Context, userID string,
 	return false
 }
 
+
+
+// ============================================
+// Folder Permissions 
+// ============================================
+
+func (s *permissionService) CanAccessFolder(ctx context.Context, userID, folderID string) bool {
+	folder, err := s.folderRepo.FindByID(ctx, folderID)
+	if err != nil || folder == nil {
+		return false
+	}
+
+	// Check folder membership first
+	member, _ := s.folderRepo.FindMember(ctx, folderID, userID)
+	if member != nil {
+		return true
+	}
+
+	// Check space access
+	if !s.CanAccessSpace(ctx, userID, folder.SpaceID) {
+		return false
+	}
+
+	// Check folder visibility restrictions
+	if folder.Visibility != nil && *folder.Visibility == "private" {
+		return s.isAllowedInFolder(ctx, userID, folder)
+	}
+
+	return true
+}
+
+func (s *permissionService) CanManageFolder(ctx context.Context, userID, folderID string) bool {
+	folder, err := s.folderRepo.FindByID(ctx, folderID)
+	if err != nil || folder == nil {
+		return false
+	}
+	
+	// Folder members with admin role
+	member, _ := s.folderRepo.FindMember(ctx, folderID, userID)
+	if member != nil && hasMinimumRole(normalizeRole(member.Role), PermissionAdmin) {
+		return true
+	}
+
+	// Space admins can manage folders
+	return s.CanManageSpace(ctx, userID, folder.SpaceID)
+}
+
+func (s *permissionService) GetFolderRole(ctx context.Context, userID, folderID string) string {
+	member, err := s.folderRepo.FindMember(ctx, folderID, userID)
+	if err == nil && member != nil {
+		return normalizeRole(member.Role)
+	}
+
+	folder, err := s.folderRepo.FindByID(ctx, folderID)
+	if err != nil || folder == nil {
+		return ""
+	}
+	return s.GetSpaceRole(ctx, userID, folder.SpaceID)
+}
+
+func (s *permissionService) isAllowedInFolder(ctx context.Context, userID string, folder *repository.Folder) bool {
+	if folder.AllowedUsers != nil {
+		for _, allowedID := range folder.AllowedUsers {
+			if allowedID == userID {
+				return true
+			}
+		}
+	}
+
+	if folder.AllowedTeams != nil && s.teamRepo != nil {
+		for _, teamID := range folder.AllowedTeams {
+			isMember, _ := s.teamRepo.IsMember(ctx, teamID, userID)
+			if isMember {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // ============================================
 // Project Permissions
 // ============================================
+// REPLACE existing CanAccessProject (around line 175)
 
 func (s *permissionService) CanAccessProject(ctx context.Context, userID, projectID string) bool {
 	project, err := s.projectRepo.FindByID(ctx, projectID)
@@ -230,8 +312,47 @@ func (s *permissionService) CanAccessProject(ctx context.Context, userID, projec
 		return true
 	}
 
-	// Check space access
-	return s.CanAccessSpace(ctx, userID, project.SpaceID)
+	// Check folder access if in folder
+	if project.FolderID != nil {
+		if !s.CanAccessFolder(ctx, userID, *project.FolderID) {
+			return false
+		}
+	} else {
+		// Not in folder, check space access
+		if !s.CanAccessSpace(ctx, userID, project.SpaceID) {
+			return false
+		}
+	}
+
+	// Check project visibility restrictions
+	if project.Visibility != nil && *project.Visibility == "private" {
+		return s.isAllowedInProject(ctx, userID, project)
+	}
+
+	return true
+}
+
+// ADD this helper after CanAccessProject
+
+func (s *permissionService) isAllowedInProject(ctx context.Context, userID string, project *repository.Project) bool {
+	if project.AllowedUsers != nil {
+		for _, allowedID := range project.AllowedUsers {
+			if allowedID == userID {
+				return true
+			}
+		}
+	}
+
+	if project.AllowedTeams != nil && s.teamRepo != nil {
+		for _, teamID := range project.AllowedTeams {
+			isMember, _ := s.teamRepo.IsMember(ctx, teamID, userID)
+			if isMember {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (s *permissionService) CanManageProject(ctx context.Context, userID, projectID string) bool {
@@ -351,6 +472,8 @@ func (s *permissionService) CanManageTeam(ctx context.Context, userID, teamID st
 // Generic Permission Check
 // ============================================
 
+// REPLACE existing CheckPermission (around line 250)
+
 func (s *permissionService) CheckPermission(ctx context.Context, userID, entityType, entityID, action string) bool {
 	switch entityType {
 	case "workspace":
@@ -367,6 +490,14 @@ func (s *permissionService) CheckPermission(ctx context.Context, userID, entityT
 			return s.CanAccessSpace(ctx, userID, entityID)
 		case ActionEdit, ActionManage, ActionDelete:
 			return s.CanManageSpace(ctx, userID, entityID)
+		}
+
+	case "folder":  // ✅ ADD THIS CASE
+		switch action {
+		case ActionView:
+			return s.CanAccessFolder(ctx, userID, entityID)
+		case ActionEdit, ActionManage, ActionDelete:
+			return s.CanManageFolder(ctx, userID, entityID)
 		}
 
 	case "project":
@@ -418,3 +549,4 @@ func normalizeRole(role string) string {
 		return role
 	}
 }
+

@@ -377,14 +377,7 @@ func (r *taskRepository) BulkMoveToSprint(ctx context.Context, taskIDs []string,
 	return err
 }
 
-// Helper method to query multiple tasks
-
-// CRITICAL: Fix the scan order to match database column order
-// The database columns are: id, title, description, status, priority, type, 
-// project_id, sprint_id, parent_task_id, assignee_ids, watcher_ids, label_ids,
-// story_points, estimated_hours, actual_hours, start_date, due_date, completed_at,
-// position, created_by, created_at, updated_at, blocked
-
+// queryTasks - FIXED with correct column order matching database
 func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...interface{}) ([]*Task, error) {
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -395,31 +388,35 @@ func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...i
 	var tasks []*Task
 	for rows.Next() {
 		task := &Task{}
-		// SCAN IN THE EXACT ORDER AS YOUR DATABASE COLUMNS
+		// SCAN IN DATABASE COLUMN ORDER (from \d tasks):
+		// id, project_id, sprint_id, parent_task_id, title, description,
+		// status, priority, type, assignee_ids, watcher_ids, label_ids,
+		// story_points, estimated_hours, actual_hours, start_date, due_date,
+		// completed_at, blocked, position, created_by, created_at, updated_at
 		err := rows.Scan(
-			&task.ID,           // 1
-			&task.Title,        // 2
-			&task.Description,  // 3
-			&task.Status,       // 4
-			&task.Priority,     // 5
-			&task.Type,         // 6
-			&task.ProjectID,    // 7
-			&task.SprintID,     // 8
-			&task.ParentTaskID, // 9
-			pq.Array(&task.AssigneeIDs), // 10
-			pq.Array(&task.WatcherIDs),  // 11
-			pq.Array(&task.LabelIDs),    // 12
-			&task.StoryPoints,    // 13
-			&task.EstimatedHours, // 14
-			&task.ActualHours,    // 15
-			&task.StartDate,      // 16
-			&task.DueDate,        // 17
-			&task.CompletedAt,    // 18
-			&task.Position,       // 19
-			&task.CreatedBy,      // 20
-			&task.CreatedAt,      // 21
-			&task.UpdatedAt,      // 22
-			&task.Blocked,        // 23
+			&task.ID,                    // 1. id
+			&task.ProjectID,             // 2. project_id
+			&task.SprintID,              // 3. sprint_id
+			&task.ParentTaskID,          // 4. parent_task_id
+			&task.Title,                 // 5. title
+			&task.Description,           // 6. description
+			&task.Status,                // 7. status
+			&task.Priority,              // 8. priority
+			&task.Type,                  // 9. type
+			pq.Array(&task.AssigneeIDs), // 10. assignee_ids
+			pq.Array(&task.WatcherIDs),  // 11. watcher_ids
+			pq.Array(&task.LabelIDs),    // 12. label_ids
+			&task.StoryPoints,           // 13. story_points
+			&task.EstimatedHours,        // 14. estimated_hours
+			&task.ActualHours,           // 15. actual_hours
+			&task.StartDate,             // 16. start_date
+			&task.DueDate,               // 17. due_date
+			&task.CompletedAt,           // 18. completed_at
+			&task.Blocked,               // 19. blocked
+			&task.Position,              // 20. position
+			&task.CreatedBy,             // 21. created_by
+			&task.CreatedAt,             // 22. created_at
+			&task.UpdatedAt,             // 23. updated_at
 		)
 		if err != nil {
 			return nil, err
@@ -429,35 +426,36 @@ func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...i
 
 	return tasks, rows.Err()
 }
-// Fix FindByID with correct scan order
+
+// FindByID - FIXED with correct column order
 func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error) {
 	query := `SELECT * FROM tasks WHERE id = $1`
 	
 	task := &Task{}
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&task.ID,
-		&task.Title,
-		&task.Description,
-		&task.Status,
-		&task.Priority,
-		&task.Type,
-		&task.ProjectID,
-		&task.SprintID,
-		&task.ParentTaskID,
-		pq.Array(&task.AssigneeIDs),
-		pq.Array(&task.WatcherIDs),
-		pq.Array(&task.LabelIDs),
-		&task.StoryPoints,
-		&task.EstimatedHours,
-		&task.ActualHours,
-		&task.StartDate,
-		&task.DueDate,
-		&task.CompletedAt,
-		&task.Position,
-		&task.CreatedBy,
-		&task.CreatedAt,
-		&task.UpdatedAt,
-		&task.Blocked,
+		&task.ID,                    // 1. id
+		&task.ProjectID,             // 2. project_id
+		&task.SprintID,              // 3. sprint_id
+		&task.ParentTaskID,          // 4. parent_task_id
+		&task.Title,                 // 5. title
+		&task.Description,           // 6. description
+		&task.Status,                // 7. status
+		&task.Priority,              // 8. priority
+		&task.Type,                  // 9. type
+		pq.Array(&task.AssigneeIDs), // 10. assignee_ids
+		pq.Array(&task.WatcherIDs),  // 11. watcher_ids
+		pq.Array(&task.LabelIDs),    // 12. label_ids
+		&task.StoryPoints,           // 13. story_points
+		&task.EstimatedHours,        // 14. estimated_hours
+		&task.ActualHours,           // 15. actual_hours
+		&task.StartDate,             // 16. start_date
+		&task.DueDate,               // 17. due_date
+		&task.CompletedAt,           // 18. completed_at
+		&task.Blocked,               // 19. blocked
+		&task.Position,              // 20. position
+		&task.CreatedBy,             // 21. created_by
+		&task.CreatedAt,             // 22. created_at
+		&task.UpdatedAt,             // 23. updated_at
 	)
 	
 	if err == sql.ErrNoRows {

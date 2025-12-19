@@ -197,42 +197,6 @@ func toSpaceResponse(s *repository.Space) models.SpaceResponse {
 	return resp
 }
 
-
-// ============================================
-// Helper Functions
-// ============================================
-func toProjectResponse(p *repository.Project) models.ProjectResponse {
-	resp := models.ProjectResponse{
-		ID:        p.ID,
-		SpaceID:   p.SpaceID,
-        FolderID:  p.FolderID,  // ✅ IMPORTANT: Include this line
-		Name:      p.Name,
-		Key:       p.Key,
-		Description: p.Description, // pointer directly
-		Icon:        p.Icon,        // pointer directly
-		Color:       p.Color,       // pointer directly
-		LeadID:      p.LeadID,      // pointer directly
-		Visibility:  p.Visibility,  // pointer directly
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
-		AllowedUsers: func() []string {
-			if p.AllowedUsers != nil {
-				return p.AllowedUsers
-			}
-			return []string{}
-		}(),
-		AllowedTeams: func() []string {
-			if p.AllowedTeams != nil {
-				return p.AllowedTeams
-			}
-			return []string{}
-		}(),
-	}
-
-	return resp
-}
-
-
 // Helper function to convert repository.Workspace to models.WorkspaceResponse
 func toWorkspaceResponse(ws *repository.Workspace) models.WorkspaceResponse {
 	resp := models.WorkspaceResponse{

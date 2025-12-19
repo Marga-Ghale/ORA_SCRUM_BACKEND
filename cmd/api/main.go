@@ -297,14 +297,18 @@ func main() {
 			}
 
 			// Folder routes
-			folders := protected.Group("/folders")
-			{
-				folders.GET("/my", h.Folder.ListByUser)
-				folders.GET("/:id", h.Folder.Get)
-				folders.PUT("/:id", h.Folder.Update)
-				folders.DELETE("/:id", h.Folder.Delete)
-				folders.PATCH("/:id/visibility", h.Folder.UpdateVisibility)
-			}
+			// Folder routes
+				folders := protected.Group("/folders")
+				{
+					folders.GET("/my", h.Folder.ListByUser)
+					folders.GET("/:id", h.Folder.Get)
+					folders.PUT("/:id", h.Folder.Update)
+					folders.DELETE("/:id", h.Folder.Delete)
+					folders.PATCH("/:id/visibility", h.Folder.UpdateVisibility)
+					
+					// ✅ ADD THIS LINE
+					folders.GET("/:id/projects", h.Project.ListByFolder)
+				}
 
 			// Project routes
 			projects := protected.Group("/projects")
@@ -331,79 +335,72 @@ func main() {
 
 			// Task routes
 			tasks := protected.Group("/tasks")
-			{
-				// Core CRUD
-				tasks.GET("/:id", h.Task.Get)
-				tasks.PUT("/:id", h.Task.Update)
-				tasks.DELETE("/:id", h.Task.Delete)
-
-				// Listing
-				tasks.GET("/my", h.Task.ListMyTasks)
-				tasks.GET("/status/:id", h.Task.ListByStatus)
+				{
+					// ✅ FIXED ORDER - Specific routes BEFORE generic :id
+					
+					// Listing (specific paths first)
+					tasks.GET("/my", h.Task.ListMyTasks)
+					tasks.GET("/filter", h.Task.FilterTasks)  // ✅ Moved filter before :id
+					
+					// Core CRUD (generic :id routes)
+					tasks.GET("/:id", h.Task.Get)
+					tasks.PUT("/:id", h.Task.Update)
+					tasks.DELETE("/:id", h.Task.Delete)
+					
+					// Task details
 					tasks.GET("/:id/subtasks", h.Task.ListSubtasks)
-
-				// Status & Priority
-				tasks.PATCH("/:id/status", h.Task.UpdateStatus)
-				tasks.PATCH("/:id/priority", h.Task.UpdatePriority)
-
-				// Assignment
-				tasks.POST("/:id/assign", h.Task.AssignTask)
-				tasks.DELETE("/:id/assign/:assigneeId", h.Task.UnassignTask)
-
-				// Watchers
-				tasks.POST("/:id/watchers", h.Task.AddWatcher)
-				tasks.DELETE("/:id/watchers/:watcherId", h.Task.RemoveWatcher)
-
-				// Sprint & hierarchy
-				tasks.POST("/:id/move-sprint", h.Task.MoveToSprint)
-				tasks.POST("/:id/convert-subtask", h.Task.ConvertToSubtask)
-
-				// Completion
-				tasks.POST("/:id/complete", h.Task.MarkComplete)
-
-				// Comments
-				tasks.GET("/:id/comments", h.Task.ListComments)
-				tasks.POST("/:id/comments", h.Task.AddComment)
-				tasks.PUT("/comments/:commentId", h.Task.UpdateComment)
-				tasks.DELETE("/comments/:commentId", h.Task.DeleteComment)
-
-				// Attachments
-				tasks.GET("/:id/attachments", h.Task.ListAttachments)
-				tasks.POST("/:id/attachments", h.Task.AddAttachment)
-				tasks.DELETE("/attachments/:attachmentId", h.Task.DeleteAttachment)
-
-				// Time tracking
-				tasks.POST("/:id/timer/start", h.Task.StartTimer)
-				tasks.POST("/timer/stop", h.Task.StopTimer)
-				tasks.GET("/timer/active", h.Task.GetActiveTimer)
-				tasks.POST("/:id/time", h.Task.LogTime)
-				tasks.GET("/:id/time", h.Task.GetTimeEntries)
-				tasks.GET("/:id/time/total", h.Task.GetTotalTime)
-
-				// Dependencies
-				tasks.GET("/:id/dependencies", h.Task.ListDependencies)
-				tasks.GET("/:id/blocked-by", h.Task.ListBlockedBy)
-				tasks.POST("/:id/dependencies", h.Task.AddDependency)
-				tasks.DELETE("/:id/dependencies/:dependsOnTaskId", h.Task.RemoveDependency)
-
-				// Checklists
-				tasks.GET("/:id/checklists", h.Task.ListChecklists)
-				tasks.POST("/:id/checklists", h.Task.CreateChecklist)
-				tasks.POST("/checklists/:checklistId/items", h.Task.AddChecklistItem)
-				tasks.PATCH("/checklists/items/:itemId", h.Task.ToggleChecklistItem)
-				tasks.DELETE("/checklists/items/:itemId", h.Task.DeleteChecklistItem)
-
-				// Activity
-				tasks.GET("/:id/activity", h.Task.GetActivity)
-
-				// Advanced filtering
-				tasks.POST("/filter", h.Task.FilterTasks)
-
-				// Bulk operations
-				tasks.POST("/bulk/status", h.Task.BulkUpdateStatus)
-				tasks.POST("/bulk/assign", h.Task.BulkAssign)
-				tasks.POST("/bulk/move-sprint", h.Task.BulkMoveToSprint)
-			}
+					tasks.GET("/:id/comments", h.Task.ListComments)
+					tasks.GET("/:id/attachments", h.Task.ListAttachments)
+					tasks.GET("/:id/dependencies", h.Task.ListDependencies)
+					tasks.GET("/:id/blocked-by", h.Task.ListBlockedBy)
+					tasks.GET("/:id/checklists", h.Task.ListChecklists)
+					tasks.GET("/:id/activity", h.Task.GetActivity)
+					tasks.GET("/:id/time", h.Task.GetTimeEntries)
+					tasks.GET("/:id/time/total", h.Task.GetTotalTime)
+					
+					// Status & Priority
+					tasks.PATCH("/:id/status", h.Task.UpdateStatus)
+					tasks.PATCH("/:id/priority", h.Task.UpdatePriority)
+					
+					// Assignment
+					tasks.POST("/:id/assign", h.Task.AssignTask)
+					tasks.DELETE("/:id/assign/:assigneeId", h.Task.UnassignTask)
+					
+					// Watchers
+					tasks.POST("/:id/watchers", h.Task.AddWatcher)
+					tasks.DELETE("/:id/watchers/:watcherId", h.Task.RemoveWatcher)
+					
+					// Sprint & hierarchy
+					tasks.POST("/:id/move-sprint", h.Task.MoveToSprint)
+					tasks.POST("/:id/convert-subtask", h.Task.ConvertToSubtask)
+					tasks.POST("/:id/complete", h.Task.MarkComplete)
+					
+					// Actions
+					tasks.POST("/:id/comments", h.Task.AddComment)
+					tasks.PUT("/comments/:commentId", h.Task.UpdateComment)
+					tasks.DELETE("/comments/:commentId", h.Task.DeleteComment)
+					
+					tasks.POST("/:id/attachments", h.Task.AddAttachment)
+					tasks.DELETE("/attachments/:attachmentId", h.Task.DeleteAttachment)
+					
+					tasks.POST("/:id/timer/start", h.Task.StartTimer)
+					tasks.POST("/timer/stop", h.Task.StopTimer)
+					tasks.GET("/timer/active", h.Task.GetActiveTimer)
+					tasks.POST("/:id/time", h.Task.LogTime)
+					
+					tasks.POST("/:id/dependencies", h.Task.AddDependency)
+					tasks.DELETE("/:id/dependencies/:dependsOnTaskId", h.Task.RemoveDependency)
+					
+					tasks.POST("/:id/checklists", h.Task.CreateChecklist)
+					tasks.POST("/checklists/:checklistId/items", h.Task.AddChecklistItem)
+					tasks.PATCH("/checklists/items/:itemId", h.Task.ToggleChecklistItem)
+					tasks.DELETE("/checklists/items/:itemId", h.Task.DeleteChecklistItem)
+					
+					// Bulk operations
+					tasks.POST("/bulk/status", h.Task.BulkUpdateStatus)
+					tasks.POST("/bulk/assign", h.Task.BulkAssign)
+					tasks.POST("/bulk/move-sprint", h.Task.BulkMoveToSprint)
+				}
 
 			// Label routes
 			labels := protected.Group("/labels")

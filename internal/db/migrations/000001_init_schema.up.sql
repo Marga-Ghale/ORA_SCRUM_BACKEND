@@ -153,6 +153,7 @@ CREATE TABLE projects (
     allowed_users TEXT[] DEFAULT '{}',
     allowed_teams TEXT[] DEFAULT '{}',
     task_counter INT DEFAULT 0,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(key)

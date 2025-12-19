@@ -141,6 +141,7 @@ func SeedData(repos *repository.Repositories) {
 		LeadID:     &user1.ID,
 		Visibility: &defaultVisibility,
 	}
+	
 	repos.ProjectRepo.Create(ctx, project)
 
 	// Add project members

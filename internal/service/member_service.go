@@ -94,8 +94,9 @@ func NewMemberService(
 // DIRECT MEMBER OPERATIONS
 // ============================================
 
+
 func (s *memberService) AddMember(ctx context.Context, entityType, entityID, userID, role, inviterID string) error {
-	// Verify user exists
+	// Verify user exists first
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil || user == nil {
 		return ErrUserNotFound
@@ -105,6 +106,50 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 	existing, _ := s.GetMember(ctx, entityType, entityID, userID)
 	if existing != nil && !existing.IsInherited {
 		return ErrConflict
+	}
+
+	// ✅ FIXED: Skip permission check if creator is adding themselves
+	// This happens when creating new workspace/space/folder/project
+	if inviterID != userID {
+		// Only check permissions if someone else is adding this user
+		hasPermission := false
+		
+		switch entityType {
+		case EntityTypeWorkspace:
+			member, _ := s.workspaceRepo.FindMember(ctx, entityID, inviterID)
+			if member != nil {
+				roleVal := getRoleLevel(member.Role)
+				hasPermission = roleVal >= 4
+			}
+		case EntityTypeSpace:
+			space, _ := s.spaceRepo.FindByID(ctx, entityID)
+			if space != nil {
+				wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+				if wsMember != nil {
+					roleVal := getRoleLevel(wsMember.Role)
+					hasPermission = roleVal >= 4
+				}
+			}
+		case EntityTypeFolder:
+			folder, _ := s.folderRepo.FindByID(ctx, entityID)
+			if folder != nil {
+				spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
+				if spaceMember != nil {
+					roleVal := getRoleLevel(spaceMember.Role)
+					hasPermission = roleVal >= 4
+				}
+			}
+		case EntityTypeProject:
+			projMember, _ := s.projectRepo.FindMember(ctx, entityID, inviterID)
+			if projMember != nil {
+				roleVal := getRoleLevel(projMember.Role)
+				hasPermission = roleVal >= 4
+			}
+		}
+
+		if !hasPermission {
+			return ErrUnauthorized
+		}
 	}
 
 	// Delegate to appropriate repository
@@ -160,6 +205,21 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 	default:
 		return ErrInvalidEntityType
 	}
+}
+
+// ✅ ADD this helper at bottom of member_service.go
+func getRoleLevel(role string) int {
+	roleMap := map[string]int{
+		"owner":  5,
+		"admin":  4,
+		"lead":   3,
+		"member": 2,
+		"viewer": 1,
+	}
+	if level, ok := roleMap[role]; ok {
+		return level
+	}
+	return 0
 }
 
 func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, userID string) error {

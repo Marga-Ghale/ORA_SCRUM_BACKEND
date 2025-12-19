@@ -55,9 +55,12 @@ func (s *projectService) Create(ctx context.Context, spaceID string, folderID *s
 	}
 
 	// Verify folder exists if provided
-	if folderID != nil {
+	if folderID != nil && *folderID != "" {  // ✅ Added empty check
 		folder, err := s.folderRepo.FindByID(ctx, *folderID)
-		if err != nil || folder == nil {
+		if err != nil {
+			return nil, err
+		}
+		if folder == nil {
 			return nil, ErrNotFound
 		}
 		// Verify folder belongs to the same space
@@ -74,6 +77,12 @@ func (s *projectService) Create(ctx context.Context, spaceID string, folderID *s
 		}
 	}
 
+	// ✅ NEW: Set default lead to creator if not provided
+	finalLeadID := leadID
+	if finalLeadID == nil {
+		finalLeadID = &creatorID
+	}
+
 	// Set default visibility
 	defaultVisibility := "private"
 	
@@ -85,8 +94,9 @@ func (s *projectService) Create(ctx context.Context, spaceID string, folderID *s
 		Description: description,
 		Icon:        icon,
 		Color:       color,
-		LeadID:      leadID,
+		LeadID:      finalLeadID,  // ✅ Use finalLeadID instead of leadID
 		Visibility:  &defaultVisibility,
+		CreatedBy:   &creatorID,
 	}
 
 	if err := s.projectRepo.Create(ctx, project); err != nil {

@@ -10,17 +10,18 @@ import (
 
 type Project struct {
 	ID           string
-	SpaceID      string   // ✓ Projects belong to spaces (required)
-	FolderID     *string  // ✓ Optional folder (can be NULL)
+	SpaceID      string
+	FolderID     *string
 	Name         string
-	Key          string   // ✓ Project key (e.g., "PROJ")
+	Key          string
 	Description  *string
 	Icon         *string
 	Color        *string
-	LeadID       *string  // ✓ Project lead
+	LeadID       *string
 	Visibility   *string
 	AllowedUsers []string
 	AllowedTeams []string
+	CreatedBy    *string   
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -63,27 +64,27 @@ func NewProjectRepository(pool *pgxpool.Pool) ProjectRepository {
 
 func (r *pgProjectRepository) Create(ctx context.Context, project *Project) error {
 	query := `
-		INSERT INTO projects (space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO projects (space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, created_at, updated_at
 	`
 	return r.pool.QueryRow(ctx, query,
 		project.SpaceID, project.FolderID, project.Name, project.Key, project.Description,
 		project.Icon, project.Color, project.LeadID, project.Visibility,
-		project.AllowedUsers, project.AllowedTeams,
+		project.AllowedUsers, project.AllowedTeams, project.CreatedBy,
 	).Scan(&project.ID, &project.CreatedAt, &project.UpdatedAt)
 }
 
 func (r *pgProjectRepository) FindByID(ctx context.Context, id string) (*Project, error) {
 	query := `
-		SELECT id, space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams, created_at, updated_at
+		SELECT id, space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams, created_by, created_at, updated_at
 		FROM projects WHERE id = $1
 	`
 	p := &Project{}
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&p.ID, &p.SpaceID, &p.FolderID, &p.Name, &p.Key, &p.Description,
 		&p.Icon, &p.Color, &p.LeadID, &p.Visibility, &p.AllowedUsers, &p.AllowedTeams,
-		&p.CreatedAt, &p.UpdatedAt,
+		&p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -96,7 +97,7 @@ func (r *pgProjectRepository) FindByID(ctx context.Context, id string) (*Project
 
 func (r *pgProjectRepository) FindBySpaceID(ctx context.Context, spaceID string) ([]*Project, error) {
 	query := `
-		SELECT id, space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams, created_at, updated_at
+		SELECT id, space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams, created_by, created_at, updated_at
 		FROM projects
 		WHERE space_id = $1
 		ORDER BY name
@@ -113,7 +114,7 @@ func (r *pgProjectRepository) FindBySpaceID(ctx context.Context, spaceID string)
 		if err := rows.Scan(
 			&p.ID, &p.SpaceID, &p.FolderID, &p.Name, &p.Key, &p.Description,
 			&p.Icon, &p.Color, &p.LeadID, &p.Visibility, &p.AllowedUsers, &p.AllowedTeams,
-			&p.CreatedAt, &p.UpdatedAt,
+			&p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -124,7 +125,7 @@ func (r *pgProjectRepository) FindBySpaceID(ctx context.Context, spaceID string)
 
 func (r *pgProjectRepository) FindByFolderID(ctx context.Context, folderID string) ([]*Project, error) {
 	query := `
-		SELECT id, space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams, created_at, updated_at
+		SELECT id, space_id, folder_id, name, key, description, icon, color, lead_id, visibility, allowed_users, allowed_teams, created_by, created_at, updated_at
 		FROM projects
 		WHERE folder_id = $1
 		ORDER BY name
@@ -141,7 +142,7 @@ func (r *pgProjectRepository) FindByFolderID(ctx context.Context, folderID strin
 		if err := rows.Scan(
 			&p.ID, &p.SpaceID, &p.FolderID, &p.Name, &p.Key, &p.Description,
 			&p.Icon, &p.Color, &p.LeadID, &p.Visibility, &p.AllowedUsers, &p.AllowedTeams,
-			&p.CreatedAt, &p.UpdatedAt,
+			&p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -152,7 +153,7 @@ func (r *pgProjectRepository) FindByFolderID(ctx context.Context, folderID strin
 
 func (r *pgProjectRepository) FindByUserID(ctx context.Context, userID string) ([]*Project, error) {
 	query := `
-		SELECT p.id, p.space_id, p.folder_id, p.name, p.key, p.description, p.icon, p.color, p.lead_id, p.visibility, p.allowed_users, p.allowed_teams, p.created_at, p.updated_at
+		SELECT p.id, p.space_id, p.folder_id, p.name, p.key, p.description, p.icon, p.color, p.lead_id, p.visibility, p.allowed_users, p.allowed_teams, p.created_by, p.created_at, p.updated_at
 		FROM projects p
 		JOIN project_members pm ON p.id = pm.project_id
 		WHERE pm.user_id = $1
@@ -170,7 +171,7 @@ func (r *pgProjectRepository) FindByUserID(ctx context.Context, userID string) (
 		if err := rows.Scan(
 			&p.ID, &p.SpaceID, &p.FolderID, &p.Name, &p.Key, &p.Description,
 			&p.Icon, &p.Color, &p.LeadID, &p.Visibility, &p.AllowedUsers, &p.AllowedTeams,
-			&p.CreatedAt, &p.UpdatedAt,
+			&p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
