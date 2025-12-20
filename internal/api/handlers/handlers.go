@@ -52,7 +52,45 @@ func toUserResponse(u *repository.User) models.UserResponse {
 }
 
 // internal/api/handlers/handlers.go - toTaskResponse function
+// func toTaskResponse(t *repository.Task) models.TaskResponse {
+// 	return models.TaskResponse{
+// 		ID:             t.ID,
+// 		Title:          t.Title,
+// 		Description:    t.Description,
+// 		Status:         t.Status,
+// 		Priority:       t.Priority,
+// 		Type:           t.Type,
+// 		ProjectID:      t.ProjectID,
+// 		SprintID:       t.SprintID,
+// 		ParentTaskID:   t.ParentTaskID,
+// 		AssigneeIDs:    t.AssigneeIDs,
+// 		WatcherIDs:     t.WatcherIDs,
+// 		LabelIDs:       t.LabelIDs,
+// 		StoryPoints:    t.StoryPoints,
+// 		EstimatedHours: t.EstimatedHours,
+// 		ActualHours:    t.ActualHours,
+// 		StartDate:      t.StartDate,
+// 		DueDate:        t.DueDate,
+// 		CompletedAt:    t.CompletedAt,
+// 		Blocked:        t.Blocked,
+// 		Position:       t.Position,
+// 		CreatedBy:      t.CreatedBy,
+// 		CreatedAt:      t.CreatedAt,
+// 		UpdatedAt:      t.UpdatedAt,
+// 	}
+// }
+
+
+// ✅ ADD THIS MISSING HELPER FUNCTION
+// ============================================
+// COMPREHENSIVE TASK RESPONSE MAPPER
+// ============================================
+
 func toTaskResponse(t *repository.Task) models.TaskResponse {
+	if t == nil {
+		return models.TaskResponse{}
+	}
+
 	return models.TaskResponse{
 		ID:             t.ID,
 		Title:          t.Title,
@@ -63,9 +101,9 @@ func toTaskResponse(t *repository.Task) models.TaskResponse {
 		ProjectID:      t.ProjectID,
 		SprintID:       t.SprintID,
 		ParentTaskID:   t.ParentTaskID,
-		AssigneeIDs:    t.AssigneeIDs,
-		WatcherIDs:     t.WatcherIDs,
-		LabelIDs:       t.LabelIDs,
+		AssigneeIDs:    safeStringSlice(t.AssigneeIDs),
+		WatcherIDs:     safeStringSlice(t.WatcherIDs),
+		LabelIDs:       safeStringSlice(t.LabelIDs),
 		StoryPoints:    t.StoryPoints,
 		EstimatedHours: t.EstimatedHours,
 		ActualHours:    t.ActualHours,
@@ -79,6 +117,24 @@ func toTaskResponse(t *repository.Task) models.TaskResponse {
 		UpdatedAt:      t.UpdatedAt,
 	}
 }
+
+// Helper to ensure nil slices become empty slices
+func safeStringSlice(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// Helper to ensure nil int slices become empty slices
+func safeIntSlice(s []int) []int {
+	if s == nil {
+		return []int{}
+	}
+	return s
+}
+
+
 func toLabelResponse(l *repository.Label) models.LabelResponse {
 	return models.LabelResponse{
 		ID:        l.ID,

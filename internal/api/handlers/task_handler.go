@@ -277,6 +277,32 @@ func (h *TaskHandler) UpdatePriority(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Priority updated successfully"})
 }
 
+// func (h *TaskHandler) AssignTask(c *gin.Context) {
+// 	userID, ok := middleware.RequireUserID(c)
+// 	if !ok {
+// 		return
+// 	}
+
+// 	taskID := c.Param("id")
+// 	var req struct {
+// 		AssigneeID string `json:"assigneeId" binding:"required"`
+// 	}
+// 	if err := c.ShouldBindJSON(&req); err != nil {
+// 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+// 		return
+// 	}
+
+// 	err := h.taskService.AssignTask(c.Request.Context(), taskID, req.AssigneeID, userID)
+// 	if err != nil {
+// 		handleServiceError(c, err)
+// 		return
+// 	}
+
+// 	c.JSON(http.StatusOK, gin.H{"message": "Task assigned successfully"})
+// }
+
+
+
 func (h *TaskHandler) AssignTask(c *gin.Context) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
@@ -292,6 +318,7 @@ func (h *TaskHandler) AssignTask(c *gin.Context) {
 		return
 	}
 
+	// ✅ This should send notification internally
 	err := h.taskService.AssignTask(c.Request.Context(), taskID, req.AssigneeID, userID)
 	if err != nil {
 		handleServiceError(c, err)

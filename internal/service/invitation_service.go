@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -162,14 +163,21 @@ func (s *invitationService) CreateInvitation(ctx context.Context, inv *repositor
 	})
 
 	if s.emailSvc != nil && inv.Method == repository.InvitationMethodEmail {
-		go func(inv *repository.Invitation) {
-			workspaceName := inv.WorkspaceID
-			if ws, err := s.workspaceRepo.FindByID(context.Background(), inv.WorkspaceID); err == nil && ws != nil {
-				workspaceName = ws.Name
-			}
-			_ = s.emailSvc.SendInvitation(workspaceName, inv.Email, inv.InvitedByName, inv.Token)
-		}(inv)
-	}
+	go func(inv *repository.Invitation) {
+		workspaceName := inv.WorkspaceID
+		if ws, err := s.workspaceRepo.FindByID(context.Background(), inv.WorkspaceID); err == nil && ws != nil {
+			workspaceName = ws.Name
+		}
+		
+		// ✅ ADD ERROR LOGGING
+		log.Printf("📧 Sending invitation email to: %s", inv.Email)
+		if err := s.emailSvc.SendInvitation(workspaceName, inv.Email, inv.InvitedByName, inv.Token); err != nil {
+			log.Printf("❌ Failed to send invitation email: %v", err)
+		} else {
+			log.Printf("✅ Invitation email sent successfully to: %s", inv.Email)
+		}
+	}(inv)
+}
 
 	return nil
 }
