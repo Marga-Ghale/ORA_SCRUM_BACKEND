@@ -50,7 +50,11 @@ func main() {
 	// ============================================
 	// Set Gin mode
 	// ============================================
+
 	if cfg.Environment == "development" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -137,16 +141,15 @@ func main() {
 	wsHandler := socket.NewHandler(hub, cfg.JWTSecret)
 	log.Println("🔌 WebSocket hub initialized")
 
+	seed.SeedData(repos)
+
 	// ============================================
 	// Seed Data (for development)
 	// ============================================
-	// if cfg.Environment != "development" {
-	// 	log.Println("🌱 Seeding development data...")
-	// 	seed.SeedData(repos)
-	// }
-
+	if cfg.Environment != "development" {
+		log.Println("🌱 Seeding development data...")
 		seed.SeedData(repos)
-	
+	}
 
 	// ============================================
 	// Initialize Notification Service
