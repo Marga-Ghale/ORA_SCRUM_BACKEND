@@ -50,7 +50,7 @@ func main() {
 	// ============================================
 	// Set Gin mode
 	// ============================================
-	if cfg.Environment == "production" {
+	if cfg.Environment == "development" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -140,7 +140,7 @@ func main() {
 	// ============================================
 	// Seed Data (for development)
 	// ============================================
-	if cfg.Environment != "production" {
+	if cfg.Environment != "development" {
 		log.Println("🌱 Seeding development data...")
 		seed.SeedData(repos)
 	}
