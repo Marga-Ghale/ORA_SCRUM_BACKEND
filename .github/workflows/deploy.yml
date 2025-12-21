@@ -74,31 +74,31 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
             cd /root/ORA_SCRUM
-            
+
             # Login to registry
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
+
             # Pull latest image
             docker pull ghcr.io/${{ steps.repo.outputs.name }}:latest
-            
+
             # Restart services (migrations run automatically via docker-compose)
             docker compose up -d
-            
+
             # Wait for services to be healthy
             sleep 20
-            
+
             # Show status
             echo "=== Container Status ==="
             docker compose ps
-            
+
             echo ""
             echo "=== Migration Logs ==="
             docker logs ora_scrum_migrate 2>&1 || echo "No migration logs yet"
-            
+
             echo ""
             echo "=== API Logs (last 10 lines) ==="
             docker logs ora_scrum_api 2>&1 | tail -10
-            
+
             # Cleanup old images
             docker image prune -f
 
@@ -106,9 +106,9 @@ jobs:
         run: |
           echo "⏳ Waiting for API to be ready..."
           sleep 15
-          
+
           response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health)
-          
+
           if [ "$response" = "200" ]; then
             echo "✅ Deployment successful! API is healthy."
           else
