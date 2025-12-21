@@ -81,20 +81,17 @@ jobs:
             # Pull latest image
             docker pull ghcr.io/${{ steps.repo.outputs.name }}:latest
 
-            # Restart services (migrations run automatically via docker-compose)
+            # Restart services
             docker compose up -d
 
             # Wait for services to be healthy
             sleep 20
 
-            # Show status
+            # Show container status
             echo "=== Container Status ==="
             docker compose ps
 
-            echo ""
-            echo "=== Migration Logs ==="
-            docker logs ora_scrum_migrate 2>&1 || echo "No migration logs yet"
-
+            # Show API logs (last 10 lines)
             echo ""
             echo "=== API Logs (last 10 lines) ==="
             docker logs ora_scrum_api 2>&1 | tail -10
@@ -115,4 +112,3 @@ jobs:
             echo "⚠️ API returned status: $response"
             echo "Check logs: docker logs ora_scrum_api"
             exit 1
-          fi
