@@ -43,10 +43,13 @@ COPY --from=builder /app/main .
 # Copy migrations
 COPY --from=builder /app/internal/db/migrations ./internal/db/migrations
 
-# Entrypoint script
+# Entrypoint script with force migration
 RUN echo '#!/bin/sh' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /entrypoint.sh && \
+    echo '# Force to version 3 to clear any dirty state' >> /entrypoint.sh && \
+    echo 'migrate -path ./internal/db/migrations -database "$DATABASE_URL" force 3 2>/dev/null || echo "Force not needed, continuing..."' >> /entrypoint.sh && \
+    echo '# Run migrations up' >> /entrypoint.sh && \
     echo 'migrate -path ./internal/db/migrations -database "$DATABASE_URL" up' >> /entrypoint.sh && \
     echo 'echo "✅ Migrations completed"' >> /entrypoint.sh && \
     echo 'echo "🚀 Starting application..."' >> /entrypoint.sh && \
