@@ -76,40 +76,45 @@ jobs:
             # Pull latest image
             docker pull ghcr.io/${{ env.IMAGE_NAME }}:latest
 
-            # Stop and remove api and migrate containers
-            docker compose stop api migrate || true
-            docker compose rm -f api migrate || true
+            # Stop API container if running
+            docker compose stop api || true
+            docker compose rm -f api || true
 
-            # Start services
+            # Remove old migrate container if exists
+            docker rm -f ora_scrum_migrate 2>/dev/null || true
+
+            # Ensure db and redis are running
             docker compose up -d db redis
-            sleep 5
-            docker compose up -d migrate
+            echo "Waiting for database to be ready..."
+            sleep 10
 
-            # Wait for migrations to complete
-            echo "Waiting for migrations to complete..."
-            for i in {1..30}; do
-              STATUS=$(docker inspect ora_scrum_migrate --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
-              if [ "$STATUS" = "exited" ]; then
-                EXIT_CODE=$(docker inspect ora_scrum_migrate --format='{{.State.ExitCode}}')
-                if [ "$EXIT_CODE" = "0" ]; then
-                  echo "✅ Migrations completed successfully"
-                  break
-                else
-                  echo "❌ Migrations failed with exit code $EXIT_CODE"
-                  docker logs ora_scrum_migrate
-                  exit 1
-                fi
-              fi
-              echo "Migration status: $STATUS (attempt $i/30)"
-              sleep 2
-            done
+            # Force migration to version 3 and then migrate up
+            echo "🔄 Forcing migration to version 3..."
+            docker run --rm \
+              --network ora_scrum_ora_network \
+              -v "$(pwd)/internal/db/migrations:/migrations" \
+              migrate/migrate \
+              -path=/migrations \
+              -database "postgresql://postgres:postgres@ora_scrum_db:5432/ora_scrum?sslmode=disable" \
+              force 3
 
-            # Start API
+            echo "🔄 Running migrations up..."
+            docker run --rm \
+              --network ora_scrum_ora_network \
+              -v "$(pwd)/internal/db/migrations:/migrations" \
+              migrate/migrate \
+              -path=/migrations \
+              -database "postgresql://postgres:postgres@ora_scrum_db:5432/ora_scrum?sslmode=disable" \
+              up
+
+            echo "✅ Migrations completed successfully"
+
+            # Start API (which will also run migrations via entrypoint as backup)
             docker compose up -d api
 
             # Wait for API to be healthy
             echo "Waiting for API to start..."
-            sleep 20
+            sleep 25
 
             # Show container status
             echo ""
@@ -130,7 +135,7 @@ jobs:
       - name: Verify deployment
         run: |
           echo "⏳ Waiting for API to be ready..."
-          sleep 25
+          sleep 20
 
           for i in {1..10}; do
             response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health || echo "000")
