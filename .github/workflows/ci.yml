@@ -43,6 +43,22 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          clean: true
+
+      # Debug step to verify migrations
+      - name: List migration files
+        run: |
+          echo "=== Migration files in repository ==="
+          ls -la internal/db/migrations/
+          echo ""
+          echo "=== Checking for 000007 files ==="
+          if ls internal/db/migrations/000007* 1> /dev/null 2>&1; then
+            echo "❌ ERROR: Found 000007 files!"
+            exit 1
+          else
+            echo "✅ No 000007 files found (correct)"
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -67,9 +83,12 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ora_scrum_test?sslmode=disable
         run: |
-          # Force to version 3 first to avoid dirty state
-          migrate -path ./internal/db/migrations -database "$DATABASE_URL" force 3 || true
-          # Run migrations up
+          # List what migrations will be run
+          echo "=== Migrations to be applied ==="
+          ls -1 internal/db/migrations/*.up.sql
+          echo ""
+
+          # Run migrations
           migrate -path ./internal/db/migrations -database "$DATABASE_URL" up
 
       - name: Run tests
