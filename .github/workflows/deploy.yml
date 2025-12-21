@@ -38,7 +38,9 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:latest
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:latest
+            ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -81,20 +83,53 @@ jobs:
             # Pull latest image
             docker pull ghcr.io/${{ steps.repo.outputs.name }}:latest
 
-            # Restart services
-            docker compose up -d
+            # Update GITHUB_REPO in .env file
+            sed -i 's|^GITHUB_REPO=.*|GITHUB_REPO=${{ steps.repo.outputs.name }}|' .env
 
-            # Wait for services to be healthy
+            # Stop and remove api and migrate containers
+            docker compose stop api migrate || true
+            docker compose rm -f api migrate || true
+
+            # Start services (will run migrations first, then API)
+            docker compose up -d db redis
+            sleep 5
+            docker compose up -d migrate
+
+            # Wait for migrations to complete
+            echo "Waiting for migrations to complete..."
+            for i in {1..30}; do
+              STATUS=$(docker inspect ora_scrum_migrate --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+              if [ "$STATUS" = "exited" ]; then
+                EXIT_CODE=$(docker inspect ora_scrum_migrate --format='{{.State.ExitCode}}')
+                if [ "$EXIT_CODE" = "0" ]; then
+                  echo "✅ Migrations completed successfully"
+                  break
+                else
+                  echo "❌ Migrations failed with exit code $EXIT_CODE"
+                  docker logs ora_scrum_migrate
+                  exit 1
+                fi
+              fi
+              echo "Migration status: $STATUS (attempt $i/30)"
+              sleep 2
+            done
+
+            # Start API
+            docker compose up -d api
+
+            # Wait for API to be healthy
+            echo "Waiting for API to start..."
             sleep 20
 
             # Show container status
+            echo ""
             echo "=== Container Status ==="
             docker compose ps
 
-            # Show API logs (last 10 lines)
+            # Show API logs
             echo ""
-            echo "=== API Logs (last 10 lines) ==="
-            docker logs ora_scrum_api 2>&1 | tail -10
+            echo "=== API Logs (last 30 lines) ==="
+            docker logs ora_scrum_api 2>&1 | tail -30 || echo "API container not starting"
 
             # Cleanup old images
             docker image prune -f
@@ -102,13 +137,20 @@ jobs:
       - name: Verify deployment
         run: |
           echo "⏳ Waiting for API to be ready..."
-          sleep 15
+          sleep 25
 
-          response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health)
+          for i in {1..10}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health || echo "000")
+            
+            if [ "$response" = "200" ]; then
+              echo "✅ Deployment successful! API is healthy."
+              exit 0
+            fi
+            
+            echo "Attempt $i/10: API returned status $response, retrying..."
+            sleep 5
+          done
 
-          if [ "$response" = "200" ]; then
-            echo "✅ Deployment successful! API is healthy."
-          else
-            echo "⚠️ API returned status: $response"
-            echo "Check logs: docker logs ora_scrum_api"
-            exit 1
+          echo "❌ Deployment verification failed after 10 attempts"
+          echo "Check logs with: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'docker logs ora_scrum_api'"
+          exit 1
