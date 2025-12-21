@@ -287,3 +287,72 @@ func toUnifiedMemberResponse(m *service.UnifiedMember) models.UnifiedMemberRespo
 	}
 	return resp
 }
+
+
+
+// Handlers for Accessible Entities
+// ✅ REPLACE your existing GetAccessible* methods in member_handler.go with these:
+
+// GetAccessibleWorkspaces returns all workspaces user can access
+func (h *MemberHandler) GetAccessibleWorkspaces(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	workspaces, err := h.memberService.GetAccessibleWorkspaces(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accessible workspaces"})
+		return
+	}
+
+	c.JSON(http.StatusOK, workspaces)
+}
+
+// GetAccessibleSpaces returns all spaces user can access (direct + inherited)
+func (h *MemberHandler) GetAccessibleSpaces(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	spaces, err := h.memberService.GetAccessibleSpaces(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accessible spaces"})
+		return
+	}
+
+	c.JSON(http.StatusOK, spaces)
+}
+
+// GetAccessibleFolders returns all folders user can access
+func (h *MemberHandler) GetAccessibleFolders(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	folders, err := h.memberService.GetAccessibleFolders(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accessible folders"})
+		return
+	}
+
+	c.JSON(http.StatusOK, folders)
+}
+
+// GetAccessibleProjects returns all projects user can access (direct + inherited)
+func (h *MemberHandler) GetAccessibleProjects(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	projects, err := h.memberService.GetAccessibleProjects(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accessible projects"})
+		return
+	}
+
+	c.JSON(http.StatusOK, projects)
+}

@@ -32,6 +32,12 @@ type MemberService interface {
 	// User memberships
 	GetUserMemberships(ctx context.Context, userID string) (map[string][]string, error)
 	GetUserAllAccess(ctx context.Context, userID string) (*UserAccessMap, error)
+
+	// NEW: Accessible entities
+	GetAccessibleWorkspaces(ctx context.Context, userID string) ([]*repository.Workspace, error)
+	GetAccessibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error)
+	GetAccessibleFolders(ctx context.Context, userID string) ([]*repository.Folder, error)
+	GetAccessibleProjects(ctx context.Context, userID string) ([]*repository.Project, error)
 }
 
 // EntityType constants
@@ -930,4 +936,110 @@ func (s *memberService) convertProjectMembers(members []*repository.ProjectMembe
 		}
 	}
 	return result
+}
+
+
+
+// GetAccessibleWorkspaces returns all workspaces user can access (direct members)
+func (s *memberService) GetAccessibleWorkspaces(ctx context.Context, userID string) ([]*repository.Workspace, error) {
+	return s.workspaceRepo.FindByUserID(ctx, userID)
+}
+
+// GetAccessibleSpaces returns all spaces user can access (direct + from workspace)
+func (s *memberService) GetAccessibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error) {
+	spaceMap := make(map[string]*repository.Space)
+	
+	// 1. Get spaces where user is direct member
+	directSpaces, _ := s.spaceRepo.FindByUserID(ctx, userID)
+	for _, space := range directSpaces {
+		spaceMap[space.ID] = space
+	}
+	
+	// 2. Get spaces from workspace membership
+	workspaces, _ := s.workspaceRepo.FindByUserID(ctx, userID)
+	for _, ws := range workspaces {
+		workspaceSpaces, _ := s.spaceRepo.FindByWorkspaceID(ctx, ws.ID)
+		for _, space := range workspaceSpaces {
+			if _, exists := spaceMap[space.ID]; !exists {
+				spaceMap[space.ID] = space
+			}
+		}
+	}
+	
+	// Convert map to slice
+	result := make([]*repository.Space, 0, len(spaceMap))
+	for _, space := range spaceMap {
+		result = append(result, space)
+	}
+	
+	return result, nil
+}
+
+// GetAccessibleFolders returns all folders user can access
+func (s *memberService) GetAccessibleFolders(ctx context.Context, userID string) ([]*repository.Folder, error) {
+	folderMap := make(map[string]*repository.Folder)
+	
+	// 1. Direct folder members
+	directFolders, _ := s.folderRepo.FindByUserID(ctx, userID)
+	for _, folder := range directFolders {
+		folderMap[folder.ID] = folder
+	}
+	
+	// 2. Folders from space membership
+	spaces, _ := s.GetAccessibleSpaces(ctx, userID)
+	for _, space := range spaces {
+		spaceFolders, _ := s.folderRepo.FindBySpaceID(ctx, space.ID)
+		for _, folder := range spaceFolders {
+			if _, exists := folderMap[folder.ID]; !exists {
+				folderMap[folder.ID] = folder
+			}
+		}
+	}
+	
+	result := make([]*repository.Folder, 0, len(folderMap))
+	for _, folder := range folderMap {
+		result = append(result, folder)
+	}
+	
+	return result, nil
+}
+
+// GetAccessibleProjects returns all projects user can access (direct + inherited)
+func (s *memberService) GetAccessibleProjects(ctx context.Context, userID string) ([]*repository.Project, error) {
+	projectMap := make(map[string]*repository.Project)
+	
+	// 1. Direct project members
+	directProjects, _ := s.projectRepo.FindByUserID(ctx, userID)
+	for _, proj := range directProjects {
+		projectMap[proj.ID] = proj
+	}
+	
+	// 2. Projects from folder membership
+	folders, _ := s.GetAccessibleFolders(ctx, userID)
+	for _, folder := range folders {
+		folderProjects, _ := s.projectRepo.FindByFolderID(ctx, folder.ID)
+		for _, proj := range folderProjects {
+			if _, exists := projectMap[proj.ID]; !exists {
+				projectMap[proj.ID] = proj
+			}
+		}
+	}
+	
+	// 3. Projects from space membership
+	spaces, _ := s.GetAccessibleSpaces(ctx, userID)
+	for _, space := range spaces {
+		spaceProjects, _ := s.projectRepo.FindBySpaceID(ctx, space.ID)
+		for _, proj := range spaceProjects {
+			if _, exists := projectMap[proj.ID]; !exists {
+				projectMap[proj.ID] = proj
+			}
+		}
+	}
+	
+	result := make([]*repository.Project, 0, len(projectMap))
+	for _, proj := range projectMap {
+		result = append(result, proj)
+	}
+	
+	return result, nil
 }

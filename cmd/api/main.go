@@ -480,6 +480,20 @@ func main() {
 				// ============================================
 				members := protected.Group("/members")
 				{
+
+						// ✅ SPECIFIC ROUTES MUST COME FIRST (before /:entityType)
+					// Accessible entities (for sidebar visibility)
+					members.GET("/my/accessible/workspaces", h.Member.GetAccessibleWorkspaces)
+					members.GET("/my/accessible/spaces", h.Member.GetAccessibleSpaces)
+					members.GET("/my/accessible/folders", h.Member.GetAccessibleFolders)
+					members.GET("/my/accessible/projects", h.Member.GetAccessibleProjects)
+					
+					// User's memberships
+					members.GET("/my/memberships", h.Member.GetUserMemberships)
+					members.GET("/my/access", h.Member.GetUserAllAccess)
+
+					// ✅ GENERIC ROUTES COME LAST (they will catch any /:entityType)
+
 					// List members
 					members.GET("/:entityType/:entityId/direct", h.Member.ListDirectMembers)
 					members.GET("/:entityType/:entityId/effective", h.Member.ListEffectiveMembers)
@@ -495,12 +509,7 @@ func main() {
 					// Access checks
 					members.GET("/:entityType/:entityId/access", h.Member.CheckAccess)
 					members.GET("/:entityType/:entityId/access-level", h.Member.GetAccessLevel)
-					
-					// User's memberships
-					members.GET("/my/memberships", h.Member.GetUserMemberships)
-					members.GET("/my/access", h.Member.GetUserAllAccess)
 				}
-
 			// Activity routes
 			activities := protected.Group("/activities")
 			{
