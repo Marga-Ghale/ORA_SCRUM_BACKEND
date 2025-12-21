@@ -1,4 +1,4 @@
-name: Deploy
+name: Deploy Backend
 
 on:
   push:
@@ -73,49 +73,6 @@ jobs:
           strip_components: 0
           overwrite: true
 
-      - name: Create .env file on server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          script: |
-            cd /root/ORA_SCRUM
-
-            # Create .env file with secrets
-            cat > .env << 'EOF'
-            # Database Configuration
-            DB_USER=postgres
-            DB_PASSWORD=postgres
-            DB_NAME=ora_scrum
-            DB_HOST=db
-            DB_PORT=5432
-
-            # GitHub Configuration
-            GITHUB_REPOSITORY=marga-ghale/ora_scrum_backend
-            GITHUB_FRONTEND_REPO=github.com/marga-ghale/ora_scrum_frontend
-
-            # JWT Configuration
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
-            JWT_EXPIRY=24
-            REFRESH_EXPIRY=70
-
-            # SMTP Configuration
-            SMTP_HOST=${{ secrets.SMTP_HOST }}
-            SMTP_PORT=${{ secrets.SMTP_PORT }}
-            SMTP_USER=${{ secrets.SMTP_USER }}
-            SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
-            SMTP_FROM=${{ secrets.SMTP_FROM }}
-            SMTP_FROM_NAME=${{ secrets.SMTP_FROM_NAME }}
-            SMTP_USE_TLS=true
-
-            # Application
-            ENVIRONMENT=development
-            API_PORT=8080
-            EOF
-
-            echo "✅ .env file created successfully"
-
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -134,9 +91,6 @@ jobs:
             # Stop API container if running
             docker compose stop api || true
             docker compose rm -f api || true
-
-            # Remove old migrate container if exists
-            docker rm -f ora_scrum_migrate 2>/dev/null || true
 
             # Ensure db and redis are running
             docker compose up -d db redis
@@ -162,16 +116,9 @@ jobs:
             # Start API and Nginx
             docker compose up -d api nginx
 
-            # Wait for services to be healthy
+            # Wait for services
             echo "Waiting for API to start..."
             sleep 25
-
-            # Check if nginx is running
-            if ! docker ps | grep -q ora_scrum_nginx; then
-              echo "⚠️  Nginx container not running, starting it..."
-              docker compose up -d nginx
-              sleep 5
-            fi
 
             # Show container status
             echo ""
@@ -183,6 +130,11 @@ jobs:
             echo "=== API Logs (last 30 lines) ==="
             docker logs ora_scrum_api 2>&1 | tail -30
 
+            # Show Nginx logs
+            echo ""
+            echo "=== Nginx Logs (last 20 lines) ==="
+            docker logs ora_scrum_nginx 2>&1 | tail -20
+
             # Cleanup old images
             docker image prune -f
           envs: IMAGE_NAME
@@ -192,43 +144,20 @@ jobs:
       - name: Verify deployment
         run: |
           echo "⏳ Waiting for API to be ready..."
-          sleep 20
+          sleep 30
 
-          # Try multiple endpoints to verify API is responding
           for i in {1..10}; do
-            # Try /health first
             response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health 2>/dev/null || echo "000")
             
             if [ "$response" = "200" ]; then
-              echo "✅ Deployment successful! API health check passed."
+              echo "✅ Backend API deployment successful!"
               exit 0
-            fi
-            
-            # If /health doesn't exist, try /api/health
-            if [ "$response" = "404" ]; then
-              response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health 2>/dev/null || echo "000")
-              
-              if [ "$response" = "200" ]; then
-                echo "✅ Deployment successful! API health check passed at /api/health."
-                exit 0
-              fi
-            fi
-            
-            # If health endpoints don't exist, just check if API is responding at all
-            if [ "$response" = "404" ]; then
-              response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/ 2>/dev/null || echo "000")
-              
-              if [ "$response" != "000" ] && [ "$response" != "502" ] && [ "$response" != "503" ]; then
-                echo "✅ Deployment successful! API is responding (status: $response)."
-                echo "⚠️  Note: No /health endpoint found. Consider adding one for better monitoring."
-                exit 0
-              fi
             fi
             
             echo "Attempt $i/10: API returned status $response, retrying..."
             sleep 5
           done
 
-          echo "❌ Deployment verification failed after 10 attempts"
-          echo "💡 However, check the container logs above - the API might be running but missing a health endpoint"
+          echo "❌ Deployment verification failed"
+          echo "⚠️  Check the container logs above for details"
           exit 1
