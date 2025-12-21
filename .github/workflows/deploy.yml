@@ -155,6 +155,8 @@ jobs:
             echo "Attempt $i/10: API returned status $response, retrying..."
             sleep 5
           done
+          echo "❌ Deployment verification failed after 10 attempts"
+
 
           echo "❌ Deployment verification failed after 10 attempts"
           exit 1
