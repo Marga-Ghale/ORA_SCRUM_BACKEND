@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/api
 FROM alpine:latest
 
 # Install ca-certificates and postgresql-client
-RUN apk --no-cache add ca-certificates postgresql-client curl bash
+RUN apk --no-cache add ca-certificates postgresql-client curl bash wget
 
 # Install golang-migrate
 RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.16.2/migrate.linux-amd64.tar.gz | tar xvz && \
@@ -43,15 +43,29 @@ COPY --from=builder /app/main .
 # Copy migrations
 COPY --from=builder /app/internal/db/migrations ./internal/db/migrations
 
-# Entrypoint script with force migration
+# Entrypoint script with better error handling
 RUN echo '#!/bin/sh' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /entrypoint.sh && \
-    echo '# Force to version 3 to clear any dirty state' >> /entrypoint.sh && \
-    echo 'migrate -path ./internal/db/migrations -database "$DATABASE_URL" force 3 2>/dev/null || echo "Force not needed, continuing..."' >> /entrypoint.sh && \
-    echo '# Run migrations up' >> /entrypoint.sh && \
-    echo 'migrate -path ./internal/db/migrations -database "$DATABASE_URL" up' >> /entrypoint.sh && \
-    echo 'echo "✅ Migrations completed"' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Check if migrations directory exists and has files' >> /entrypoint.sh && \
+    echo 'if [ ! -d "./internal/db/migrations" ] || [ -z "$(ls -A ./internal/db/migrations)" ]; then' >> /entrypoint.sh && \
+    echo '  echo "⚠️  No migration files found, skipping migrations"' >> /entrypoint.sh && \
+    echo 'else' >> /entrypoint.sh && \
+    echo '  # Get current migration version' >> /entrypoint.sh && \
+    echo '  CURRENT_VERSION=$(migrate -path ./internal/db/migrations -database "$DATABASE_URL" version 2>&1 || echo "none")' >> /entrypoint.sh && \
+    echo '  echo "Current migration version: $CURRENT_VERSION"' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '  # Run migrations' >> /entrypoint.sh && \
+    echo '  if migrate -path ./internal/db/migrations -database "$DATABASE_URL" up; then' >> /entrypoint.sh && \
+    echo '    echo "✅ Migrations completed successfully"' >> /entrypoint.sh && \
+    echo '  else' >> /entrypoint.sh && \
+    echo '    echo "❌ Migration failed, but continuing to start application..."' >> /entrypoint.sh && \
+    echo '    echo "Check if migrations were already applied or if there is a dirty state"' >> /entrypoint.sh && \
+    echo '  fi' >> /entrypoint.sh && \
+    echo 'fi' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
     echo 'echo "🚀 Starting application..."' >> /entrypoint.sh && \
     echo 'exec ./main' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
