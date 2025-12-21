@@ -93,6 +93,7 @@ jobs:
 
             # GitHub Configuration
             GITHUB_REPOSITORY=marga-ghale/ora_scrum_backend
+            GITHUB_FRONTEND_REPO=github.com/marga-ghale/ora_scrum_frontend
 
             # JWT Configuration
             JWT_SECRET=${{ secrets.JWT_SECRET }}
@@ -109,7 +110,7 @@ jobs:
             SMTP_USE_TLS=true
 
             # Application
-            ENVIRONMENT=production
+            ENVIRONMENT=development
             API_PORT=8080
             EOF
 
@@ -205,7 +206,7 @@ jobs:
             
             # If /health doesn't exist, try /api/health
             if [ "$response" = "404" ]; then
-              response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/api/health 2>/dev/null || echo "000")
+              response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health 2>/dev/null || echo "000")
               
               if [ "$response" = "200" ]; then
                 echo "✅ Deployment successful! API health check passed at /api/health."
