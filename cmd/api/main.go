@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"os"
@@ -23,45 +24,83 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 )
 
+type Postgres struct {
+	Pool *pgxpool.Pool
+	DB   *sql.DB
+}
+
 func main() {
+	// ============================================
 	// Load environment variables
+	// ============================================
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
 
+	// ============================================
 	// Load configuration
+	// ============================================
 	cfg := config.Load()
 
+	// ============================================
 	// Set Gin mode
+	// ============================================
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	// ============================================
-	// Initialize Database Connection
+	// Run Database Migrations FIRST
 	// ============================================
-	postgresDB, err := db.NewPostgresDB(cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("❌ Failed to connect to PostgreSQL: %v", err)
+	log.Println("🔄 Running database migrations...")
+	migrationsPath := "./internal/db/migrations"
+	if err := db.RunMigrations(cfg.DatabaseURL, migrationsPath); err != nil {
+		log.Fatalf("❌ Migration failed: %v", err)
 	}
-	defer postgresDB.Close()
+	log.Println("✅ Database migrations completed")
+
+	// ============================================
+	// Initialize PostgreSQL (pgxpool + sql.DB)
+	// ============================================
+	ctx := context.Background()
+
+	pgPool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("❌ Failed to create pgx pool: %v", err)
+	}
+	defer pgPool.Close()
+
+	sqlDB, err := sql.Open("pgx", cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("❌ Failed to open sql DB: %v", err)
+	}
+	defer sqlDB.Close()
+
+	if err := sqlDB.Ping(); err != nil {
+		log.Fatalf("❌ Failed to ping sql DB: %v", err)
+	}
+
 	log.Println("✅ Connected to PostgreSQL")
 
+	// ============================================
 	// Initialize Repositories
-	repos := repository.NewRepositories(postgresDB.Pool)
+	// ============================================
+	repos := repository.NewRepositories(pgPool, sqlDB)
 	log.Println("📦 Repositories initialized")
 
 	// ============================================
-	// Initialize Redis (optional cache)
+	// Initialize Redis (optional)
 	// ============================================
 	var redisDB *db.RedisDB
 	if cfg.RedisURL != "" {
 		redisDB, err = db.NewRedisDB(cfg.RedisURL)
 		if err != nil {
-			log.Printf("⚠️  Failed to connect to Redis: %v (continuing without cache)", err)
+			log.Printf("⚠️ Failed to connect to Redis: %v (continuing without cache)", err)
 		} else {
 			defer redisDB.Close()
 			log.Println("⚡ Redis cache enabled")
@@ -101,7 +140,10 @@ func main() {
 	// ============================================
 	// Seed Data (for development)
 	// ============================================
-	seed.SeedData(repos)
+	if cfg.Environment != "production" {
+		log.Println("🌱 Seeding development data...")
+		seed.SeedData(repos)
+	}
 
 	// ============================================
 	// Initialize Notification Service
@@ -131,7 +173,6 @@ func main() {
 	h := handlers.NewHandlers(services)
 	teamHandler := handlers.NewTeamHandler(services.Team)
 	activityHandler := handlers.NewActivityHandler(services.Activity)
-	watcherHandler := handlers.NewTaskWatcherHandler(services.TaskWatcher)
 	chatHandler := handlers.NewChatHandler(services.Chat)
 	invitationHandler := handlers.NewInvitationHandler(services.Invitation)
 
@@ -192,6 +233,12 @@ func main() {
 			auth.POST("/logout", h.Auth.Logout)
 		}
 
+		// Public invitation routes (for accepting without login)
+		publicInvitations := api.Group("/invitations")
+		{
+			publicInvitations.GET("/link/:token", invitationHandler.GetLinkInvitation)
+		}
+
 		// WebSocket route
 		api.GET("/ws", wsHandler.HandleWebSocket)
 
@@ -218,13 +265,6 @@ func main() {
 				workspaces.PUT("/:id", h.Workspace.Update)
 				workspaces.DELETE("/:id", h.Workspace.Delete)
 
-				// Members
-				workspaces.GET("/:id/members", h.Workspace.ListMembers)
-				workspaces.POST("/:id/members", h.Workspace.AddMember)
-				workspaces.POST("/:id/members/add", h.Workspace.AddMemberByID)
-				workspaces.PUT("/:id/members/:userId", h.Workspace.UpdateMemberRole)
-				workspaces.DELETE("/:id/members/:userId", h.Workspace.RemoveMember)
-
 				// Invitations
 				workspaces.POST("/:id/invitations", invitationHandler.CreateWorkspaceInvitation)
 				workspaces.GET("/:id/invitations", invitationHandler.GetWorkspaceInvitations)
@@ -246,9 +286,29 @@ func main() {
 				spaces.GET("/:id", h.Space.Get)
 				spaces.PUT("/:id", h.Space.Update)
 				spaces.DELETE("/:id", h.Space.Delete)
+				
+				// Folder routes
+				spaces.GET("/:id/folders", h.Folder.ListBySpace)
+				spaces.POST("/:id/folders", h.Folder.Create)
+				
+				// Project routes
 				spaces.GET("/:id/projects", h.Project.ListBySpace)
 				spaces.POST("/:id/projects", h.Project.Create)
 			}
+
+			// Folder routes
+			// Folder routes
+				folders := protected.Group("/folders")
+				{
+					folders.GET("/my", h.Folder.ListByUser)
+					folders.GET("/:id", h.Folder.Get)
+					folders.PUT("/:id", h.Folder.Update)
+					folders.DELETE("/:id", h.Folder.Delete)
+					folders.PATCH("/:id/visibility", h.Folder.UpdateVisibility)
+					
+					// ✅ ADD THIS LINE
+					folders.GET("/:id/projects", h.Project.ListByFolder)
+				}
 
 			// Project routes
 			projects := protected.Group("/projects")
@@ -257,19 +317,9 @@ func main() {
 				projects.PUT("/:id", h.Project.Update)
 				projects.DELETE("/:id", h.Project.Delete)
 
-				// Members
-				projects.GET("/:id/members", h.Project.ListMembers)
-				projects.POST("/:id/members", h.Project.AddMember)
-				projects.POST("/:id/members/add", h.Project.AddMemberByID)
-				projects.DELETE("/:id/members/:userId", h.Project.RemoveMember)
-
 				// Invitations
 				projects.POST("/:id/invitations", invitationHandler.CreateProjectInvitation)
 				projects.GET("/:id/invitations", invitationHandler.GetProjectInvitations)
-
-				// Sprints
-				projects.GET("/:id/sprints", h.Sprint.ListByProject)
-				projects.POST("/:id/sprints", h.Sprint.Create)
 
 				// Tasks
 				projects.GET("/:id/tasks", h.Task.ListByProject)
@@ -283,46 +333,74 @@ func main() {
 				projects.GET("/:id/activities", activityHandler.GetProjectActivities)
 			}
 
-			// Sprint routes
-			sprints := protected.Group("/sprints")
-			{
-				sprints.GET("/:id", h.Sprint.Get)
-				sprints.PUT("/:id", h.Sprint.Update)
-				sprints.DELETE("/:id", h.Sprint.Delete)
-				sprints.POST("/:id/start", h.Sprint.Start)
-				sprints.POST("/:id/complete", h.Sprint.Complete)
-				sprints.GET("/:id/tasks", h.Task.ListBySprint)
-			}
-
 			// Task routes
 			tasks := protected.Group("/tasks")
-			{
-				tasks.GET("/:id", h.Task.Get)
-				tasks.PUT("/:id", h.Task.Update)
-				tasks.PATCH("/:id", h.Task.PartialUpdate)
-				tasks.DELETE("/:id", h.Task.Delete)
-				tasks.PUT("/bulk", h.Task.BulkUpdate)
-
-				// Comments
-				tasks.GET("/:id/comments", h.Comment.ListByTask)
-				tasks.POST("/:id/comments", h.Comment.Create)
-
-				// Watchers
-				tasks.POST("/:id/watch", watcherHandler.WatchTask)
-				tasks.DELETE("/:id/watch", watcherHandler.UnwatchTask)
-				tasks.GET("/:id/watchers", watcherHandler.GetWatchers)
-				tasks.GET("/:id/watching", watcherHandler.IsWatching)
-
-				// Activities
-				tasks.GET("/:id/activities", activityHandler.GetTaskActivities)
-			}
-
-			// Comment routes
-			comments := protected.Group("/comments")
-			{
-				comments.PUT("/:id", h.Comment.Update)
-				comments.DELETE("/:id", h.Comment.Delete)
-			}
+				{
+					// ✅ FIXED ORDER - Specific routes BEFORE generic :id
+					
+					// Listing (specific paths first)
+					tasks.GET("/my", h.Task.ListMyTasks)
+					tasks.GET("/filter", h.Task.FilterTasks)  // ✅ Moved filter before :id
+					
+					// Core CRUD (generic :id routes)
+					tasks.GET("/:id", h.Task.Get)
+					tasks.PUT("/:id", h.Task.Update)
+					tasks.DELETE("/:id", h.Task.Delete)
+					
+					// Task details
+					tasks.GET("/:id/subtasks", h.Task.ListSubtasks)
+					tasks.GET("/:id/comments", h.Task.ListComments)
+					tasks.GET("/:id/attachments", h.Task.ListAttachments)
+					tasks.GET("/:id/dependencies", h.Task.ListDependencies)
+					tasks.GET("/:id/blocked-by", h.Task.ListBlockedBy)
+					tasks.GET("/:id/checklists", h.Task.ListChecklists)
+					tasks.GET("/:id/activity", h.Task.GetActivity)
+					tasks.GET("/:id/time", h.Task.GetTimeEntries)
+					tasks.GET("/:id/time/total", h.Task.GetTotalTime)
+					
+					// Status & Priority
+					tasks.PATCH("/:id/status", h.Task.UpdateStatus)
+					tasks.PATCH("/:id/priority", h.Task.UpdatePriority)
+					
+					// Assignment
+					tasks.POST("/:id/assign", h.Task.AssignTask)
+					tasks.DELETE("/:id/assign/:assigneeId", h.Task.UnassignTask)
+					
+					// Watchers
+					tasks.POST("/:id/watchers", h.Task.AddWatcher)
+					tasks.DELETE("/:id/watchers/:watcherId", h.Task.RemoveWatcher)
+					
+					// Sprint & hierarchy
+					tasks.POST("/:id/move-sprint", h.Task.MoveToSprint)
+					tasks.POST("/:id/convert-subtask", h.Task.ConvertToSubtask)
+					tasks.POST("/:id/complete", h.Task.MarkComplete)
+					
+					// Actions
+					tasks.POST("/:id/comments", h.Task.AddComment)
+					tasks.PUT("/comments/:commentId", h.Task.UpdateComment)
+					tasks.DELETE("/comments/:commentId", h.Task.DeleteComment)
+					
+					tasks.POST("/:id/attachments", h.Task.AddAttachment)
+					tasks.DELETE("/attachments/:attachmentId", h.Task.DeleteAttachment)
+					
+					tasks.POST("/:id/timer/start", h.Task.StartTimer)
+					tasks.POST("/timer/stop", h.Task.StopTimer)
+					tasks.GET("/timer/active", h.Task.GetActiveTimer)
+					tasks.POST("/:id/time", h.Task.LogTime)
+					
+					tasks.POST("/:id/dependencies", h.Task.AddDependency)
+					tasks.DELETE("/:id/dependencies/:dependsOnTaskId", h.Task.RemoveDependency)
+					
+					tasks.POST("/:id/checklists", h.Task.CreateChecklist)
+					tasks.POST("/checklists/:checklistId/items", h.Task.AddChecklistItem)
+					tasks.PATCH("/checklists/items/:itemId", h.Task.ToggleChecklistItem)
+					tasks.DELETE("/checklists/items/:itemId", h.Task.DeleteChecklistItem)
+					
+					// Bulk operations
+					tasks.POST("/bulk/status", h.Task.BulkUpdateStatus)
+					tasks.POST("/bulk/assign", h.Task.BulkAssign)
+					tasks.POST("/bulk/move-sprint", h.Task.BulkMoveToSprint)
+				}
 
 			// Label routes
 			labels := protected.Group("/labels")
@@ -385,15 +463,53 @@ func main() {
 				chat.GET("/unread", chatHandler.GetAllUnreadCounts)
 			}
 
-			// Invitation routes
+			// Invitation routes (protected)
 			invitations := protected.Group("/invitations")
 			{
 				invitations.GET("/pending", invitationHandler.GetMyInvitations)
 				invitations.POST("/accept/:token", invitationHandler.AcceptInvitation)
+				invitations.POST("/accept-link", invitationHandler.AcceptInvitationByLink)
 				invitations.POST("/resend/:id", invitationHandler.ResendInvitation)
 				invitations.DELETE("/:id", invitationHandler.CancelInvitation)
+				invitations.POST("/link", invitationHandler.CreateLinkInvitation)
+				invitations.GET("/stats", invitationHandler.GetInvitationStats)
 			}
 
+			     // ============================================
+				// Member Management Routes (Unified)
+				// ============================================
+				members := protected.Group("/members")
+				{
+
+						// ✅ SPECIFIC ROUTES MUST COME FIRST (before /:entityType)
+					// Accessible entities (for sidebar visibility)
+					members.GET("/my/accessible/workspaces", h.Member.GetAccessibleWorkspaces)
+					members.GET("/my/accessible/spaces", h.Member.GetAccessibleSpaces)
+					members.GET("/my/accessible/folders", h.Member.GetAccessibleFolders)
+					members.GET("/my/accessible/projects", h.Member.GetAccessibleProjects)
+					
+					// User's memberships
+					members.GET("/my/memberships", h.Member.GetUserMemberships)
+					members.GET("/my/access", h.Member.GetUserAllAccess)
+
+					// ✅ GENERIC ROUTES COME LAST (they will catch any /:entityType)
+
+					// List members
+					members.GET("/:entityType/:entityId/direct", h.Member.ListDirectMembers)
+					members.GET("/:entityType/:entityId/effective", h.Member.ListEffectiveMembers)
+					
+					// Add/Remove members
+					members.POST("/:entityType/:entityId", h.Member.AddMember)
+					members.POST("/:entityType/:entityId/invite", h.Member.InviteMemberByEmail)
+					members.DELETE("/:entityType/:entityId/:userId", h.Member.RemoveMember)
+					
+					// Update role
+					members.PATCH("/:entityType/:entityId/:userId/role", h.Member.UpdateMemberRole)
+					
+					// Access checks
+					members.GET("/:entityType/:entityId/access", h.Member.CheckAccess)
+					members.GET("/:entityType/:entityId/access-level", h.Member.GetAccessLevel)
+				}
 			// Activity routes
 			activities := protected.Group("/activities")
 			{

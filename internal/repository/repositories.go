@@ -1,41 +1,59 @@
 package repository
 
-import "github.com/jackc/pgx/v5/pgxpool"
+import (
+	"database/sql"
 
-// Repositories contains all repository instances
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
 type Repositories struct {
+	// Core repositories (pgxpool)
 	UserRepo         UserRepository
 	WorkspaceRepo    WorkspaceRepository
+	FolderRepo       FolderRepository
 	SpaceRepo        SpaceRepository
 	ProjectRepo      ProjectRepository
-	SprintRepo       SprintRepository
-	TaskRepo         TaskRepository
-	CommentRepo      CommentRepository
-	LabelRepo        LabelRepository
-	NotificationRepo NotificationRepository
 	TeamRepo         TeamRepository
 	InvitationRepo   InvitationRepository
 	ActivityRepo     ActivityRepository
-	TaskWatcherRepo  TaskWatcherRepository
 	ChatRepo         ChatRepository
+	LabelRepo        LabelRepository
+	NotificationRepo NotificationRepository
+
+	// Task-related repositories (sql.DB)
+	SprintRepo         SprintRepository
+	TaskRepo           TaskRepository
+	TaskDependencyRepo TaskDependencyRepository
+	TaskAttachmentRepo TaskAttachmentRepository
+	TaskChecklistRepo  TaskChecklistRepository
+	TaskCommentRepo    TaskCommentRepository
+	TaskActivityRepo   TaskActivityRepository
+	TimeEntryRepo      TimeEntryRepository
 }
 
-// NewRepositories creates all PostgreSQL-backed repositories
-func NewRepositories(pool *pgxpool.Pool) *Repositories {
+func NewRepositories(pool *pgxpool.Pool, db *sql.DB) *Repositories {
 	return &Repositories{
+		// pgxpool repos
 		UserRepo:         NewUserRepository(pool),
 		WorkspaceRepo:    NewWorkspaceRepository(pool),
+		FolderRepo:       NewFolderRepository(pool),
 		SpaceRepo:        NewSpaceRepository(pool),
 		ProjectRepo:      NewProjectRepository(pool),
-		SprintRepo:       NewSprintRepository(pool),
-		TaskRepo:         NewTaskRepository(pool),
-		CommentRepo:      NewCommentRepository(pool),
-		LabelRepo:        NewLabelRepository(pool),
-		NotificationRepo: NewNotificationRepository(pool),
 		TeamRepo:         NewTeamRepository(pool),
 		InvitationRepo:   NewInvitationRepository(pool),
 		ActivityRepo:     NewActivityRepository(pool),
-		TaskWatcherRepo:  NewTaskWatcherRepository(pool),
 		ChatRepo:         NewChatRepository(pool),
+		LabelRepo:        NewLabelRepository(pool),
+		NotificationRepo: NewNotificationRepository(pool),
+
+		// sql.DB repos (all task-related)
+		SprintRepo:         NewSprintRepository(db),
+		TaskRepo:           NewTaskRepository(db),
+		TaskDependencyRepo: NewTaskDependencyRepository(db),
+		TaskAttachmentRepo: NewTaskAttachmentRepository(db),
+		TaskChecklistRepo:  NewTaskChecklistRepository(db),
+		TaskCommentRepo:    NewTaskCommentRepository(db),
+		TaskActivityRepo:   NewTaskActivityRepository(db),
+		TimeEntryRepo:      NewTimeEntryRepository(db),
 	}
 }

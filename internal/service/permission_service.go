@@ -7,10 +7,9 @@ import (
 )
 
 // ============================================
-// Permission Levels (ClickUp-like hierarchy)
+// Permission Levels
 // ============================================
 
-// Permission levels from highest to lowest
 const (
 	PermissionOwner  = "owner"
 	PermissionAdmin  = "admin"
@@ -19,16 +18,14 @@ const (
 	PermissionViewer = "viewer"
 )
 
-// Action types
 const (
 	ActionView   = "view"
 	ActionEdit   = "edit"
 	ActionDelete = "delete"
-	ActionManage = "manage" // manage members, settings
+	ActionManage = "manage"
 	ActionCreate = "create"
 )
 
-// PermissionService handles hierarchical permission checking like ClickUp
 type PermissionService interface {
 	// Workspace permissions
 	CanAccessWorkspace(ctx context.Context, userID, workspaceID string) bool
@@ -39,6 +36,11 @@ type PermissionService interface {
 	CanAccessSpace(ctx context.Context, userID, spaceID string) bool
 	CanManageSpace(ctx context.Context, userID, spaceID string) bool
 	GetSpaceRole(ctx context.Context, userID, spaceID string) string
+
+	// Folder permissions
+	CanAccessFolder(ctx context.Context, userID, folderID string) bool
+	CanManageFolder(ctx context.Context, userID, folderID string) bool
+	GetFolderRole(ctx context.Context, userID, folderID string) string
 
 	// Project permissions
 	CanAccessProject(ctx context.Context, userID, projectID string) bool
@@ -65,15 +67,18 @@ type permissionService struct {
 	projectRepo   repository.ProjectRepository
 	taskRepo      repository.TaskRepository
 	teamRepo      repository.TeamRepository
+	folderRepo    repository.FolderRepository
+	memberService MemberService // ✅ ADD THIS
 }
 
-// NewPermissionService creates a new permission service
 func NewPermissionService(
 	workspaceRepo repository.WorkspaceRepository,
 	spaceRepo repository.SpaceRepository,
 	projectRepo repository.ProjectRepository,
 	taskRepo repository.TaskRepository,
 	teamRepo repository.TeamRepository,
+	folderRepo repository.FolderRepository,
+	memberService MemberService, // ✅ ADD THIS PARAMETER
 ) PermissionService {
 	return &permissionService{
 		workspaceRepo: workspaceRepo,
@@ -81,14 +86,15 @@ func NewPermissionService(
 		projectRepo:   projectRepo,
 		taskRepo:      taskRepo,
 		teamRepo:      teamRepo,
+		folderRepo:    folderRepo,
+		memberService: memberService, // ✅ ADD THIS
 	}
 }
 
 // ============================================
-// Permission Hierarchy Helpers
+// Helper Functions
 // ============================================
 
-// roleLevel returns numeric level for role comparison (higher = more permissions)
 func roleLevel(role string) int {
 	switch role {
 	case PermissionOwner:
@@ -106,9 +112,25 @@ func roleLevel(role string) int {
 	}
 }
 
-// hasMinimumRole checks if user has at least the minimum required role
 func hasMinimumRole(userRole, minRole string) bool {
 	return roleLevel(userRole) >= roleLevel(minRole)
+}
+
+func normalizeRole(role string) string {
+	switch role {
+	case "OWNER", "owner":
+		return PermissionOwner
+	case "ADMIN", "admin":
+		return PermissionAdmin
+	case "LEAD", "lead":
+		return PermissionLead
+	case "MEMBER", "member":
+		return PermissionMember
+	case "VIEWER", "viewer":
+		return PermissionViewer
+	default:
+		return role
+	}
 }
 
 // ============================================
@@ -134,34 +156,13 @@ func (s *permissionService) GetWorkspaceRole(ctx context.Context, userID, worksp
 }
 
 // ============================================
-// Space Permissions
+// Space Permissions (✅ FIXED)
 // ============================================
 
 func (s *permissionService) CanAccessSpace(ctx context.Context, userID, spaceID string) bool {
-	space, err := s.spaceRepo.FindByID(ctx, spaceID)
-	if err != nil || space == nil {
-		return false
-	}
-
-	// Check workspace membership first
-	if !s.CanAccessWorkspace(ctx, userID, space.WorkspaceID) {
-		return false
-	}
-
-	// Check space visibility
-	if space.Visibility != nil {
-		switch *space.Visibility {
-		case "private":
-			// Check if user is in allowed_users or allowed_teams
-			return s.isAllowedInSpace(ctx, userID, space)
-		case "workspace":
-			return true // Workspace members can access
-		case "public":
-			return true
-		}
-	}
-
-	return true // Default: workspace members can access
+	// ✅ Use MemberService for cascading access check
+	hasAccess, _, _ := s.memberService.HasEffectiveAccess(ctx, EntityTypeSpace, spaceID, userID)
+	return hasAccess
 }
 
 func (s *permissionService) CanManageSpace(ctx context.Context, userID, spaceID string) bool {
@@ -175,56 +176,67 @@ func (s *permissionService) CanManageSpace(ctx context.Context, userID, spaceID 
 }
 
 func (s *permissionService) GetSpaceRole(ctx context.Context, userID, spaceID string) string {
+	// Check direct space membership first
+	member, err := s.spaceRepo.FindMember(ctx, spaceID, userID)
+	if err == nil && member != nil {
+		return normalizeRole(member.Role)
+	}
+
+	// Fall back to workspace role
 	space, err := s.spaceRepo.FindByID(ctx, spaceID)
 	if err != nil || space == nil {
 		return ""
 	}
-
-	// Inherit from workspace
 	return s.GetWorkspaceRole(ctx, userID, space.WorkspaceID)
 }
 
-func (s *permissionService) isAllowedInSpace(ctx context.Context, userID string, space *repository.Space) bool {
-	// Check allowed users
-	if space.AllowedUsers != nil {
-		for _, allowedID := range space.AllowedUsers {
-			if allowedID == userID {
-				return true
-			}
-		}
-	}
+// ============================================
+// Folder Permissions (✅ FIXED)
+// ============================================
 
-	// Check allowed teams
-	if space.AllowedTeams != nil && s.teamRepo != nil {
-		for _, teamID := range space.AllowedTeams {
-			isMember, _ := s.teamRepo.IsMember(ctx, teamID, userID)
-			if isMember {
-				return true
-			}
-		}
-	}
-
-	return false
+func (s *permissionService) CanAccessFolder(ctx context.Context, userID, folderID string) bool {
+	// ✅ Use MemberService for cascading access check
+	hasAccess, _, _ := s.memberService.HasEffectiveAccess(ctx, EntityTypeFolder, folderID, userID)
+	return hasAccess
 }
 
-// ============================================
-// Project Permissions
-// ============================================
-
-func (s *permissionService) CanAccessProject(ctx context.Context, userID, projectID string) bool {
-	project, err := s.projectRepo.FindByID(ctx, projectID)
-	if err != nil || project == nil {
+func (s *permissionService) CanManageFolder(ctx context.Context, userID, folderID string) bool {
+	folder, err := s.folderRepo.FindByID(ctx, folderID)
+	if err != nil || folder == nil {
 		return false
 	}
 
-	// Check project membership first
-	member, _ := s.projectRepo.FindMember(ctx, projectID, userID)
-	if member != nil {
+	// Folder members with admin role
+	member, _ := s.folderRepo.FindMember(ctx, folderID, userID)
+	if member != nil && hasMinimumRole(normalizeRole(member.Role), PermissionAdmin) {
 		return true
 	}
 
-	// Check space access
-	return s.CanAccessSpace(ctx, userID, project.SpaceID)
+	// Space admins can manage folders
+	return s.CanManageSpace(ctx, userID, folder.SpaceID)
+}
+
+func (s *permissionService) GetFolderRole(ctx context.Context, userID, folderID string) string {
+	member, err := s.folderRepo.FindMember(ctx, folderID, userID)
+	if err == nil && member != nil {
+		return normalizeRole(member.Role)
+	}
+
+	folder, err := s.folderRepo.FindByID(ctx, folderID)
+	if err != nil || folder == nil {
+		return ""
+	}
+	return s.GetSpaceRole(ctx, userID, folder.SpaceID)
+}
+
+// ============================================
+// Project Permissions (✅ FIXED)
+// ============================================
+
+func (s *permissionService) CanAccessProject(ctx context.Context, userID, projectID string) bool {
+	// ✅ Use MemberService for cascading access check
+	hasAccess, _, _ := s.memberService.HasEffectiveAccess(ctx, EntityTypeProject, projectID, userID)
+	return hasAccess
 }
 
 func (s *permissionService) CanManageProject(ctx context.Context, userID, projectID string) bool {
@@ -244,17 +256,24 @@ func (s *permissionService) GetProjectRole(ctx context.Context, userID, projectI
 		return normalizeRole(member.Role)
 	}
 
-	// Fall back to space/workspace role
 	project, err := s.projectRepo.FindByID(ctx, projectID)
 	if err != nil || project == nil {
 		return ""
+	}
+
+	// Check folder membership if project is in a folder
+	if project.FolderID != nil {
+		folderMember, _ := s.folderRepo.FindMember(ctx, *project.FolderID, userID)
+		if folderMember != nil {
+			return normalizeRole(folderMember.Role)
+		}
 	}
 
 	return s.GetSpaceRole(ctx, userID, project.SpaceID)
 }
 
 // ============================================
-// Task Permissions
+// Task Permissions (✅ ALREADY CORRECT)
 // ============================================
 
 func (s *permissionService) CanAccessTask(ctx context.Context, userID, taskID string) bool {
@@ -272,13 +291,15 @@ func (s *permissionService) CanEditTask(ctx context.Context, userID, taskID stri
 		return false
 	}
 
-	// Task assignee can always edit
-	if task.AssigneeID != nil && *task.AssigneeID == userID {
-		return true
+	// Check if user is one of the assignees
+	for _, assigneeID := range task.AssigneeIDs {
+		if assigneeID == userID {
+			return true
+		}
 	}
 
-	// Task reporter can always edit
-	if task.ReporterID == userID {
+	// Check if user is creator
+	if task.CreatedBy != nil && *task.CreatedBy == userID {
 		return true
 	}
 
@@ -292,8 +313,8 @@ func (s *permissionService) CanDeleteTask(ctx context.Context, userID, taskID st
 		return false
 	}
 
-	// Task reporter can delete
-	if task.ReporterID == userID {
+	// Creator can delete
+	if task.CreatedBy != nil && *task.CreatedBy == userID {
 		return true
 	}
 
@@ -358,6 +379,14 @@ func (s *permissionService) CheckPermission(ctx context.Context, userID, entityT
 			return s.CanManageSpace(ctx, userID, entityID)
 		}
 
+	case "folder":
+		switch action {
+		case ActionView:
+			return s.CanAccessFolder(ctx, userID, entityID)
+		case ActionEdit, ActionManage, ActionDelete:
+			return s.CanManageFolder(ctx, userID, entityID)
+		}
+
 	case "project":
 		switch action {
 		case ActionView:
@@ -388,22 +417,4 @@ func (s *permissionService) CheckPermission(ctx context.Context, userID, entityT
 	}
 
 	return false
-}
-
-// normalizeRole converts various role formats to standard lowercase
-func normalizeRole(role string) string {
-	switch role {
-	case "OWNER", "owner":
-		return PermissionOwner
-	case "ADMIN", "admin":
-		return PermissionAdmin
-	case "LEAD", "lead":
-		return PermissionLead
-	case "MEMBER", "member":
-		return PermissionMember
-	case "VIEWER", "viewer":
-		return PermissionViewer
-	default:
-		return role
-	}
 }

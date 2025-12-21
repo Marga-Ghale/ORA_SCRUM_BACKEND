@@ -45,287 +45,87 @@ type UpdateUserRequest struct {
 	Avatar *string `json:"avatar,omitempty"`
 }
 
-// ============================================
-// Workspace DTOs
-// ============================================
 
-type CreateWorkspaceRequest struct {
-	Name        string  `json:"name" binding:"required"`
-	Description *string `json:"description,omitempty"`
-	Icon        *string `json:"icon,omitempty"`
-	Color       *string `json:"color,omitempty"`
+
+type SpaceMemberResponse struct {
+	ID       string        `json:"id"`
+	SpaceID  string        `json:"spaceId"`
+	UserID   string        `json:"userId"`
+	Role     string        `json:"role"`
+	JoinedAt time.Time     `json:"joinedAt"`
+	User     *UserResponse `json:"user,omitempty"`
 }
 
-type UpdateWorkspaceRequest struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Icon        *string `json:"icon,omitempty"`
-	Color       *string `json:"color,omitempty"`
-}
-
-type WorkspaceResponse struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	Icon        *string   `json:"icon,omitempty"`
-	Color       *string   `json:"color,omitempty"`
-	OwnerID     string    `json:"ownerId"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-}
-
-type WorkspaceMemberResponse struct {
-	ID          string       `json:"id"`
-	WorkspaceID string       `json:"workspaceId"`
-	UserID      string       `json:"userId"`
-	Role        string       `json:"role"`
-	User        UserResponse `json:"user"`
-	JoinedAt    time.Time    `json:"joinedAt"`
-}
-
-type InviteMemberRequest struct {
+type InviteSpaceRequest struct {
 	Email string `json:"email" binding:"required,email"`
-	Role  string `json:"role" binding:"required,oneof=ADMIN MEMBER VIEWER"`
+	Role  string `json:"role" binding:"required,oneof=admin member viewer"`
 }
 
-type UpdateMemberRoleRequest struct {
-	Role string `json:"role" binding:"required,oneof=ADMIN MEMBER VIEWER"`
+type FolderMemberResponse struct {
+	ID       string        `json:"id"`
+	FolderID string        `json:"folderId"`
+	UserID   string        `json:"userId"`
+	Role     string        `json:"role"`
+	JoinedAt time.Time     `json:"joinedAt"`
+	User     *UserResponse `json:"user,omitempty"`
 }
 
-// ============================================
-// Space DTOs
-// ============================================
-
-type CreateSpaceRequest struct {
-	Name        string  `json:"name" binding:"required"`
-	Description *string `json:"description,omitempty"`
-	Icon        *string `json:"icon,omitempty"`
-	Color       *string `json:"color,omitempty"`
-}
-
-type UpdateSpaceRequest struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Icon        *string `json:"icon,omitempty"`
-	Color       *string `json:"color,omitempty"`
-}
-
-type SpaceResponse struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	Icon        *string   `json:"icon,omitempty"`
-	Color       *string   `json:"color,omitempty"`
-	WorkspaceID string    `json:"workspaceId"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-}
-
-// ============================================
-// Project DTOs
-// ============================================
-
-type CreateProjectRequest struct {
-	Name        string  `json:"name" binding:"required"`
-	Key         string  `json:"key" binding:"required,min=2,max=10,uppercase"`
-	Description *string `json:"description,omitempty"`
-	Icon        *string `json:"icon,omitempty"`
-	Color       *string `json:"color,omitempty"`
-	LeadID      *string `json:"leadId,omitempty"`
-}
-
-type UpdateProjectRequest struct {
-	Name        *string `json:"name,omitempty"`
-	Key         *string `json:"key,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Icon        *string `json:"icon,omitempty"`
-	Color       *string `json:"color,omitempty"`
-	LeadID      *string `json:"leadId,omitempty"`
-}
-
-type ProjectResponse struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Key         string    `json:"key"`
-	Description *string   `json:"description,omitempty"`
-	Icon        *string   `json:"icon,omitempty"`
-	Color       *string   `json:"color,omitempty"`
-	SpaceID     string    `json:"spaceId"`
-	LeadID      *string   `json:"leadId,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+type InviteFolderRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Role  string `json:"role" binding:"required,oneof=admin member viewer"`
 }
 
 type ProjectMemberResponse struct {
-	ID        string       `json:"id"`
-	ProjectID string       `json:"projectId"`
-	UserID    string       `json:"userId"`
-	Role      string       `json:"role"`
-	User      UserResponse `json:"user"`
-	JoinedAt  time.Time    `json:"joinedAt"`
+	ID        string        `json:"id"`
+	ProjectID string        `json:"projectId"`
+	UserID    string        `json:"userId"`
+	Role      string        `json:"role"`
+	User      *UserResponse `json:"user,omitempty"`
+	JoinedAt  time.Time     `json:"joinedAt"`
 }
 
 type AddProjectMemberRequest struct {
 	UserID string `json:"userId" binding:"required"`
-	Role   string `json:"role" binding:"required,oneof=LEAD MEMBER VIEWER"`
+	Role   string `json:"role" binding:"required,oneof=lead member viewer"`
 }
 
 // ============================================
-// Sprint DTOs
+// Sprint DTOs (Under Project)
 // ============================================
 
 type CreateSprintRequest struct {
 	Name      string     `json:"name" binding:"required"`
-	Goal      *string    `json:"goal,omitempty"`
-	StartDate *time.Time `json:"startDate,omitempty"`
-	EndDate   *time.Time `json:"endDate,omitempty"`
+	Goal      *string    `json:"goal"`
+	StartDate *time.Time `json:"startDate"`
+	EndDate   *time.Time `json:"endDate"`
 }
 
 type UpdateSprintRequest struct {
-	Name      *string    `json:"name,omitempty"`
-	Goal      *string    `json:"goal,omitempty"`
-	StartDate *time.Time `json:"startDate,omitempty"`
-	EndDate   *time.Time `json:"endDate,omitempty"`
+	Name      *string    `json:"name"`
+	Goal      *string    `json:"goal"`
+	StartDate *time.Time `json:"startDate"`
+	EndDate   *time.Time `json:"endDate"`
 }
 
 type CompleteSprintRequest struct {
-	MoveIncomplete string `json:"moveIncomplete,omitempty"` // "backlog" or sprint ID
+	MoveIncomplete string `json:"moveIncomplete"` // "backlog" or sprint ID
 }
 
 type SprintResponse struct {
 	ID        string     `json:"id"`
+	ProjectID string     `json:"projectId"` // ✓ parent reference
 	Name      string     `json:"name"`
-	Goal      *string    `json:"goal,omitempty"`
-	ProjectID string     `json:"projectId"`
+	Goal      *string    `json:"goal"`
 	Status    string     `json:"status"` // PLANNING, ACTIVE, COMPLETED
-	StartDate *time.Time `json:"startDate,omitempty"`
-	EndDate   *time.Time `json:"endDate,omitempty"`
+	StartDate *time.Time `json:"startDate"`
+	EndDate   *time.Time `json:"endDate"`
 	CreatedAt time.Time  `json:"createdAt"`
 	UpdatedAt time.Time  `json:"updatedAt"`
 }
 
 // ============================================
-// Task DTOs
+// Task DTOs (Under Project)
 // ============================================
-
-type CreateTaskRequest struct {
-	Title       string     `json:"title" binding:"required,min=1,max=500"`
-	Description *string    `json:"description,omitempty"`
-	Status      *string    `json:"status,omitempty"`   // BACKLOG, TODO, IN_PROGRESS, IN_REVIEW, DONE, CANCELLED
-	Priority    *string    `json:"priority,omitempty"` // LOW, MEDIUM, HIGH, URGENT
-	Type        *string    `json:"type,omitempty"`     // TASK, BUG, STORY, EPIC, SUBTASK
-	AssigneeID  *string    `json:"assigneeId,omitempty"`
-	SprintID    *string    `json:"sprintId,omitempty"`
-	ParentID    *string    `json:"parentId,omitempty"`
-	StoryPoints *int       `json:"storyPoints,omitempty"`
-	DueDate     *time.Time `json:"dueDate,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
-}
-
-type UpdateTaskRequest struct {
-	Title       *string    `json:"title,omitempty"`
-	Description *string    `json:"description,omitempty"`
-	Status      *string    `json:"status,omitempty"`
-	Priority    *string    `json:"priority,omitempty"`
-	Type        *string    `json:"type,omitempty"`
-	AssigneeID  *string    `json:"assigneeId,omitempty"`
-	SprintID    *string    `json:"sprintId,omitempty"`
-	ParentID    *string    `json:"parentId,omitempty"`
-	StoryPoints *int       `json:"storyPoints,omitempty"`
-	DueDate     *time.Time `json:"dueDate,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
-	OrderIndex  *int       `json:"orderIndex,omitempty"`
-}
-
-type BulkUpdateTaskRequest struct {
-	Tasks []BulkTaskUpdate `json:"tasks" binding:"required,min=1,dive"`
-}
-
-type BulkTaskUpdate struct {
-	ID         string  `json:"id" binding:"required"`
-	Status     *string `json:"status,omitempty"`
-	SprintID   *string `json:"sprintId,omitempty"`
-	OrderIndex *int    `json:"orderIndex,omitempty"`
-}
-
-type TaskResponse struct {
-	ID          string        `json:"id"`
-	Key         string        `json:"key"`
-	Title       string        `json:"title"`
-	Description *string       `json:"description,omitempty"`
-	Status      string        `json:"status"`
-	Priority    string        `json:"priority"`
-	Type        string        `json:"type"`
-	ProjectID   string        `json:"projectId"`
-	SprintID    *string       `json:"sprintId,omitempty"`
-	AssigneeID  *string       `json:"assigneeId,omitempty"`
-	ReporterID  string        `json:"reporterId"`
-	ParentID    *string       `json:"parentId,omitempty"`
-	StoryPoints *int          `json:"storyPoints,omitempty"`
-	DueDate     *time.Time    `json:"dueDate,omitempty"`
-	OrderIndex  int           `json:"orderIndex"`
-	Labels      []string      `json:"labels"`
-	Assignee    *UserResponse `json:"assignee,omitempty"`
-	Reporter    *UserResponse `json:"reporter,omitempty"`
-	CreatedAt   time.Time     `json:"createdAt"`
-	UpdatedAt   time.Time     `json:"updatedAt"`
-}
-
-type TaskFilters struct {
-	Status     []string `form:"status"`
-	Priority   []string `form:"priority"`
-	Type       []string `form:"type"`
-	AssigneeID []string `form:"assigneeId"`
-	SprintID   string   `form:"sprintId"`
-	Labels     []string `form:"labels"`
-	Search     string   `form:"search"`
-	Limit      int      `form:"limit,default=50"`
-	Offset     int      `form:"offset,default=0"`
-}
-
-// ============================================
-// Comment DTOs
-// ============================================
-
-type CreateCommentRequest struct {
-	Content string `json:"content" binding:"required,min=1,max=10000"`
-}
-
-type UpdateCommentRequest struct {
-	Content string `json:"content" binding:"required,min=1,max=10000"`
-}
-
-type CommentResponse struct {
-	ID        string       `json:"id"`
-	TaskID    string       `json:"taskId"`
-	UserID    string       `json:"userId"`
-	Content   string       `json:"content"`
-	User      UserResponse `json:"user"`
-	CreatedAt time.Time    `json:"createdAt"`
-	UpdatedAt time.Time    `json:"updatedAt"`
-}
-
-// ============================================
-// Label DTOs
-// ============================================
-
-type CreateLabelRequest struct {
-	Name  string `json:"name" binding:"required,min=1,max=50"`
-	Color string `json:"color" binding:"required,hexcolor"`
-}
-
-type UpdateLabelRequest struct {
-	Name  *string `json:"name,omitempty"`
-	Color *string `json:"color,omitempty"`
-}
-
-type LabelResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Color     string    `json:"color"`
-	ProjectID string    `json:"projectId"`
-	CreatedAt time.Time `json:"createdAt"`
-}
 
 // ============================================
 // Notification DTOs
@@ -345,6 +145,58 @@ type NotificationResponse struct {
 type NotificationCountResponse struct {
 	Total  int `json:"total"`
 	Unread int `json:"unread"`
+}
+
+// ============================================
+// Checklist DTOs (NEW - Phase 1)
+// ============================================
+
+type UpdateChecklistItemRequest struct {
+	Text      *string `json:"text"`
+	IsChecked *bool   `json:"isChecked"`
+	Position  *int    `json:"position"`
+}
+
+
+// ============================================
+// Time Tracking DTOs
+// ============================================
+
+type StartTimerRequest struct {
+	Description *string `json:"description"`
+}
+
+type StopTimerRequest struct {
+	Description *string `json:"description"`
+}
+
+type AddManualTimeRequest struct {
+	StartTime       time.Time `json:"startTime" binding:"required"`
+	EndTime         time.Time `json:"endTime" binding:"required"`
+	Description     *string   `json:"description"`
+	DurationSeconds *int      `json:"durationSeconds"` // Optional, will be calculated if not provided
+}
+
+type TimeTrackingResponse struct {
+	ID              string        `json:"id"`
+	TaskID          string        `json:"taskId"`
+	UserID          string        `json:"userId"`
+	StartTime       time.Time     `json:"startTime"`
+	EndTime         *time.Time    `json:"endTime"`
+	DurationSeconds *int          `json:"durationSeconds"`
+	Description     *string       `json:"description"`
+	IsManual        bool          `json:"isManual"`
+	User            *UserResponse `json:"user,omitempty"`
+	CreatedAt       time.Time     `json:"createdAt"`
+	UpdatedAt       time.Time     `json:"updatedAt"`
+}
+
+type TimeTrackingSummaryResponse struct {
+	TaskID          string `json:"taskId"`
+	TotalSeconds    int    `json:"totalSeconds"`
+	TotalHours      float64 `json:"totalHours"`
+	EstimatedHours  *float64 `json:"estimatedHours"`
+	RemainingHours  *float64 `json:"remainingHours"`
 }
 
 // ============================================
@@ -375,7 +227,6 @@ type PaginatedResponse struct {
 // Utility Functions
 // ============================================
 
-// NewPaginatedResponse creates a paginated response
 func NewPaginatedResponse(data interface{}, total, page, perPage int) PaginatedResponse {
 	totalPages := total / perPage
 	if total%perPage > 0 {
@@ -388,4 +239,47 @@ func NewPaginatedResponse(data interface{}, total, page, perPage int) PaginatedR
 		PerPage:    perPage,
 		TotalPages: totalPages,
 	}
+}
+
+
+
+type AccessCheckResponse struct {
+	HasAccess     bool   `json:"hasAccess"`
+	IsDirect      bool   `json:"isDirect"`
+	InheritedFrom string `json:"inheritedFrom,omitempty"`
+}
+
+type AccessLevelResponse struct {
+	Role          string `json:"role"`
+	IsDirect      bool   `json:"isDirect"`
+	InheritedFrom string `json:"inheritedFrom,omitempty"`
+}
+
+type UserAccessMapResponse struct {
+	Workspaces []string `json:"workspaces"`
+	Spaces     []string `json:"spaces"`
+	Folders    []string `json:"folders"`
+	Projects   []string `json:"projects"`
+}
+
+// ============================================
+// Label DTOs
+// ============================================
+
+type CreateLabelRequest struct {
+	Name  string `json:"name" binding:"required,min=1,max=50"`
+	Color string `json:"color" binding:"required,hexcolor"`
+}
+
+type UpdateLabelRequest struct {
+	Name  *string `json:"name"`
+	Color *string `json:"color"`
+}
+
+type LabelResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Color     string    `json:"color"`
+	ProjectID string    `json:"projectId"`
+	CreatedAt time.Time `json:"createdAt"`
 }

@@ -11,13 +11,13 @@ type Handlers struct {
 	Auth         *AuthHandler
 	User         *UserHandler
 	Workspace    *WorkspaceHandler
+	Folder  	 *FolderHandler
 	Space        *SpaceHandler
 	Project      *ProjectHandler
-	Sprint       *SprintHandler
 	Task         *TaskHandler
-	Comment      *CommentHandler
 	Label        *LabelHandler
 	Notification *NotificationHandler
+	Member	   	 *MemberHandler
 }
 
 // NewHandlers creates all handlers
@@ -26,13 +26,13 @@ func NewHandlers(services *service.Services) *Handlers {
 		Auth:         &AuthHandler{authService: services.Auth},
 		User:         &UserHandler{userService: services.User},
 		Workspace:    &WorkspaceHandler{workspaceService: services.Workspace},
+		Folder:       &FolderHandler{folderService: services.Folder},
 		Space:        &SpaceHandler{spaceService: services.Space},
 		Project:      &ProjectHandler{projectService: services.Project},
-		Sprint:       &SprintHandler{sprintService: services.Sprint},
 		Task:         &TaskHandler{taskService: services.Task},
-		Comment:      &CommentHandler{commentService: services.Comment},
 		Label:        &LabelHandler{labelService: services.Label},
 		Notification: &NotificationHandler{notificationService: services.Notification},
+		Member:       &MemberHandler{memberService: services.Member},
 	}
 }
 
@@ -51,138 +51,89 @@ func toUserResponse(u *repository.User) models.UserResponse {
 	}
 }
 
-func toWorkspaceResponse(w *repository.Workspace) models.WorkspaceResponse {
-	return models.WorkspaceResponse{
-		ID:          w.ID,
-		Name:        w.Name,
-		Description: w.Description,
-		Icon:        w.Icon,
-		Color:       w.Color,
-		OwnerID:     w.OwnerID,
-		CreatedAt:   w.CreatedAt,
-		UpdatedAt:   w.UpdatedAt,
-	}
-}
+// internal/api/handlers/handlers.go - toTaskResponse function
+// func toTaskResponse(t *repository.Task) models.TaskResponse {
+// 	return models.TaskResponse{
+// 		ID:             t.ID,
+// 		Title:          t.Title,
+// 		Description:    t.Description,
+// 		Status:         t.Status,
+// 		Priority:       t.Priority,
+// 		Type:           t.Type,
+// 		ProjectID:      t.ProjectID,
+// 		SprintID:       t.SprintID,
+// 		ParentTaskID:   t.ParentTaskID,
+// 		AssigneeIDs:    t.AssigneeIDs,
+// 		WatcherIDs:     t.WatcherIDs,
+// 		LabelIDs:       t.LabelIDs,
+// 		StoryPoints:    t.StoryPoints,
+// 		EstimatedHours: t.EstimatedHours,
+// 		ActualHours:    t.ActualHours,
+// 		StartDate:      t.StartDate,
+// 		DueDate:        t.DueDate,
+// 		CompletedAt:    t.CompletedAt,
+// 		Blocked:        t.Blocked,
+// 		Position:       t.Position,
+// 		CreatedBy:      t.CreatedBy,
+// 		CreatedAt:      t.CreatedAt,
+// 		UpdatedAt:      t.UpdatedAt,
+// 	}
+// }
 
-func toWorkspaceMemberResponse(m *repository.WorkspaceMember) models.WorkspaceMemberResponse {
-	resp := models.WorkspaceMemberResponse{
-		ID:          m.ID,
-		WorkspaceID: m.WorkspaceID,
-		UserID:      m.UserID,
-		Role:        m.Role,
-		JoinedAt:    m.JoinedAt,
-	}
-	if m.User != nil {
-		resp.User = toUserResponse(m.User)
-	}
-	return resp
-}
 
-func toSpaceResponse(s *repository.Space) models.SpaceResponse {
-	return models.SpaceResponse{
-		ID:          s.ID,
-		Name:        s.Name,
-		Description: s.Description,
-		Icon:        s.Icon,
-		Color:       s.Color,
-		WorkspaceID: s.WorkspaceID,
-		CreatedAt:   s.CreatedAt,
-		UpdatedAt:   s.UpdatedAt,
-	}
-}
-
-func toProjectResponse(p *repository.Project) models.ProjectResponse {
-	return models.ProjectResponse{
-		ID:          p.ID,
-		Name:        p.Name,
-		Key:         p.Key,
-		Description: p.Description,
-		Icon:        p.Icon,
-		Color:       p.Color,
-		SpaceID:     p.SpaceID,
-		LeadID:      p.LeadID,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
-	}
-}
-
-func toProjectMemberResponse(m *repository.ProjectMember) models.ProjectMemberResponse {
-	resp := models.ProjectMemberResponse{
-		ID:        m.ID,
-		ProjectID: m.ProjectID,
-		UserID:    m.UserID,
-		Role:      m.Role,
-		JoinedAt:  m.JoinedAt,
-	}
-	if m.User != nil {
-		resp.User = toUserResponse(m.User)
-	}
-	return resp
-}
-
-func toSprintResponse(s *repository.Sprint) models.SprintResponse {
-	return models.SprintResponse{
-		ID:        s.ID,
-		Name:      s.Name,
-		Goal:      s.Goal,
-		ProjectID: s.ProjectID,
-		Status:    s.Status,
-		StartDate: s.StartDate,
-		EndDate:   s.EndDate,
-		CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt,
-	}
-}
+// ✅ ADD THIS MISSING HELPER FUNCTION
+// ============================================
+// COMPREHENSIVE TASK RESPONSE MAPPER
+// ============================================
 
 func toTaskResponse(t *repository.Task) models.TaskResponse {
-	resp := models.TaskResponse{
-		ID:          t.ID,
-		Key:         t.Key,
-		Title:       t.Title,
-		Description: t.Description,
-		Status:      t.Status,
-		Priority:    t.Priority,
-		Type:        t.Type,
-		ProjectID:   t.ProjectID,
-		SprintID:    t.SprintID,
-		AssigneeID:  t.AssigneeID,
-		ReporterID:  t.ReporterID,
-		ParentID:    t.ParentID,
-		StoryPoints: t.StoryPoints,
-		DueDate:     t.DueDate,
-		OrderIndex:  t.OrderIndex,
-		Labels:      t.Labels,
-		CreatedAt:   t.CreatedAt,
-		UpdatedAt:   t.UpdatedAt,
+	if t == nil {
+		return models.TaskResponse{}
 	}
-	if t.Assignee != nil {
-		userResp := toUserResponse(t.Assignee)
-		resp.Assignee = &userResp
+
+	return models.TaskResponse{
+		ID:             t.ID,
+		Title:          t.Title,
+		Description:    t.Description,
+		Status:         t.Status,
+		Priority:       t.Priority,
+		Type:           t.Type,
+		ProjectID:      t.ProjectID,
+		SprintID:       t.SprintID,
+		ParentTaskID:   t.ParentTaskID,
+		AssigneeIDs:    safeStringSlice(t.AssigneeIDs),
+		WatcherIDs:     safeStringSlice(t.WatcherIDs),
+		LabelIDs:       safeStringSlice(t.LabelIDs),
+		StoryPoints:    t.StoryPoints,
+		EstimatedHours: t.EstimatedHours,
+		ActualHours:    t.ActualHours,
+		StartDate:      t.StartDate,
+		DueDate:        t.DueDate,
+		CompletedAt:    t.CompletedAt,
+		Blocked:        t.Blocked,
+		Position:       t.Position,
+		CreatedBy:      t.CreatedBy,
+		CreatedAt:      t.CreatedAt,
+		UpdatedAt:      t.UpdatedAt,
 	}
-	if t.Reporter != nil {
-		userResp := toUserResponse(t.Reporter)
-		resp.Reporter = &userResp
-	}
-	if resp.Labels == nil {
-		resp.Labels = []string{}
-	}
-	return resp
 }
 
-func toCommentResponse(c *repository.Comment) models.CommentResponse {
-	resp := models.CommentResponse{
-		ID:        c.ID,
-		TaskID:    c.TaskID,
-		UserID:    c.UserID,
-		Content:   c.Content,
-		CreatedAt: c.CreatedAt,
-		UpdatedAt: c.UpdatedAt,
+// Helper to ensure nil slices become empty slices
+func safeStringSlice(s []string) []string {
+	if s == nil {
+		return []string{}
 	}
-	if c.User != nil {
-		resp.User = toUserResponse(c.User)
-	}
-	return resp
+	return s
 }
+
+// Helper to ensure nil int slices become empty slices
+func safeIntSlice(s []int) []int {
+	if s == nil {
+		return []int{}
+	}
+	return s
+}
+
 
 func toLabelResponse(l *repository.Label) models.LabelResponse {
 	return models.LabelResponse{
@@ -207,5 +158,139 @@ func toNotificationResponse(n *repository.Notification) models.NotificationRespo
 	if n.Data != nil {
 		resp.Data = &n.Data
 	}
+	return resp
+}
+
+
+
+// ============================================
+// Helper Functions
+// ============================================
+
+// Helper function to convert repository.Folder to models.FolderResponse
+func toFolderResponse(f *repository.Folder) models.FolderResponse {
+	resp := models.FolderResponse{
+		ID:        f.ID,
+		SpaceID:   f.SpaceID,
+		Name:      f.Name,
+		OwnerID:   f.OwnerID,
+		CreatedAt: f.CreatedAt,
+		UpdatedAt: f.UpdatedAt,
+	}
+
+	// Handle optional fields
+	if f.Description != nil {
+		resp.Description = *f.Description
+	}
+	if f.Icon != nil {
+		resp.Icon = *f.Icon
+	}
+	if f.Color != nil {
+		resp.Color = *f.Color
+	}
+	if f.Visibility != nil {
+		resp.Visibility = *f.Visibility
+	}
+
+	// Handle arrays
+	if f.AllowedUsers != nil {
+		resp.AllowedUsers = f.AllowedUsers
+	} else {
+		resp.AllowedUsers = []string{}
+	}
+
+	if f.AllowedTeams != nil {
+		resp.AllowedTeams = f.AllowedTeams
+	} else {
+		resp.AllowedTeams = []string{}
+	}
+
+	return resp
+}
+
+
+
+// ============================================
+// Helper Functions
+// ============================================
+
+// Helper function to convert repository.Space to models.SpaceResponse
+func toSpaceResponse(s *repository.Space) models.SpaceResponse {
+	resp := models.SpaceResponse{
+		ID:          s.ID,
+		WorkspaceID: s.WorkspaceID,
+		Name:        s.Name,
+		OwnerID:     s.OwnerID,
+		CreatedAt:   s.CreatedAt,
+		UpdatedAt:   s.UpdatedAt,
+	}
+
+	// Handle optional fields
+	if s.Description != nil {
+		resp.Description = *s.Description
+	}
+	if s.Icon != nil {
+		resp.Icon = *s.Icon
+	}
+	if s.Color != nil {
+		resp.Color = *s.Color
+	}
+	if s.Visibility != nil {
+		resp.Visibility = *s.Visibility
+	}
+
+	// Handle arrays
+	if s.AllowedUsers != nil {
+		resp.AllowedUsers = s.AllowedUsers
+	} else {
+		resp.AllowedUsers = []string{}
+	}
+
+	if s.AllowedTeams != nil {
+		resp.AllowedTeams = s.AllowedTeams
+	} else {
+		resp.AllowedTeams = []string{}
+	}
+
+	return resp
+}
+
+// Helper function to convert repository.Workspace to models.WorkspaceResponse
+func toWorkspaceResponse(ws *repository.Workspace) models.WorkspaceResponse {
+	resp := models.WorkspaceResponse{
+		ID:        ws.ID,
+		Name:      ws.Name,
+		OwnerID:   ws.OwnerID,
+		CreatedAt: ws.CreatedAt,
+		UpdatedAt: ws.UpdatedAt,
+	}
+
+	// Handle optional fields
+	if ws.Description != nil {
+		resp.Description = *ws.Description
+	}
+	if ws.Icon != nil {
+		resp.Icon = *ws.Icon
+	}
+	if ws.Color != nil {
+		resp.Color = *ws.Color
+	}
+	if ws.Visibility != nil {
+		resp.Visibility = *ws.Visibility
+	}
+	
+	// Handle arrays
+	if ws.AllowedUsers != nil {
+		resp.AllowedUsers = ws.AllowedUsers
+	} else {
+		resp.AllowedUsers = []string{}
+	}
+	
+	if ws.AllowedTeams != nil {
+		resp.AllowedTeams = ws.AllowedTeams
+	} else {
+		resp.AllowedTeams = []string{}
+	}
+
 	return resp
 }

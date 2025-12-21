@@ -1,39 +1,64 @@
+# =========================
 # Build stage
+# =========================
 FROM golang:1.23-alpine AS builder
 
+# Install dependencies
+RUN apk add --no-cache git make
+
+# Set working directory
 WORKDIR /app
 
-# Install build dependencies
-RUN apk add --no-cache gcc musl-dev
-
-# Copy go mod files
+# Copy go.mod and go.sum
 COPY go.mod go.sum ./
+
+# Download Go modules
 RUN go mod download
 
-# Copy source code
+# Copy all source code
 COPY . .
 
-# Build the application
+# Build the Go binary (point to cmd/api where main.go is)
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/api
 
-# Final stage
-FROM alpine:3.19
+# =========================
+# Runtime stage
+# =========================
+FROM alpine:latest
 
-WORKDIR /app
+# Install ca-certificates and postgresql-client
+RUN apk --no-cache add ca-certificates postgresql-client curl bash
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata wget
+# Install golang-migrate
+RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.16.2/migrate.linux-amd64.tar.gz | tar xvz && \
+    mv migrate /usr/local/bin/migrate && \
+    chmod +x /usr/local/bin/migrate
 
-# Copy binary from builder
+# Set working directory
+WORKDIR /root/
+
+# Copy built binary from builder
 COPY --from=builder /app/main .
 
-# Copy migration files (for reference, but docker-compose uses host mount)
+# Copy migrations
 COPY --from=builder /app/internal/db/migrations ./internal/db/migrations
 
+# Entrypoint script
+RUN echo '#!/bin/sh' > /entrypoint.sh && \
+    echo 'set -e' >> /entrypoint.sh && \
+    echo 'echo "🔄 Running database migrations..."' >> /entrypoint.sh && \
+    echo 'migrate -path ./internal/db/migrations -database "$DATABASE_URL" up' >> /entrypoint.sh && \
+    echo 'echo "✅ Migrations completed"' >> /entrypoint.sh && \
+    echo 'echo "🚀 Starting application..."' >> /entrypoint.sh && \
+    echo 'exec ./main' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Expose application port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://localhost:8080/health || exit 1
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-CMD ["./main"]
+# Use entrypoint script
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,10 +1,10 @@
-// internal/service/invitation_service.go
 package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -12,674 +12,642 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 )
 
-// ============================================
-// Invitation Service - ClickUp Style
-// ============================================
-
-// InvitationService defines invitation operations
 type InvitationService interface {
-	// Primary invitation method - invite to workspace
-	CreateWorkspaceInvitation(ctx context.Context, workspaceID, email, role, invitedByID string) (*InvitationResponse, error)
+	// Core invitation operations
+	CreateInvitation(ctx context.Context, inv *repository.Invitation) error
+	CreateWithPermissions(ctx context.Context, inv *repository.Invitation, perms *repository.InvitationPermissions) error
+	CreateBatch(ctx context.Context, invitations []*repository.Invitation) ([]string, []error)
 
-	// Project invitation - user must be workspace member OR will be added to workspace too
-	CreateProjectInvitation(ctx context.Context, projectID, email, role, invitedByID string) (*InvitationResponse, error)
+	// Retrieval
+	GetByID(ctx context.Context, id string) (*repository.Invitation, error)
+	GetByToken(ctx context.Context, token string) (*repository.Invitation, error)
+	GetByLinkToken(ctx context.Context, linkToken string) (*repository.Invitation, error)
+	GetMyInvitations(ctx context.Context, email string) ([]*repository.Invitation, error)
 
-	// Accept any invitation type
-	AcceptInvitation(ctx context.Context, token, userID string) (*AcceptInvitationResponse, error)
+	// Acceptance and lifecycle
+	AcceptByID(ctx context.Context, id string, userID string) error
+	AcceptByToken(ctx context.Context, token string, userID string) error
+	DeclineByID(ctx context.Context, id string) error
+	CancelInvitation(ctx context.Context, id string, actorID string) error
+	ResendInvitation(ctx context.Context, id string, actorID *string) (*repository.Invitation, error)
 
-	// Get pending invitations for current user
-	GetPendingInvitations(ctx context.Context, email string) ([]*InvitationWithDetails, error)
+	// Workspace and Project specific invitations
+	CreateWorkspaceInvitation(ctx context.Context, workspaceID, email, role, inviterID string) (*repository.Invitation, error)
+	CreateProjectInvitation(ctx context.Context, workspaceID, projectID, email, role, inviterID string) (*repository.Invitation, error)
 
-	// Get pending invitations for a workspace (admin view)
-	GetPendingWorkspaceInvitations(ctx context.Context, workspaceID string) ([]*InvitationWithDetails, error)
+	// List operations
+	ListByWorkspace(ctx context.Context, workspaceID string, limit, offset int) ([]*repository.Invitation, int, error)
+	ListByProject(ctx context.Context, projectID string, limit, offset int) ([]*repository.Invitation, int, error)
 
-	// Get pending invitations for a project (admin view)
-	GetPendingProjectInvitations(ctx context.Context, projectID string) ([]*InvitationWithDetails, error)
+	// Link invitations
+	CreateLinkSettings(ctx context.Context, settings *repository.InvitationLinkSettings) error
+	UseLink(ctx context.Context, linkToken string, emailAddr string) (*repository.Invitation, *repository.InvitationLinkSettings, error)
+	GetLinkSettingsByToken(ctx context.Context, token string) (*repository.InvitationLinkSettings, error)
 
-	// Cancel/delete an invitation
-	CancelInvitation(ctx context.Context, id, userID string) error
+	// Stats and analytics
+	GetStatsByWorkspace(ctx context.Context, workspaceID string) (*repository.InvitationStats, error)
 
-	// Resend invitation email
-	ResendInvitation(ctx context.Context, id, userID string) error
-}
+	// Token management
+	RegenerateToken(ctx context.Context, id string) (string, error)
 
-// InvitationResponse is the API response for created invitations
-type InvitationResponse struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	Type        string    `json:"type"`
-	TargetID    string    `json:"targetId"`
-	TargetName  string    `json:"targetName"`
-	Role        string    `json:"role"`
-	Status      string    `json:"status"`
-	InvitedBy   string    `json:"invitedBy"`
-	InviterName string    `json:"inviterName"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-	CreatedAt   time.Time `json:"createdAt"`
-}
+	// Activity and permissions
+	LogActivity(ctx context.Context, a *repository.InvitationActivity) error
+	GetActivity(ctx context.Context, invitationID string) ([]*repository.InvitationActivity, error)
+	GetPermissions(ctx context.Context, invitationID string) (*repository.InvitationPermissions, error)
+	CreatePermissions(ctx context.Context, perms *repository.InvitationPermissions) error
+	UpdatePermissions(ctx context.Context, perms *repository.InvitationPermissions) error
+	DeletePermissions(ctx context.Context, invitationID string) error
 
-// InvitationWithDetails includes target info for display
-type InvitationWithDetails struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	Type         string    `json:"type"`
-	TargetID     string    `json:"targetId"`
-	TargetName   string    `json:"targetName"`
-	TargetIcon   string    `json:"targetIcon,omitempty"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-	InvitedBy    string    `json:"invitedBy"`
-	InviterName  string    `json:"inviterName"`
-	InviterEmail string    `json:"inviterEmail"`
-	ExpiresAt    time.Time `json:"expiresAt"`
-	CreatedAt    time.Time `json:"createdAt"`
-}
-
-// AcceptInvitationResponse shows what happened when accepting
-type AcceptInvitationResponse struct {
-	Message     string `json:"message"`
-	Type        string `json:"type"`
-	TargetID    string `json:"targetId"`
-	TargetName  string `json:"targetName"`
-	WorkspaceID string `json:"workspaceId,omitempty"`
+	// Access requests
+	CreateAccessRequest(ctx context.Context, req *repository.AccessRequest) error
 }
 
 type invitationService struct {
-	invitationRepo repository.InvitationRepository
-	workspaceRepo  repository.WorkspaceRepository
-	teamRepo       repository.TeamRepository
-	projectRepo    repository.ProjectRepository
-	userRepo       repository.UserRepository
-	spaceRepo      repository.SpaceRepository
-	emailSvc       *email.Service
+	invRepo      repository.InvitationRepository
+	workspaceRepo repository.WorkspaceRepository
+	teamRepo     repository.TeamRepository
+	projectRepo  repository.ProjectRepository
+	userRepo     repository.UserRepository
+	spaceRepo    repository.SpaceRepository
+	emailSvc     *email.Service
+	defaultTTL   time.Duration
 }
 
-// NewInvitationService creates a new invitation service
 func NewInvitationService(
-	invitationRepo repository.InvitationRepository,
+	invRepo repository.InvitationRepository,
 	workspaceRepo repository.WorkspaceRepository,
 	teamRepo repository.TeamRepository,
 	projectRepo repository.ProjectRepository,
 	userRepo repository.UserRepository,
-	spaceRepo repository.SpaceRepository, // NEW parameter
+	spaceRepo repository.SpaceRepository,
 	emailSvc *email.Service,
 ) InvitationService {
 	return &invitationService{
-		invitationRepo: invitationRepo,
-		workspaceRepo:  workspaceRepo,
-		teamRepo:       teamRepo,
-		projectRepo:    projectRepo,
-		userRepo:       userRepo,
-		spaceRepo:      spaceRepo,
-		emailSvc:       emailSvc,
+		invRepo:      invRepo,
+		workspaceRepo: workspaceRepo,
+		teamRepo:     teamRepo,
+		projectRepo:  projectRepo,
+		userRepo:     userRepo,
+		spaceRepo:    spaceRepo,
+		emailSvc:     emailSvc,
+		defaultTTL:   30 * 24 * time.Hour,
 	}
 }
 
-// CreateWorkspaceInvitation - Primary invitation method
-func (s *invitationService) CreateWorkspaceInvitation(ctx context.Context, workspaceID, inviteEmail, role, invitedByID string) (*InvitationResponse, error) {
-	// 1. Verify workspace exists
-	workspace, err := s.workspaceRepo.FindByID(ctx, workspaceID)
-	if err != nil || workspace == nil {
-		return nil, ErrNotFound
-	}
-
-	// 2. Verify inviter has permission (must be owner or admin)
-	inviterMember, _ := s.workspaceRepo.FindMember(ctx, workspaceID, invitedByID)
-	if inviterMember == nil {
-		return nil, ErrForbidden
-	}
-	if inviterMember.Role != "owner" && inviterMember.Role != "admin" {
-		return nil, ErrForbidden
-	}
-
-	// 3. Normalize email
-	inviteEmail = strings.ToLower(strings.TrimSpace(inviteEmail))
-
-	// 4. Check if user already exists and is a member
-	existingUser, _ := s.userRepo.FindByEmail(ctx, inviteEmail)
-	if existingUser != nil {
-		member, _ := s.workspaceRepo.FindMember(ctx, workspaceID, existingUser.ID)
-		if member != nil {
-			return nil, errors.New("user is already a workspace member")
-		}
-	}
-
-	// 5. Check if invitation already pending
-	existingInvites, _ := s.invitationRepo.FindByEmail(ctx, inviteEmail)
-	for _, inv := range existingInvites {
-		if inv.TargetID == workspaceID && inv.Type == "workspace" && inv.Status == "pending" {
-			return nil, errors.New("invitation already sent to this email")
-		}
-	}
-
-	// 6. Create invitation
-	invitation := &repository.Invitation{
-		Email:     inviteEmail,
-		Type:      "workspace",
-		TargetID:  workspaceID,
-		Role:      role,
-		InvitedBy: invitedByID,
-		Status:    "pending",
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
-	}
-
-	if err := s.invitationRepo.Create(ctx, invitation); err != nil {
-		return nil, err
-	}
-
-	// 7. Get inviter info for response
-	inviter, _ := s.userRepo.FindByID(ctx, invitedByID)
-	inviterName := "Someone"
-	if inviter != nil {
-		inviterName = inviter.Name
-	}
-
-	// 8. Send invitation email
-	if s.emailSvc != nil {
-		s.emailSvc.SendWorkspaceInvitation(inviteEmail, email.WorkspaceInvitationData{
-			InviterName:   inviterName,
-			WorkspaceName: workspace.Name,
-			Role:          role,
-			InviteURL:     fmt.Sprintf("/invite/%s", invitation.Token),
-		})
-	}
-
-	return &InvitationResponse{
-		ID:          invitation.ID,
-		Email:       invitation.Email,
-		Type:        invitation.Type,
-		TargetID:    invitation.TargetID,
-		TargetName:  workspace.Name,
-		Role:        invitation.Role,
-		Status:      invitation.Status,
-		InvitedBy:   invitation.InvitedBy,
-		InviterName: inviterName,
-		ExpiresAt:   invitation.ExpiresAt,
-		CreatedAt:   invitation.CreatedAt,
-	}, nil
+func normalizeEmail(e string) string {
+	return strings.ToLower(strings.TrimSpace(e))
 }
 
-// CreateProjectInvitation - ClickUp style: also adds to workspace if needed
-func (s *invitationService) CreateProjectInvitation(ctx context.Context, projectID, inviteEmail, role, invitedByID string) (*InvitationResponse, error) {
-	// 1. Verify project exists
-	project, err := s.projectRepo.FindByID(ctx, projectID)
-	if err != nil || project == nil {
-		return nil, ErrNotFound
-	}
-
-	// 2. Get workspace through space
-	space, err := s.spaceRepo.FindByID(ctx, project.SpaceID)
-	if err != nil || space == nil {
-		return nil, ErrNotFound
-	}
-	workspaceID := space.WorkspaceID
-
-	// 3. Verify inviter has permission on project
-	inviterMember, _ := s.projectRepo.FindMember(ctx, projectID, invitedByID)
-	if inviterMember == nil {
-		// Check workspace level permission
-		wsInviter, _ := s.workspaceRepo.FindMember(ctx, workspaceID, invitedByID)
-		if wsInviter == nil || (wsInviter.Role != "owner" && wsInviter.Role != "admin") {
-			return nil, ErrForbidden
-		}
-	} else if inviterMember.Role != "owner" && inviterMember.Role != "admin" && inviterMember.Role != "lead" {
-		return nil, ErrForbidden
-	}
-
-	// 4. Normalize email
-	inviteEmail = strings.ToLower(strings.TrimSpace(inviteEmail))
-
-	// 5. Check if user already exists
-	existingUser, _ := s.userRepo.FindByEmail(ctx, inviteEmail)
-	if existingUser != nil {
-		// Check if already a project member
-		projectMember, _ := s.projectRepo.FindMember(ctx, projectID, existingUser.ID)
-		if projectMember != nil {
-			return nil, errors.New("user is already a project member")
+func allowedRoleForType(t repository.InvitationType, r repository.WorkspaceRole) bool {
+	for _, v := range repository.ValidRolesForType(t) {
+		if v == r {
+			return true
 		}
 	}
-
-	// 6. Check if invitation already pending
-	existingInvites, _ := s.invitationRepo.FindByEmail(ctx, inviteEmail)
-	for _, inv := range existingInvites {
-		if inv.TargetID == projectID && inv.Type == "project" && inv.Status == "pending" {
-			return nil, errors.New("invitation already sent to this email")
-		}
-	}
-
-	// 7. Create invitation (store workspace ID in metadata or handle in accept)
-	invitation := &repository.Invitation{
-		Email:     inviteEmail,
-		Type:      "project",
-		TargetID:  projectID,
-		Role:      role,
-		InvitedBy: invitedByID,
-		Status:    "pending",
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
-	}
-
-	if err := s.invitationRepo.Create(ctx, invitation); err != nil {
-		return nil, err
-	}
-
-	// 8. Get inviter info
-	inviter, _ := s.userRepo.FindByID(ctx, invitedByID)
-	inviterName := "Someone"
-	if inviter != nil {
-		inviterName = inviter.Name
-	}
-
-	// 9. Send invitation email
-	if s.emailSvc != nil {
-		workspace, _ := s.workspaceRepo.FindByID(ctx, workspaceID)
-		workspaceName := ""
-		if workspace != nil {
-			workspaceName = workspace.Name
-		}
-
-		s.emailSvc.SendProjectInvitation(inviteEmail, email.ProjectInvitationData{
-			InviterName:   inviterName,
-			ProjectName:   project.Name,
-			WorkspaceName: workspaceName,
-			Role:          role,
-			InviteURL:     fmt.Sprintf("/invite/%s", invitation.Token),
-		})
-	}
-
-	return &InvitationResponse{
-		ID:          invitation.ID,
-		Email:       invitation.Email,
-		Type:        invitation.Type,
-		TargetID:    invitation.TargetID,
-		TargetName:  project.Name,
-		Role:        invitation.Role,
-		Status:      invitation.Status,
-		InvitedBy:   invitation.InvitedBy,
-		InviterName: inviterName,
-		ExpiresAt:   invitation.ExpiresAt,
-		CreatedAt:   invitation.CreatedAt,
-	}, nil
+	return false
 }
 
-// AcceptInvitation - ClickUp style: handles workspace membership automatically
-func (s *invitationService) AcceptInvitation(ctx context.Context, token, userID string) (*AcceptInvitationResponse, error) {
-	// 1. Find invitation by token
-	invitation, err := s.invitationRepo.FindByToken(ctx, token)
-	if err != nil {
-		return nil, err
+func strPtr(s string) *string { return &s }
+
+func (s *invitationService) CreateInvitation(ctx context.Context, inv *repository.Invitation) error {
+	if inv == nil {
+		return errors.New("invitation is nil")
 	}
-	if invitation == nil {
-		return nil, ErrNotFound
+	if strings.TrimSpace(inv.WorkspaceID) == "" {
+		return errors.New("workspace_id required")
 	}
-
-	// 2. Check status
-	if invitation.Status != "pending" {
-		return nil, errors.New("invitation already " + invitation.Status)
+	if strings.TrimSpace(inv.Email) == "" {
+		return errors.New("email required")
 	}
+	inv.Email = normalizeEmail(inv.Email)
 
-	// 3. Check expiration
-	if time.Now().After(invitation.ExpiresAt) {
-		invitation.Status = "expired"
-		s.invitationRepo.Update(ctx, invitation)
-		return nil, errors.New("invitation has expired")
+	if inv.Type == "" {
+		inv.Type = repository.InvitationTypeWorkspace
 	}
-
-	// 4. Verify user email matches invitation
-	user, err := s.userRepo.FindByID(ctx, userID)
-	if err != nil || user == nil {
-		return nil, ErrUserNotFound
+	if inv.Role == "" {
+		inv.Role = repository.WorkspaceRoleMember
 	}
-	if strings.ToLower(user.Email) != strings.ToLower(invitation.Email) {
-		return nil, errors.New("this invitation was sent to a different email address")
+	if !allowedRoleForType(inv.Type, inv.Role) {
+		return errors.New("invalid role for invitation type")
 	}
-
-	var response *AcceptInvitationResponse
-
-	// 5. Handle based on invitation type
-	switch invitation.Type {
-	case "workspace":
-		workspace, _ := s.workspaceRepo.FindByID(ctx, invitation.TargetID)
-		if workspace == nil {
-			return nil, ErrNotFound
-		}
-
-		// Check if already a member
-		existing, _ := s.workspaceRepo.FindMember(ctx, invitation.TargetID, userID)
-		if existing != nil {
-			invitation.Status = "accepted"
-			s.invitationRepo.Update(ctx, invitation)
-			return &AcceptInvitationResponse{
-				Message:    "You are already a member of this workspace",
-				Type:       "workspace",
-				TargetID:   invitation.TargetID,
-				TargetName: workspace.Name,
-			}, nil
-		}
-
-		member := &repository.WorkspaceMember{
-			WorkspaceID: invitation.TargetID,
-			UserID:      userID,
-			Role:        invitation.Role,
-		}
-		if err := s.workspaceRepo.AddMember(ctx, member); err != nil {
-			return nil, err
-		}
-
-		response = &AcceptInvitationResponse{
-			Message:     fmt.Sprintf("You have joined %s", workspace.Name),
-			Type:        "workspace",
-			TargetID:    invitation.TargetID,
-			TargetName:  workspace.Name,
-			WorkspaceID: invitation.TargetID,
-		}
-
-	case "project":
-		project, _ := s.projectRepo.FindByID(ctx, invitation.TargetID)
-		if project == nil {
-			return nil, ErrNotFound
-		}
-
-		// Get workspace through space
-		space, _ := s.spaceRepo.FindByID(ctx, project.SpaceID)
-		if space == nil {
-			return nil, ErrNotFound
-		}
-		workspaceID := space.WorkspaceID
-
-		// CLICKUP STYLE: First ensure user is workspace member
-		wsMember, _ := s.workspaceRepo.FindMember(ctx, workspaceID, userID)
-		if wsMember == nil {
-			// Auto-add to workspace as "member" role
-			wsMember := &repository.WorkspaceMember{
-				WorkspaceID: workspaceID,
-				UserID:      userID,
-				Role:        "member", // Default workspace role
-			}
-			if err := s.workspaceRepo.AddMember(ctx, wsMember); err != nil {
-				return nil, fmt.Errorf("failed to add to workspace: %w", err)
-			}
-		}
-
-		// Now add to project
-		existing, _ := s.projectRepo.FindMember(ctx, invitation.TargetID, userID)
-		if existing != nil {
-			invitation.Status = "accepted"
-			s.invitationRepo.Update(ctx, invitation)
-			return &AcceptInvitationResponse{
-				Message:     "You are already a member of this project",
-				Type:        "project",
-				TargetID:    invitation.TargetID,
-				TargetName:  project.Name,
-				WorkspaceID: workspaceID,
-			}, nil
-		}
-
-		projectMember := &repository.ProjectMember{
-			ProjectID: invitation.TargetID,
-			UserID:    userID,
-			Role:      invitation.Role,
-		}
-		if err := s.projectRepo.AddMember(ctx, projectMember); err != nil {
-			return nil, err
-		}
-
-		response = &AcceptInvitationResponse{
-			Message:     fmt.Sprintf("You have joined %s", project.Name),
-			Type:        "project",
-			TargetID:    invitation.TargetID,
-			TargetName:  project.Name,
-			WorkspaceID: workspaceID,
-		}
-
-	case "team":
-		team, _ := s.teamRepo.FindByID(ctx, invitation.TargetID)
-		if team == nil {
-			return nil, ErrNotFound
-		}
-
-		// Ensure workspace membership first
-		wsMember, _ := s.workspaceRepo.FindMember(ctx, team.WorkspaceID, userID)
-		if wsMember == nil {
-			wsMember := &repository.WorkspaceMember{
-				WorkspaceID: team.WorkspaceID,
-				UserID:      userID,
-				Role:        "member",
-			}
-			if err := s.workspaceRepo.AddMember(ctx, wsMember); err != nil {
-				return nil, fmt.Errorf("failed to add to workspace: %w", err)
-			}
-		}
-
-		teamMember := &repository.TeamMember{
-			TeamID: invitation.TargetID,
-			UserID: userID,
-			Role:   invitation.Role,
-		}
-		if err := s.teamRepo.AddMember(ctx, teamMember); err != nil {
-			return nil, err
-		}
-
-		response = &AcceptInvitationResponse{
-			Message:     fmt.Sprintf("You have joined team %s", team.Name),
-			Type:        "team",
-			TargetID:    invitation.TargetID,
-			TargetName:  team.Name,
-			WorkspaceID: team.WorkspaceID,
-		}
-
-	default:
-		return nil, errors.New("unknown invitation type")
+	if inv.Permission == "" {
+		inv.Permission = repository.DefaultPermissionForRole(inv.Role)
+	}
+	if inv.Status == "" {
+		inv.Status = repository.InvitationStatusPending
+	}
+	if inv.Method == "" {
+		inv.Method = repository.InvitationMethodEmail
+	}
+	if inv.ExpiresAt == nil {
+		t := time.Now().Add(s.defaultTTL)
+		inv.ExpiresAt = &t
 	}
 
-	// 6. Update invitation status
-	invitation.Status = "accepted"
-	s.invitationRepo.Update(ctx, invitation)
-
-	return response, nil
-}
-
-// GetPendingInvitations gets all pending invitations for a user's email
-func (s *invitationService) GetPendingInvitations(ctx context.Context, userEmail string) ([]*InvitationWithDetails, error) {
-	invitations, err := s.invitationRepo.FindByEmail(ctx, strings.ToLower(userEmail))
-	if err != nil {
-		return nil, err
+	if inv.TargetID != "" && inv.Email != "" {
+		exists, err := s.invRepo.ExistsPendingForEmail(ctx, inv.Email, inv.Type, inv.TargetID)
+		if err == nil && exists {
+			return errors.New("pending invitation already exists for this email and target")
+		}
 	}
 
-	result := make([]*InvitationWithDetails, 0, len(invitations))
-	for _, inv := range invitations {
-		detail := s.enrichInvitation(ctx, inv)
-		result = append(result, detail)
-	}
-
-	return result, nil
-}
-
-// GetPendingWorkspaceInvitations gets pending invitations for a workspace
-func (s *invitationService) GetPendingWorkspaceInvitations(ctx context.Context, workspaceID string) ([]*InvitationWithDetails, error) {
-	invitations, err := s.invitationRepo.FindPendingByTarget(ctx, "workspace", workspaceID)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*InvitationWithDetails, 0, len(invitations))
-	for _, inv := range invitations {
-		detail := s.enrichInvitation(ctx, inv)
-		result = append(result, detail)
-	}
-
-	return result, nil
-}
-
-// GetPendingProjectInvitations gets pending invitations for a project
-func (s *invitationService) GetPendingProjectInvitations(ctx context.Context, projectID string) ([]*InvitationWithDetails, error) {
-	invitations, err := s.invitationRepo.FindPendingByTarget(ctx, "project", projectID)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*InvitationWithDetails, 0, len(invitations))
-	for _, inv := range invitations {
-		detail := s.enrichInvitation(ctx, inv)
-		result = append(result, detail)
-	}
-
-	return result, nil
-}
-
-// CancelInvitation cancels an invitation (only inviter or workspace admin can cancel)
-func (s *invitationService) CancelInvitation(ctx context.Context, id, userID string) error {
-	invitation, err := s.invitationRepo.FindByID(ctx, id)
-	if err != nil {
+	if err := s.invRepo.Create(ctx, inv); err != nil {
 		return err
 	}
-	if invitation == nil {
-		return ErrNotFound
-	}
 
-	// Check permission: inviter can always cancel
-	if invitation.InvitedBy != userID {
-		// Check if user is workspace admin
-		var workspaceID string
-		switch invitation.Type {
-		case "workspace":
-			workspaceID = invitation.TargetID
-		case "project":
-			project, _ := s.projectRepo.FindByID(ctx, invitation.TargetID)
-			if project != nil {
-				space, _ := s.spaceRepo.FindByID(ctx, project.SpaceID)
-				if space != nil {
-					workspaceID = space.WorkspaceID
-				}
-			}
-		case "team":
-			team, _ := s.teamRepo.FindByID(ctx, invitation.TargetID)
-			if team != nil {
-				workspaceID = team.WorkspaceID
-			}
+	_ = s.invRepo.LogActivity(ctx, &repository.InvitationActivity{
+		InvitationID: inv.ID,
+		Action:       "created",
+		ActorID:      &inv.InvitedByID,
+		ActorType:    "user",
+	})
+
+	if s.emailSvc != nil && inv.Method == repository.InvitationMethodEmail {
+	go func(inv *repository.Invitation) {
+		workspaceName := inv.WorkspaceID
+		if ws, err := s.workspaceRepo.FindByID(context.Background(), inv.WorkspaceID); err == nil && ws != nil {
+			workspaceName = ws.Name
 		}
-
-		if workspaceID != "" {
-			member, _ := s.workspaceRepo.FindMember(ctx, workspaceID, userID)
-			if member == nil || (member.Role != "owner" && member.Role != "admin") {
-				return ErrForbidden
-			}
+		
+		// ✅ ADD ERROR LOGGING
+		log.Printf("📧 Sending invitation email to: %s", inv.Email)
+		if err := s.emailSvc.SendInvitation(workspaceName, inv.Email, inv.InvitedByName, inv.Token); err != nil {
+			log.Printf("❌ Failed to send invitation email: %v", err)
 		} else {
-			return ErrForbidden
+			log.Printf("✅ Invitation email sent successfully to: %s", inv.Email)
 		}
-	}
-
-	return s.invitationRepo.Delete(ctx, id)
+	}(inv)
 }
-
-// ResendInvitation resends the invitation email
-func (s *invitationService) ResendInvitation(ctx context.Context, id, userID string) error {
-	invitation, err := s.invitationRepo.FindByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if invitation == nil {
-		return ErrNotFound
-	}
-
-	if invitation.Status != "pending" {
-		return errors.New("can only resend pending invitations")
-	}
-
-	// Check permission
-	if invitation.InvitedBy != userID {
-		return ErrForbidden
-	}
-
-	// Extend expiration
-	invitation.ExpiresAt = time.Now().Add(7 * 24 * time.Hour)
-	if err := s.invitationRepo.Update(ctx, invitation); err != nil {
-		return err
-	}
-
-	// Resend email
-	if s.emailSvc != nil {
-		inviter, _ := s.userRepo.FindByID(ctx, userID)
-		inviterName := "Someone"
-		if inviter != nil {
-			inviterName = inviter.Name
-		}
-
-		switch invitation.Type {
-		case "workspace":
-			workspace, _ := s.workspaceRepo.FindByID(ctx, invitation.TargetID)
-			if workspace != nil {
-				s.emailSvc.SendWorkspaceInvitation(invitation.Email, email.WorkspaceInvitationData{
-					InviterName:   inviterName,
-					WorkspaceName: workspace.Name,
-					Role:          invitation.Role,
-					InviteURL:     fmt.Sprintf("/invite/%s", invitation.Token),
-				})
-			}
-		case "project":
-			project, _ := s.projectRepo.FindByID(ctx, invitation.TargetID)
-			if project != nil {
-				s.emailSvc.SendProjectInvitation(invitation.Email, email.ProjectInvitationData{
-					InviterName: inviterName,
-					ProjectName: project.Name,
-					Role:        invitation.Role,
-					InviteURL:   fmt.Sprintf("/invite/%s", invitation.Token),
-				})
-			}
-		}
-	}
 
 	return nil
 }
 
-// Add this helper function at the top of the file (after imports)
-func derefString(s *string) string {
-	if s == nil {
-		return ""
+func (s *invitationService) CreateWithPermissions(ctx context.Context, inv *repository.Invitation, perms *repository.InvitationPermissions) error {
+	if inv == nil {
+		return errors.New("invitation is nil")
 	}
-	return *s
+	if inv.Email != "" {
+		inv.Email = normalizeEmail(inv.Email)
+	}
+	if inv.Permission == "" {
+		inv.Permission = repository.DefaultPermissionForRole(inv.Role)
+	}
+	return s.invRepo.CreateWithPermissions(ctx, inv, perms)
 }
 
-// Replace your enrichInvitation function with this:
-func (s *invitationService) enrichInvitation(ctx context.Context, inv *repository.Invitation) *InvitationWithDetails {
-	detail := &InvitationWithDetails{
-		ID:        inv.ID,
-		Email:     inv.Email,
-		Type:      inv.Type,
-		TargetID:  inv.TargetID,
-		Role:      inv.Role,
-		Status:    inv.Status,
-		InvitedBy: inv.InvitedBy,
-		ExpiresAt: inv.ExpiresAt,
-		CreatedAt: inv.CreatedAt,
+func (s *invitationService) CreateBatch(ctx context.Context, invitations []*repository.Invitation) ([]string, []error) {
+	for _, inv := range invitations {
+		if inv != nil && inv.Email != "" {
+			inv.Email = normalizeEmail(inv.Email)
+		}
+	}
+	return s.invRepo.CreateBatch(ctx, invitations)
+}
+
+func (s *invitationService) GetByID(ctx context.Context, id string) (*repository.Invitation, error) {
+	if id == "" {
+		return nil, errors.New("id required")
+	}
+	return s.invRepo.FindByID(ctx, id)
+}
+
+func (s *invitationService) GetByToken(ctx context.Context, token string) (*repository.Invitation, error) {
+	if token == "" {
+		return nil, errors.New("token required")
+	}
+	return s.invRepo.FindByToken(ctx, token)
+}
+
+func (s *invitationService) GetByLinkToken(ctx context.Context, linkToken string) (*repository.Invitation, error) {
+	if linkToken == "" {
+		return nil, errors.New("link token required")
+	}
+	return s.invRepo.FindByLinkToken(ctx, linkToken)
+}
+
+func (s *invitationService) GetMyInvitations(ctx context.Context, email string) ([]*repository.Invitation, error) {
+	if email == "" {
+		return nil, errors.New("email required")
+	}
+	return s.invRepo.FindPendingByEmail(ctx, normalizeEmail(email))
+}
+
+func (s *invitationService) AcceptByID(ctx context.Context, id string, userID string) error {
+	if id == "" {
+		return errors.New("id required")
+	}
+	if userID == "" {
+		return errors.New("user_id required")
 	}
 
-	// Get target name and icon
+	inv, err := s.invRepo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if inv == nil {
+		return errors.New("invitation not found")
+	}
+	if !inv.CanAccept() {
+		return errors.New("invitation cannot be accepted")
+	}
+	if inv.MaxUses != nil && inv.UseCount >= *inv.MaxUses {
+		return errors.New("invitation max uses reached")
+	}
+
+	if err := s.invRepo.MarkAccepted(ctx, id, userID); err != nil {
+		return err
+	}
+
+	_ = s.invRepo.IncrementLinkUseCount(ctx, id)
+	_ = s.invRepo.LogActivity(ctx, &repository.InvitationActivity{
+		InvitationID: id,
+		Action:       "accepted",
+		ActorID:      &userID,
+		ActorType:    "user",
+	})
+
+	return s.addUserToTarget(ctx, inv, userID)
+}
+
+func (s *invitationService) AcceptByToken(ctx context.Context, token string, userID string) error {
+	if token == "" {
+		return errors.New("token required")
+	}
+	if userID == "" {
+		return errors.New("user_id required")
+	}
+
+	inv, err := s.invRepo.FindByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if inv == nil {
+		return errors.New("invitation not found")
+	}
+	if !inv.CanAccept() {
+		return errors.New("invitation cannot be accepted")
+	}
+	if inv.MaxUses != nil && inv.UseCount >= *inv.MaxUses {
+		return errors.New("invitation max uses reached")
+	}
+
+	if err := s.invRepo.MarkAccepted(ctx, inv.ID, userID); err != nil {
+		return err
+	}
+
+	_ = s.invRepo.IncrementLinkUseCount(ctx, inv.ID)
+	_ = s.invRepo.LogActivity(ctx, &repository.InvitationActivity{
+		InvitationID: inv.ID,
+		Action:       "accepted",
+		ActorID:      &userID,
+		ActorType:    "user",
+	})
+
+	return s.addUserToTarget(ctx, inv, userID)
+}
+
+func (s *invitationService) addUserToTarget(ctx context.Context, inv *repository.Invitation, userID string) error {
 	switch inv.Type {
-	case "workspace":
-		workspace, _ := s.workspaceRepo.FindByID(ctx, inv.TargetID)
-		if workspace != nil {
-			detail.TargetName = workspace.Name
-			detail.TargetIcon = derefString(workspace.Icon)
+	case repository.InvitationTypeWorkspace:
+		member := &repository.WorkspaceMember{
+			WorkspaceID: inv.TargetID,
+			UserID:      userID,
+			Role:        string(inv.Role),
 		}
-	case "project":
-		project, _ := s.projectRepo.FindByID(ctx, inv.TargetID)
-		if project != nil {
-			detail.TargetName = project.Name
-			detail.TargetIcon = derefString(project.Icon)
+		return s.workspaceRepo.AddMember(ctx, member)
+
+	case repository.InvitationTypeProject:
+		member := &repository.ProjectMember{
+			ProjectID: inv.TargetID,
+			UserID:    userID,
+			Role:      string(inv.Role),
 		}
-	case "team":
-		team, _ := s.teamRepo.FindByID(ctx, inv.TargetID)
-		if team != nil {
-			detail.TargetName = team.Name
+		return s.projectRepo.AddMember(ctx, member)
+
+	case repository.InvitationTypeTeam:
+		member := &repository.TeamMember{
+			TeamID: inv.TargetID,
+			UserID: userID,
+			Role:   string(inv.Role),
 		}
+		return s.teamRepo.AddMember(ctx, member)
+
+	default:
+		return errors.New("unsupported invitation type")
+	}
+}
+
+func (s *invitationService) DeclineByID(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("id required")
+	}
+	inv, err := s.invRepo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if inv == nil {
+		return errors.New("invitation not found")
+	}
+	if err := s.invRepo.MarkDeclined(ctx, id); err != nil {
+		return err
+	}
+	_ = s.invRepo.LogActivity(ctx, &repository.InvitationActivity{
+		InvitationID: id,
+		Action:       "declined",
+		ActorType:    "user",
+	})
+	return nil
+}
+
+func (s *invitationService) CancelInvitation(ctx context.Context, id string, actorID string) error {
+	if id == "" {
+		return errors.New("id required")
+	}
+	inv, err := s.invRepo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if inv == nil {
+		return errors.New("invitation not found")
+	}
+	if !inv.CanCancel() {
+		return errors.New("invitation cannot be cancelled")
+	}
+	if err := s.invRepo.MarkCancelled(ctx, id); err != nil {
+		return err
+	}
+	_ = s.invRepo.LogActivity(ctx, &repository.InvitationActivity{
+		InvitationID: id,
+		Action:       "cancelled",
+		ActorID:      &actorID,
+		ActorType:    "user",
+	})
+	return nil
+}
+
+func (s *invitationService) ResendInvitation(ctx context.Context, id string, actorID *string) (*repository.Invitation, error) {
+	if id == "" {
+		return nil, errors.New("id required")
+	}
+	inv, err := s.invRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if inv == nil {
+		return nil, errors.New("invitation not found")
+	}
+	if !inv.CanResend() {
+		return nil, errors.New("invitation cannot be resent")
+	}
+	if err := s.invRepo.UpdateReminderSent(ctx, id); err != nil {
+		return nil, err
+	}
+	_ = s.invRepo.LogActivity(ctx, &repository.InvitationActivity{
+		InvitationID: id,
+		Action:       "resent",
+		ActorID:      actorID,
+		ActorType:    "user",
+	})
+
+	if s.emailSvc != nil && inv.Method == repository.InvitationMethodEmail {
+		go func(inv *repository.Invitation) {
+			workspaceName := inv.WorkspaceID
+			if ws, err := s.workspaceRepo.FindByID(context.Background(), inv.WorkspaceID); err == nil && ws != nil {
+				workspaceName = ws.Name
+			}
+			_ = s.emailSvc.SendInvitation(workspaceName, inv.Email, inv.InvitedByName, inv.Token)
+		}(inv)
 	}
 
-	// Get inviter info
-	inviter, _ := s.userRepo.FindByID(ctx, inv.InvitedBy)
+	return s.invRepo.FindByID(ctx, id)
+}
+
+func (s *invitationService) CreateWorkspaceInvitation(ctx context.Context, workspaceID, email, role, inviterID string) (*repository.Invitation, error) {
+	workspace, err := s.workspaceRepo.FindByID(ctx, workspaceID)
+	if err != nil || workspace == nil {
+		return nil, errors.New("workspace not found")
+	}
+
+	inviter, _ := s.userRepo.FindByID(ctx, inviterID)
+	inviterName := "Someone"
 	if inviter != nil {
-		detail.InviterName = inviter.Name
-		detail.InviterEmail = inviter.Email
+		inviterName = inviter.Name
 	}
 
-	return detail
+	inv := &repository.Invitation{
+		WorkspaceID:   workspaceID,
+		Email:         normalizeEmail(email),
+		Type:          repository.InvitationTypeWorkspace,
+		TargetID:      workspaceID,
+		TargetName:    workspace.Name,
+		Role:          repository.WorkspaceRole(role),
+		InvitedByID:   inviterID,
+		InvitedByName: inviterName,
+	}
+
+	if err := s.CreateInvitation(ctx, inv); err != nil {
+		return nil, err
+	}
+
+	return inv, nil
+}
+
+func (s *invitationService) CreateProjectInvitation(ctx context.Context, workspaceID, projectID, email, role, inviterID string) (*repository.Invitation, error) {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil || project == nil {
+		return nil, errors.New("project not found")
+	}
+
+	inviter, _ := s.userRepo.FindByID(ctx, inviterID)
+	inviterName := "Someone"
+	if inviter != nil {
+		inviterName = inviter.Name
+	}
+
+	inv := &repository.Invitation{
+		WorkspaceID:   workspaceID,
+		Email:         normalizeEmail(email),
+		Type:          repository.InvitationTypeProject,
+		TargetID:      projectID,
+		TargetName:    project.Name,
+		Role:          repository.WorkspaceRole(role),
+		InvitedByID:   inviterID,
+		InvitedByName: inviterName,
+	}
+
+	if err := s.CreateInvitation(ctx, inv); err != nil {
+		return nil, err
+	}
+
+	return inv, nil
+}
+
+func (s *invitationService) ListByWorkspace(ctx context.Context, workspaceID string, limit, offset int) ([]*repository.Invitation, int, error) {
+	return s.invRepo.FindByWorkspace(ctx, workspaceID, limit, offset)
+}
+
+func (s *invitationService) ListByProject(ctx context.Context, projectID string, limit, offset int) ([]*repository.Invitation, int, error) {
+	invs, err := s.invRepo.FindPendingByTarget(ctx, repository.InvitationTypeProject, projectID)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := len(invs)
+	if offset >= total {
+		return []*repository.Invitation{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return invs[offset:end], total, nil
+}
+
+func (s *invitationService) CreateLinkSettings(ctx context.Context, settings *repository.InvitationLinkSettings) error {
+	if settings == nil {
+		return errors.New("settings required")
+	}
+	if strings.TrimSpace(settings.WorkspaceID) == "" {
+		return errors.New("workspace_id required")
+	}
+	if settings.DefaultRole == "" {
+		settings.DefaultRole = repository.WorkspaceRoleMember
+	}
+	if settings.DefaultPermission == "" {
+		settings.DefaultPermission = repository.DefaultPermissionForRole(settings.DefaultRole)
+	}
+	if settings.AllowedDomains != nil {
+		var arr []string
+		if err := json.Unmarshal([]byte(*settings.AllowedDomains), &arr); err != nil {
+			return errors.New("allowed_domains must be a JSON array of strings")
+		}
+	}
+	if settings.BlockedDomains != nil {
+		var arr []string
+		if err := json.Unmarshal([]byte(*settings.BlockedDomains), &arr); err != nil {
+			return errors.New("blocked_domains must be a JSON array of strings")
+		}
+	}
+	if settings.MaxUses != nil && *settings.MaxUses <= 0 {
+		return errors.New("max_uses must be > 0")
+	}
+	if settings.ExpiresAt != nil && settings.ExpiresAt.Before(time.Now()) {
+		return errors.New("expires_at must be in the future")
+	}
+	return s.invRepo.CreateLinkSettings(ctx, settings)
+}
+
+func (s *invitationService) UseLink(ctx context.Context, linkToken string, emailAddr string) (*repository.Invitation, *repository.InvitationLinkSettings, error) {
+	if linkToken == "" {
+		return nil, nil, errors.New("link token required")
+	}
+	if emailAddr == "" {
+		return nil, nil, errors.New("email required")
+	}
+	emailAddr = normalizeEmail(emailAddr)
+
+	ls, err := s.invRepo.GetLinkSettingsByToken(ctx, linkToken)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ls == nil {
+		return nil, nil, errors.New("link not found")
+	}
+	if !ls.IsValid() {
+		return nil, nil, errors.New("link is not valid (inactive/expired/max-uses)")
+	}
+	if !ls.CheckDomain(emailAddr) {
+		return nil, nil, errors.New("email domain not allowed by link settings")
+	}
+
+	if err := s.invRepo.IncrementLinkSettingsUseCount(ctx, ls.ID); err != nil {
+		return nil, nil, err
+	}
+
+	inv := &repository.Invitation{
+		WorkspaceID:   ls.WorkspaceID,
+		Email:         emailAddr,
+		Type:          ls.Type,
+		TargetID:      ls.TargetID,
+		Role:          ls.DefaultRole,
+		Permission:    ls.DefaultPermission,
+		Method:        repository.InvitationMethodLink,
+		LinkToken:     &ls.LinkToken,
+		Status:        repository.InvitationStatusPending,
+		ExpiresAt:     ls.ExpiresAt,
+		MaxUses:       ls.MaxUses,
+		InvitedByID:   ls.CreatedByID,
+		InvitedByName: "",
+	}
+	if err := s.invRepo.Create(ctx, inv); err != nil {
+		return nil, nil, err
+	}
+
+	_ = s.invRepo.LogActivity(ctx, &repository.InvitationActivity{
+		InvitationID: inv.ID,
+		Action:       "created_from_link",
+		ActorID:      &ls.CreatedByID,
+		ActorType:    "system",
+		Details:      strPtr("created via invitation link"),
+	})
+
+	if s.emailSvc != nil {
+		go func(inv *repository.Invitation) {
+			workspaceName := inv.WorkspaceID
+			if ws, err := s.workspaceRepo.FindByID(context.Background(), inv.WorkspaceID); err == nil && ws != nil {
+				workspaceName = ws.Name
+			}
+			_ = s.emailSvc.SendInvitation(workspaceName, inv.Email, inv.InvitedByName, inv.Token)
+		}(inv)
+	}
+
+	return inv, ls, nil
+}
+
+func (s *invitationService) GetLinkSettingsByToken(ctx context.Context, token string) (*repository.InvitationLinkSettings, error) {
+	if token == "" {
+		return nil, errors.New("token required")
+	}
+	return s.invRepo.GetLinkSettingsByToken(ctx, token)
+}
+
+func (s *invitationService) GetStatsByWorkspace(ctx context.Context, workspaceID string) (*repository.InvitationStats, error) {
+	if workspaceID == "" {
+		return nil, errors.New("workspace_id required")
+	}
+	return s.invRepo.GetStatsByWorkspace(ctx, workspaceID)
+}
+
+func (s *invitationService) RegenerateToken(ctx context.Context, id string) (string, error) {
+	if id == "" {
+		return "", errors.New("id required")
+	}
+	return s.invRepo.RegenerateToken(ctx, id)
+}
+
+func (s *invitationService) LogActivity(ctx context.Context, a *repository.InvitationActivity) error {
+	return s.invRepo.LogActivity(ctx, a)
+}
+
+func (s *invitationService) GetActivity(ctx context.Context, invitationID string) ([]*repository.InvitationActivity, error) {
+	return s.invRepo.GetActivityByInvitation(ctx, invitationID)
+}
+
+func (s *invitationService) GetPermissions(ctx context.Context, invitationID string) (*repository.InvitationPermissions, error) {
+	return s.invRepo.GetPermissions(ctx, invitationID)
+}
+
+func (s *invitationService) CreatePermissions(ctx context.Context, perms *repository.InvitationPermissions) error {
+	return s.invRepo.CreatePermissions(ctx, perms)
+}
+
+func (s *invitationService) UpdatePermissions(ctx context.Context, perms *repository.InvitationPermissions) error {
+	return s.invRepo.UpdatePermissions(ctx, perms)
+}
+
+func (s *invitationService) DeletePermissions(ctx context.Context, invitationID string) error {
+	return s.invRepo.DeletePermissions(ctx, invitationID)
+}
+
+func (s *invitationService) CreateAccessRequest(ctx context.Context, req *repository.AccessRequest) error {
+	return s.invRepo.CreateAccessRequest(ctx, req)
 }

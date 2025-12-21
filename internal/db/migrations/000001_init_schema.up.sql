@@ -1,7 +1,14 @@
+
+-- ============================================
+-- NOW RECREATE WITH FIXES
+-- ============================================
+
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Users Table
+-- ============================================
+-- USERS TABLE
+-- ============================================
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -16,7 +23,9 @@ CREATE TABLE users (
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_status ON users(status);
 
--- Refresh Tokens Table
+-- ============================================
+-- REFRESH TOKENS TABLE
+-- ============================================
 CREATE TABLE refresh_tokens (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     token VARCHAR(255) UNIQUE NOT NULL,
@@ -27,20 +36,27 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 
--- Workspaces Table
+-- ============================================
+-- WORKSPACES TABLE (Top Level)
+-- ============================================
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     description TEXT,
     icon VARCHAR(50),
     color VARCHAR(50),
+    visibility VARCHAR(50) DEFAULT 'private',
+    allowed_users TEXT[] DEFAULT '{}',
+    allowed_teams TEXT[] DEFAULT '{}',
     owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_workspaces_owner_id ON workspaces(owner_id);
 
--- Workspace Members Table
+-- ============================================
+-- WORKSPACE MEMBERS TABLE
+-- ============================================
 CREATE TABLE workspace_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -52,38 +68,104 @@ CREATE TABLE workspace_members (
 CREATE INDEX idx_workspace_members_workspace_id ON workspace_members(workspace_id);
 CREATE INDEX idx_workspace_members_user_id ON workspace_members(user_id);
 
--- Spaces Table
+-- ============================================
+-- SPACES TABLE (Under Workspace)
+-- ============================================
 CREATE TABLE spaces (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     icon VARCHAR(50),
     color VARCHAR(50),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    visibility VARCHAR(50) DEFAULT 'private',
+    allowed_users TEXT[] DEFAULT '{}',
+    allowed_teams TEXT[] DEFAULT '{}',
+    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_spaces_workspace_id ON spaces(workspace_id);
+CREATE INDEX idx_spaces_owner_id ON spaces(owner_id);
 
--- Projects Table
+-- ============================================
+-- SPACE MEMBERS TABLE
+-- ============================================
+CREATE TABLE space_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(space_id, user_id)
+);
+CREATE INDEX idx_space_members_space_id ON space_members(space_id);
+CREATE INDEX idx_space_members_user_id ON space_members(user_id);
+
+-- ============================================
+-- FOLDERS TABLE (Optional, Under Space)
+-- ============================================
+CREATE TABLE folders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    icon VARCHAR(50),
+    color VARCHAR(50),
+    visibility VARCHAR(50) DEFAULT 'private',
+    allowed_users TEXT[] DEFAULT '{}',
+    allowed_teams TEXT[] DEFAULT '{}',
+    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_folders_space_id ON folders(space_id);
+CREATE INDEX idx_folders_owner_id ON folders(owner_id);
+
+-- ============================================
+-- FOLDER MEMBERS TABLE
+-- ============================================
+CREATE TABLE folder_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    folder_id UUID NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(folder_id, user_id)
+);
+CREATE INDEX idx_folder_members_folder_id ON folder_members(folder_id);
+CREATE INDEX idx_folder_members_user_id ON folder_members(user_id);
+
+-- ============================================
+-- PROJECTS TABLE (Under Space or Folder)
+-- ============================================
 CREATE TABLE projects (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    folder_id UUID REFERENCES folders(id) ON DELETE SET NULL,
     name VARCHAR(255) NOT NULL,
     key VARCHAR(10) NOT NULL,
     description TEXT,
     icon VARCHAR(50),
     color VARCHAR(50),
-    space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
     lead_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    visibility VARCHAR(50) DEFAULT 'private',
+    allowed_users TEXT[] DEFAULT '{}',
+    allowed_teams TEXT[] DEFAULT '{}',
     task_counter INT DEFAULT 0,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(key)
 );
 CREATE INDEX idx_projects_space_id ON projects(space_id);
+CREATE INDEX idx_projects_folder_id ON projects(folder_id);
 CREATE INDEX idx_projects_key ON projects(key);
+CREATE INDEX idx_projects_lead_id ON projects(lead_id);
 
--- Project Members Table
+-- ============================================
+-- PROJECT MEMBERS TABLE
+-- ============================================
 CREATE TABLE project_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -95,7 +177,9 @@ CREATE TABLE project_members (
 CREATE INDEX idx_project_members_project_id ON project_members(project_id);
 CREATE INDEX idx_project_members_user_id ON project_members(user_id);
 
--- Sprints Table
+-- ============================================
+-- SPRINTS TABLE
+-- ============================================
 CREATE TABLE sprints (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
@@ -110,7 +194,9 @@ CREATE TABLE sprints (
 CREATE INDEX idx_sprints_project_id ON sprints(project_id);
 CREATE INDEX idx_sprints_status ON sprints(status);
 
--- Labels Table
+-- ============================================
+-- LABELS TABLE
+-- ============================================
 CREATE TABLE labels (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(100) NOT NULL,
@@ -121,10 +207,11 @@ CREATE TABLE labels (
 );
 CREATE INDEX idx_labels_project_id ON labels(project_id);
 
--- Tasks Table
+-- ============================================
+-- TASKS TABLE (✅ FIXED - Added blocked column)
+-- ============================================
 CREATE TABLE tasks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    key VARCHAR(50) NOT NULL,
     title VARCHAR(500) NOT NULL,
     description TEXT,
     status VARCHAR(50) DEFAULT 'backlog',
@@ -132,23 +219,33 @@ CREATE TABLE tasks (
     type VARCHAR(50) DEFAULT 'task',
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     sprint_id UUID REFERENCES sprints(id) ON DELETE SET NULL,
-    assignee_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    parent_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+    parent_task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    assignee_ids TEXT[] DEFAULT '{}',
+    watcher_ids TEXT[] DEFAULT '{}',
+    label_ids TEXT[] DEFAULT '{}',
     story_points INT,
+    estimated_hours DECIMAL(10,2),
+    actual_hours DECIMAL(10,2),
+    start_date TIMESTAMPTZ,
     due_date TIMESTAMPTZ,
-    order_index INT DEFAULT 0,
-    labels TEXT[] DEFAULT '{}',
+    completed_at TIMESTAMPTZ,
+    blocked BOOLEAN DEFAULT FALSE,  -- ✅ ADDED THIS COLUMN
+    position INT DEFAULT 0,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_tasks_project_id ON tasks(project_id);
 CREATE INDEX idx_tasks_sprint_id ON tasks(sprint_id);
-CREATE INDEX idx_tasks_assignee_id ON tasks(assignee_id);
+CREATE INDEX idx_tasks_parent_task_id ON tasks(parent_task_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_key ON tasks(key);
+CREATE INDEX idx_tasks_priority ON tasks(priority);
+CREATE INDEX idx_tasks_created_by ON tasks(created_by);
+CREATE INDEX idx_tasks_blocked ON tasks(blocked);  -- ✅ INDEX FOR blocked
 
--- Comments Table
+-- ============================================
+-- COMMENTS TABLE
+-- ============================================
 CREATE TABLE comments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     content TEXT NOT NULL,
@@ -158,8 +255,24 @@ CREATE TABLE comments (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_comments_task_id ON comments(task_id);
+CREATE INDEX idx_comments_user_id ON comments(user_id);
 
--- Notifications Table
+-- ============================================
+-- TASK WATCHERS TABLE
+-- ============================================
+CREATE TABLE task_watchers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(task_id, user_id)
+);
+CREATE INDEX idx_task_watchers_task_id ON task_watchers(task_id);
+CREATE INDEX idx_task_watchers_user_id ON task_watchers(user_id);
+
+-- ============================================
+-- NOTIFICATIONS TABLE
+-- ============================================
 CREATE TABLE notifications (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -174,7 +287,9 @@ CREATE INDEX idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX idx_notifications_read ON notifications(read);
 CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 
--- Teams Table
+-- ============================================
+-- TEAMS TABLE
+-- ============================================
 CREATE TABLE teams (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
@@ -186,8 +301,11 @@ CREATE TABLE teams (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_teams_workspace_id ON teams(workspace_id);
+CREATE INDEX idx_teams_created_by ON teams(created_by);
 
--- Team Members Table
+-- ============================================
+-- TEAM MEMBERS TABLE
+-- ============================================
 CREATE TABLE team_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
@@ -199,7 +317,9 @@ CREATE TABLE team_members (
 CREATE INDEX idx_team_members_team_id ON team_members(team_id);
 CREATE INDEX idx_team_members_user_id ON team_members(user_id);
 
--- Invitations Table
+-- ============================================
+-- INVITATIONS TABLE
+-- ============================================
 CREATE TABLE invitations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) NOT NULL,
@@ -215,8 +335,11 @@ CREATE TABLE invitations (
 );
 CREATE INDEX idx_invitations_email ON invitations(email);
 CREATE INDEX idx_invitations_token ON invitations(token);
+CREATE INDEX idx_invitations_status ON invitations(status);
 
--- Activities Table
+-- ============================================
+-- ACTIVITIES TABLE
+-- ============================================
 CREATE TABLE activities (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     type VARCHAR(100) NOT NULL,
@@ -231,86 +354,11 @@ CREATE TABLE activities (
 CREATE INDEX idx_activities_user_id ON activities(user_id);
 CREATE INDEX idx_activities_task_id ON activities(task_id);
 CREATE INDEX idx_activities_project_id ON activities(project_id);
+CREATE INDEX idx_activities_workspace_id ON activities(workspace_id);
 
--- Task Watchers Table
-CREATE TABLE task_watchers (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(task_id, user_id)
-);
-CREATE INDEX idx_task_watchers_task_id ON task_watchers(task_id);
-CREATE INDEX idx_task_watchers_user_id ON task_watchers(user_id);
-
--- Chat Channels Table
-CREATE TABLE chat_channels (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(255) NOT NULL,
-    type VARCHAR(50) NOT NULL,
-    target_id VARCHAR(255) NOT NULL,
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    is_private BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    last_message TIMESTAMPTZ,
-    UNIQUE(workspace_id, type, target_id)
-);
-CREATE INDEX idx_chat_channels_workspace ON chat_channels(workspace_id);
-CREATE INDEX idx_chat_channels_type_target ON chat_channels(type, target_id);
-
--- Chat Channel Members Table
-CREATE TABLE chat_channel_members (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    channel_id UUID NOT NULL REFERENCES chat_channels(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    joined_at TIMESTAMPTZ DEFAULT NOW(),
-    last_read TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(channel_id, user_id)
-);
-CREATE INDEX idx_chat_channel_members_channel ON chat_channel_members(channel_id);
-CREATE INDEX idx_chat_channel_members_user ON chat_channel_members(user_id);
-
--- Chat Messages Table
-CREATE TABLE chat_messages (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    channel_id UUID NOT NULL REFERENCES chat_channels(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    message_type VARCHAR(50) DEFAULT 'text',
-    metadata JSONB,
-    parent_id UUID REFERENCES chat_messages(id) ON DELETE CASCADE,
-    is_edited BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX idx_chat_messages_channel_created ON chat_messages(channel_id, created_at DESC);
-CREATE INDEX idx_chat_messages_parent ON chat_messages(parent_id);
-
--- Chat Reactions Table
-CREATE TABLE chat_reactions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    message_id UUID NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    emoji VARCHAR(50) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(message_id, user_id, emoji)
-);
-CREATE INDEX idx_chat_reactions_message ON chat_reactions(message_id);
-
--- Notification Preferences Table
-CREATE TABLE notification_preferences (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    notification_type VARCHAR(100) NOT NULL,
-    channel VARCHAR(50) NOT NULL,
-    enabled BOOLEAN DEFAULT true,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(user_id, notification_type, channel)
-);
-CREATE INDEX idx_notification_preferences_user ON notification_preferences(user_id);
+-- ============================================
+-- TRIGGERS
+-- ============================================
 
 -- Updated At Trigger Function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -322,13 +370,42 @@ END;
 $$ language 'plpgsql';
 
 -- Apply triggers
-CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_workspaces_updated_at BEFORE UPDATE ON workspaces FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_spaces_updated_at BEFORE UPDATE ON spaces FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_projects_updated_at BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_sprints_updated_at BEFORE UPDATE ON sprints FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_tasks_updated_at BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_comments_updated_at BEFORE UPDATE ON comments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_teams_updated_at BEFORE UPDATE ON teams FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_chat_channels_updated_at BEFORE UPDATE ON chat_channels FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_chat_messages_updated_at BEFORE UPDATE ON chat_messages FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_users_updated_at 
+    BEFORE UPDATE ON users 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_workspaces_updated_at 
+    BEFORE UPDATE ON workspaces 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_spaces_updated_at 
+    BEFORE UPDATE ON spaces 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_folders_updated_at 
+    BEFORE UPDATE ON folders 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_projects_updated_at 
+    BEFORE UPDATE ON projects 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_sprints_updated_at 
+    BEFORE UPDATE ON sprints 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tasks_updated_at 
+    BEFORE UPDATE ON tasks 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_comments_updated_at 
+    BEFORE UPDATE ON comments 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_teams_updated_at 
+    BEFORE UPDATE ON teams 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- DONE! Database reset with fixes applied
+-- ============================================

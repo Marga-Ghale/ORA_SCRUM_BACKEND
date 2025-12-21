@@ -1,0 +1,108 @@
+func SetupTaskRoutes(router *gin.RouterGroup, handler *handlers.TaskHandler, authMiddleware gin.HandlerFunc) {
+	tasks := router.Group("/tasks")
+	tasks.Use(authMiddleware)
+	{
+		// CRUD
+		tasks.POST("", handler.Create)
+		tasks.GET("/:id", handler.Get)
+		tasks.PUT("/:id", handler.Update)
+		tasks.DELETE("/:id", handler.Delete)
+		
+		// Comments
+		tasks.POST("/:id/comments", handler.AddComment)
+		tasks.GET("/:id/comments", handler.ListComments)
+		
+		// Attachments
+		tasks.POST("/:id/attachments", handler.AddAttachment)
+		tasks.GET("/:id/attachments", handler.ListAttachments)
+		
+		// Time tracking
+		tasks.POST("/:id/timer/start", handler.StartTimer)
+		tasks.POST("/timer/stop", handler.StopTimer)
+		tasks.POST("/:id/time", handler.LogTime)
+		tasks.GET("/:id/time", handler.GetTimeEntries)
+		
+		// Dependencies
+		tasks.POST("/:id/dependencies", handler.AddDependency)
+		tasks.GET("/:id/dependencies", handler.ListDependencies)
+		
+		// Checklists
+		tasks.POST("/:id/checklists", handler.CreateChecklist)
+		tasks.GET("/:id/checklists", handler.ListChecklists)
+		tasks.POST("/checklists/:checklistId/items", handler.AddChecklistItem)
+		tasks.PUT("/checklist-items/:itemId/toggle", handler.ToggleChecklistItem)
+		
+		// Activity
+		tasks.GET("/:id/activity", handler.GetActivity)
+		
+		// Operations
+		tasks.PUT("/:id/status", handler.UpdateStatus)
+		tasks.POST("/:id/assign", handler.AssignTask)
+		tasks.POST("/:id/complete", handler.MarkComplete)
+		
+		// Subtasks
+		tasks.GET("/:id/subtasks", handler.ListSubtasks)
+	}
+	
+	// Listing & filtering
+	router.POST("/tasks/filter", authMiddleware, handler.FilterTasks)
+	router.GET("/projects/:projectId/tasks", authMiddleware, handler.ListByProject)
+	router.GET("/projects/:projectId/backlog", authMiddleware, handler.GetBacklog)
+	router.GET("/sprints/:sprintId/board", authMiddleware, handler.GetSprintBoard)
+	router.GET("/sprints/:sprintId/burndown", authMiddleware, handler.GetSprintBurndown)
+	router.GET("/me/tasks", authMiddleware, handler.ListMyTasks)
+	
+	// Bulk operations
+	router.POST("/tasks/bulk/status", authMiddleware, handler.BulkUpdateStatus)
+	router.POST("/tasks/bulk/sprint", authMiddleware, handler.BulkMoveToSprint)
+}
+```
+
+---
+
+## Summary: Complete Scrum Task System
+```
+✅ BASIC FEATURES
+- Task CRUD with full validation
+- Multiple assignees
+- Watchers
+- Labels
+- Priority & Status
+- Subtasks (hierarchy)
+
+✅ COLLABORATION
+- Comments with @mentions
+- Attachments
+- Activity log (audit trail)
+- Real-time updates (via WebSocket)
+
+✅ TIME MANAGEMENT
+- Start/stop timer
+- Manual time logging
+- Time tracking per user
+- Actual vs estimated hours
+
+✅ TASK ORGANIZATION
+- Checklists (simple subtasks)
+- Dependencies (blocks/depends on)
+- Custom fields (JSONB)
+- Advanced filtering
+
+✅ SCRUM FEATURES
+- Sprint planning (backlog)
+- Sprint board (Kanban by status)
+- Story points
+- Velocity tracking
+- Burndown charts
+- Sprint retrospectives
+
+✅ ACCESS CONTROL
+- Permission checks via PermissionService
+- Cascading access via MemberService
+- Assignees must have project access
+- Activity logging for audit
+
+✅ INVITATIONS INTEGRATION
+- Users invited to project can be assigned
+- MemberService verifies access
+- InvitationService → MemberService → TaskService flow

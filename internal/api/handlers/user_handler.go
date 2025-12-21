@@ -74,3 +74,5 @@ func (h *UserHandler) SearchUsers(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
+
+

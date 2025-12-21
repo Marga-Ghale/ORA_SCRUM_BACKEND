@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 
-	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 )
 
@@ -12,58 +11,104 @@ import (
 // ============================================
 
 type ProjectService interface {
-	Create(ctx context.Context, spaceID, creatorID, name, key string, description, icon, color, leadID *string) (*repository.Project, error)
+	// Project CRUD
+	Create(ctx context.Context, spaceID string, folderID *string, creatorID, name, key string, description, icon, color, leadID *string) (*repository.Project, error)
 	GetByID(ctx context.Context, id string) (*repository.Project, error)
+	GetByKey(ctx context.Context, spaceID, key string) (*repository.Project, error)
 	ListBySpace(ctx context.Context, spaceID string) ([]*repository.Project, error)
-	Update(ctx context.Context, id string, name, key, description, icon, color, leadID *string) (*repository.Project, error)
+	ListByFolder(ctx context.Context, folderID string) ([]*repository.Project, error)
+	Update(ctx context.Context, id string, name, key, description, icon, color, leadID *string, folderID *string) (*repository.Project, error)
 	Delete(ctx context.Context, id string) error
-	AddMember(ctx context.Context, projectID, userID, role, inviterID string) error
-	ListMembers(ctx context.Context, projectID string) ([]*repository.ProjectMember, error)
-	GetMemberUserIDs(ctx context.Context, projectID string) ([]string, error)
-	RemoveMember(ctx context.Context, projectID, userID string) error
-	IsMember(ctx context.Context, projectID, userID string) (bool, error)
+	
+	// Project-specific operations (not member management)
+	MoveToFolder(ctx context.Context, projectID string, folderID *string) error
+	SetLead(ctx context.Context, projectID, leadID string) error
+	UpdateVisibility(ctx context.Context, projectID, visibility string, allowedUsers, allowedTeams []string) error
 }
 
 type projectService struct {
-	projectRepo repository.ProjectRepository
-	userRepo    repository.UserRepository
-	notifSvc    *notification.Service
+	projectRepo   repository.ProjectRepository
+	spaceRepo     repository.SpaceRepository
+	folderRepo    repository.FolderRepository
+	memberService MemberService // ✅ Use MemberService for member operations
 }
 
-func NewProjectService(projectRepo repository.ProjectRepository, userRepo repository.UserRepository, notifSvc *notification.Service) ProjectService {
+func NewProjectService(
+	projectRepo repository.ProjectRepository,
+	spaceRepo repository.SpaceRepository,
+	folderRepo repository.FolderRepository,
+	memberService MemberService,
+) ProjectService {
 	return &projectService{
-		projectRepo: projectRepo,
-		userRepo:    userRepo,
-		notifSvc:    notifSvc,
+		projectRepo:   projectRepo,
+		spaceRepo:     spaceRepo,
+		folderRepo:    folderRepo,
+		memberService: memberService,
 	}
 }
 
-func (s *projectService) Create(ctx context.Context, spaceID, creatorID, name, key string, description, icon, color, leadID *string) (*repository.Project, error) {
-	existing, _ := s.projectRepo.FindByKey(ctx, key)
-	if existing != nil {
-		return nil, ErrConflict
+func (s *projectService) Create(ctx context.Context, spaceID string, folderID *string, creatorID, name, key string, description, icon, color, leadID *string) (*repository.Project, error) {
+	// Verify space exists
+	space, err := s.spaceRepo.FindByID(ctx, spaceID)
+	if err != nil || space == nil {
+		return nil, ErrNotFound
 	}
 
+	// Verify folder exists if provided
+	if folderID != nil && *folderID != "" {  // ✅ Added empty check
+		folder, err := s.folderRepo.FindByID(ctx, *folderID)
+		if err != nil {
+			return nil, err
+		}
+		if folder == nil {
+			return nil, ErrNotFound
+		}
+		// Verify folder belongs to the same space
+		if folder.SpaceID != spaceID {
+			return nil, ErrInvalidInput
+		}
+	}
+
+	// Check if key already exists in this space
+	projects, _ := s.projectRepo.FindBySpaceID(ctx, spaceID)
+	for _, p := range projects {
+		if p.Key == key {
+			return nil, ErrConflict
+		}
+	}
+
+	// ✅ NEW: Set default lead to creator if not provided
+	finalLeadID := leadID
+	if finalLeadID == nil {
+		finalLeadID = &creatorID
+	}
+
+	// Set default visibility
+	defaultVisibility := "private"
+	
 	project := &repository.Project{
 		SpaceID:     spaceID,
+		FolderID:    folderID,
 		Name:        name,
 		Key:         key,
 		Description: description,
 		Icon:        icon,
 		Color:       color,
-		LeadID:      leadID,
+		LeadID:      finalLeadID,  // ✅ Use finalLeadID instead of leadID
+		Visibility:  &defaultVisibility,
+		CreatedBy:   &creatorID,
 	}
 
 	if err := s.projectRepo.Create(ctx, project); err != nil {
 		return nil, err
 	}
 
-	member := &repository.ProjectMember{
-		ProjectID: project.ID,
-		UserID:    creatorID,
-		Role:      "LEAD",
+	// ✅ Use MemberService to add creator as project lead
+	if err := s.memberService.AddMember(ctx, EntityTypeProject, project.ID, creatorID, "lead", creatorID); err != nil {
+		// If member add fails, rollback project creation
+		s.projectRepo.Delete(ctx, project.ID)
+		return nil, err
 	}
-	s.projectRepo.AddMember(ctx, member)
 
 	return project, nil
 }
@@ -79,29 +124,66 @@ func (s *projectService) GetByID(ctx context.Context, id string) (*repository.Pr
 	return project, nil
 }
 
+func (s *projectService) GetByKey(ctx context.Context, spaceID, key string) (*repository.Project, error) {
+	projects, err := s.projectRepo.FindBySpaceID(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	
+	for _, p := range projects {
+		if p.Key == key {
+			return p, nil
+		}
+	}
+	
+	return nil, ErrNotFound
+}
+
 func (s *projectService) ListBySpace(ctx context.Context, spaceID string) ([]*repository.Project, error) {
 	return s.projectRepo.FindBySpaceID(ctx, spaceID)
 }
 
-func (s *projectService) Update(ctx context.Context, id string, name, key, description, icon, color, leadID *string) (*repository.Project, error) {
+func (s *projectService) ListByFolder(ctx context.Context, folderID string) ([]*repository.Project, error) {
+	return s.projectRepo.FindByFolderID(ctx, folderID)
+}
+
+func (s *projectService) Update(ctx context.Context, id string, name, key, description, icon, color, leadID *string, folderID *string) (*repository.Project, error) {
 	project, err := s.projectRepo.FindByID(ctx, id)
 	if err != nil || project == nil {
 		return nil, ErrNotFound
 	}
 
-	// Required fields - only update if provided
+	// Update name if provided
 	if name != nil {
 		project.Name = *name
 	}
-	if key != nil {
-		existing, _ := s.projectRepo.FindByKey(ctx, *key)
-		if existing != nil && existing.ID != id {
-			return nil, ErrConflict
+
+	// Update key if provided (check uniqueness in space)
+	if key != nil && *key != project.Key {
+		projects, _ := s.projectRepo.FindBySpaceID(ctx, project.SpaceID)
+		for _, p := range projects {
+			if p.Key == *key && p.ID != id {
+				return nil, ErrConflict
+			}
 		}
 		project.Key = *key
 	}
 
-	// Nullable fields - always update to allow clearing (setting to NULL)
+	// Update folder if provided (verify it belongs to same space)
+	if folderID != nil {
+		if *folderID != "" {
+			folder, err := s.folderRepo.FindByID(ctx, *folderID)
+			if err != nil || folder == nil {
+				return nil, ErrNotFound
+			}
+			if folder.SpaceID != project.SpaceID {
+				return nil, ErrInvalidInput
+			}
+		}
+		project.FolderID = folderID
+	}
+
+	// Nullable fields - always update to allow clearing
 	project.Description = description
 	project.Icon = icon
 	project.Color = color
@@ -110,66 +192,60 @@ func (s *projectService) Update(ctx context.Context, id string, name, key, descr
 	if err := s.projectRepo.Update(ctx, project); err != nil {
 		return nil, err
 	}
+	
 	return project, nil
 }
+
 func (s *projectService) Delete(ctx context.Context, id string) error {
 	return s.projectRepo.Delete(ctx, id)
 }
 
-func (s *projectService) AddMember(ctx context.Context, projectID, userID, role, inviterID string) error {
-	existing, _ := s.projectRepo.FindMember(ctx, projectID, userID)
-	if existing != nil {
-		return ErrConflict
+func (s *projectService) MoveToFolder(ctx context.Context, projectID string, folderID *string) error {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil || project == nil {
+		return ErrNotFound
 	}
 
-	member := &repository.ProjectMember{
-		ProjectID: projectID,
-		UserID:    userID,
-		Role:      role,
-	}
-
-	if err := s.projectRepo.AddMember(ctx, member); err != nil {
-		return err
-	}
-
-	project, _ := s.projectRepo.FindByID(ctx, projectID)
-	if project != nil && s.notifSvc != nil {
-		inviterName := ""
-		if inviter, _ := s.userRepo.FindByID(ctx, inviterID); inviter != nil {
-			inviterName = inviter.Name
+	// If moving to a folder, verify it exists and belongs to same space
+	if folderID != nil && *folderID != "" {
+		folder, err := s.folderRepo.FindByID(ctx, *folderID)
+		if err != nil || folder == nil {
+			return ErrNotFound
 		}
-		s.notifSvc.SendProjectInvitation(ctx, userID, project.Name, projectID, inviterName)
+		if folder.SpaceID != project.SpaceID {
+			return ErrInvalidInput
+		}
 	}
 
-	return nil
+	project.FolderID = folderID
+	return s.projectRepo.Update(ctx, project)
 }
 
-func (s *projectService) ListMembers(ctx context.Context, projectID string) ([]*repository.ProjectMember, error) {
-	members, err := s.projectRepo.FindMembers(ctx, projectID)
-	if err != nil {
-		return nil, err
+func (s *projectService) SetLead(ctx context.Context, projectID, leadID string) error {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil || project == nil {
+		return ErrNotFound
 	}
 
-	for _, m := range members {
-		user, _ := s.userRepo.FindByID(ctx, m.UserID)
-		m.User = user
+	// Verify user is a member of the project
+	hasAccess, _, err := s.memberService.HasEffectiveAccess(ctx, EntityTypeProject, projectID, leadID)
+	if err != nil || !hasAccess {
+		return ErrUnauthorized
 	}
 
-	return members, nil
+	project.LeadID = &leadID
+	return s.projectRepo.Update(ctx, project)
 }
 
-func (s *projectService) GetMemberUserIDs(ctx context.Context, projectID string) ([]string, error) {
-	return s.projectRepo.FindMemberUserIDs(ctx, projectID)
-}
-
-func (s *projectService) RemoveMember(ctx context.Context, projectID, userID string) error {
-	return s.projectRepo.RemoveMember(ctx, projectID, userID)
-}
-
-func (s *projectService) IsMember(ctx context.Context, projectID, userID string) (bool, error) {
-	member, err := s.projectRepo.FindMember(ctx, projectID, userID)
-	if err != nil {
-		return false, err
+func (s *projectService) UpdateVisibility(ctx context.Context, projectID, visibility string, allowedUsers, allowedTeams []string) error {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil || project == nil {
+		return ErrNotFound
 	}
-	return member != nil, nil
+
+	project.Visibility = &visibility
+	project.AllowedUsers = allowedUsers
+	project.AllowedTeams = allowedTeams
+
+	return s.projectRepo.Update(ctx, project)
 }

@@ -49,8 +49,56 @@ type Email struct {
 	HTMLBody string
 }
 
+// InvitationEmailData holds data for invitation emails
+type InvitationEmailData struct {
+	WorkspaceName string
+	InvitedBy     string
+	InviteURL     string
+}
+
+
+
 // loadTemplates loads all email templates
 func (s *Service) loadTemplates() {
+
+
+	// Generic Invitation Template (used by service layer)
+s.templates["invitation"] = template.Must(template.New("invitation").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #10b981; color: white; padding: 24px; border-radius: 8px 8px 0 0; }
+        .content { background: #f9fafb; padding: 24px; border-radius: 0 0 8px 8px; }
+        .btn { display: inline-block; background: #10b981; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; margin-top: 16px; }
+        .footer { margin-top: 24px; font-size: 12px; color: #6b7280; text-align: center; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h2>You're Invited to ORA Scrum</h2>
+    </div>
+    <div class="content">
+        <p>Hello,</p>
+        <p><strong>{{.InvitedBy}}</strong> invited you to join <strong>{{.WorkspaceName}}</strong>.</p>
+
+        <a href="{{.InviteURL}}" class="btn">Accept Invitation</a>
+
+        <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+            This invitation may expire. If you were not expecting this email, you can ignore it.
+        </p>
+    </div>
+    <div class="footer">
+        ORA Scrum • Team Collaboration Platform
+    </div>
+</div>
+</body>
+</html>
+`))
+
 	// Task Assigned Template
 	s.templates["task_assigned"] = template.Must(template.New("task_assigned").Parse(`
 <!DOCTYPE html>
@@ -387,6 +435,39 @@ func (s *Service) loadTemplates() {
 `))
 }
 
+
+// SendInvitation sends a generic invitation email (workspace/project/link)
+func (s *Service) SendInvitation(
+	workspaceName string,
+	to string,
+	invitedBy string,
+	token string,
+) error {
+
+	if invitedBy == "" {
+		invitedBy = "Someone"
+	}
+
+	inviteURL := fmt.Sprintf(
+		"https://app.orascrum.com/invite?token=%s",
+		token,
+	)
+
+	data := InvitationEmailData{
+		WorkspaceName: workspaceName,
+		InvitedBy:     invitedBy,
+		InviteURL:     inviteURL,
+	}
+
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Invitation to join %s", workspaceName),
+		"invitation",
+		data,
+	)
+}
+
+
 // Send sends an email
 func (s *Service) Send(email *Email) error {
 	if s.config.Host == "" {
@@ -544,6 +625,16 @@ type ProjectInvitationData struct {
 
 // SendProjectInvitation sends a project invitation email
 func (s *Service) SendProjectInvitation(to string, data ProjectInvitationData) error {
+	return s.SendWithTemplate(
+		[]string{to},
+		fmt.Sprintf("[ORA] Invitation to join project %s", data.ProjectName),
+		"project_invitation",
+		data,
+	)
+}
+
+
+func (s *Service) SendFolderInvitation(to string, data ProjectInvitationData) error {
 	return s.SendWithTemplate(
 		[]string{to},
 		fmt.Sprintf("[ORA] Invitation to join project %s", data.ProjectName),

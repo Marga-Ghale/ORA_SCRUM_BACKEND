@@ -8,26 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// handleServiceError maps service errors to HTTP responses
-func handleServiceError(c *gin.Context, err error) {
-	switch err {
-	case service.ErrNotFound:
-		c.JSON(http.StatusNotFound, gin.H{"error": "Resource not found"})
-	case service.ErrUnauthorized:
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-	case service.ErrForbidden:
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
-	case service.ErrConflict:
-		c.JSON(http.StatusConflict, gin.H{"error": "Resource already exists"})
-	case service.ErrUserNotFound:
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
-	case service.ErrInvalidToken:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired token"})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-	}
-}
-
 // TeamHandler handles team-related HTTP requests
 type TeamHandler struct {
 	teamSvc service.TeamService

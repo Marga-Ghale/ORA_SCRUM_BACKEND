@@ -12,14 +12,14 @@ import (
 )
 
 func RunMigrations(databaseURL string, migrationsPath string) error {
-	// Open a standard database/sql connection
-	db, err := sql.Open("postgres", databaseURL)
+	// Open DB
+	dbConn, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-	defer db.Close()
+	defer dbConn.Close()
 
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	driver, err := postgres.WithInstance(dbConn, &postgres.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to create postgres driver: %w", err)
 	}
@@ -33,6 +33,20 @@ func RunMigrations(databaseURL string, migrationsPath string) error {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
 
+	// Check current version
+	version, dirty, err := m.Version()
+	if err != nil && err != migrate.ErrNilVersion {
+		return fmt.Errorf("failed to get migration version: %w", err)
+	}
+
+	if dirty {
+		log.Printf("⚠️  Database is in a dirty state at version %d, forcing clean state", version)
+		if err := m.Force(int(version)); err != nil {
+			return fmt.Errorf("failed to force migration: %w", err)
+		}
+	}
+
+	// Run migrations
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("migration failed: %w", err)
 	}
@@ -40,3 +54,4 @@ func RunMigrations(databaseURL string, migrationsPath string) error {
 	log.Println("✅ Database migrations completed")
 	return nil
 }
+
