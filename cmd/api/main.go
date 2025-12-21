@@ -140,10 +140,13 @@ func main() {
 	// ============================================
 	// Seed Data (for development)
 	// ============================================
-	if cfg.Environment != "development" {
-		log.Println("🌱 Seeding development data...")
+	// if cfg.Environment != "development" {
+	// 	log.Println("🌱 Seeding development data...")
+	// 	seed.SeedData(repos)
+	// }
+
 		seed.SeedData(repos)
-	}
+	
 
 	// ============================================
 	// Initialize Notification Service
