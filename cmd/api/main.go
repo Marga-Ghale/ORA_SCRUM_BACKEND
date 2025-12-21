@@ -50,7 +50,11 @@ func main() {
 	// ============================================
 	// Set Gin mode
 	// ============================================
+
 	if cfg.Environment == "development" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -136,6 +140,8 @@ func main() {
 	// WebSocket handler with JWT secret for self-authentication
 	wsHandler := socket.NewHandler(hub, cfg.JWTSecret)
 	log.Println("🔌 WebSocket hub initialized")
+
+	seed.SeedData(repos)
 
 	// ============================================
 	// Seed Data (for development)
