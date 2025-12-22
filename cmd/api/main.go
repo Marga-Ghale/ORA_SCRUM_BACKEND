@@ -140,6 +140,8 @@ func main() {
 	wsHandler := socket.NewHandler(hub, cfg.JWTSecret)
 	log.Println("🔌 WebSocket hub initialized")
 
+	seed.SeedData(repos)
+
 	// ============================================
 	// Seed Data (for development ONLY)
 	// ============================================

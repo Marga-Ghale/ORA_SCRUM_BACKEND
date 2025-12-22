@@ -14,11 +14,11 @@ func SeedData(repos *repository.Repositories) {
 	ctx := context.Background()
 
 	// Check if data already exists
-	users, _ := repos.UserRepo.FindAll(ctx)
-	if len(users) > 0 {
-		log.Println("[Seed] Data already exists, skipping...")
-		return
-	}
+	// users, _ := repos.UserRepo.FindAll(ctx)
+	// if len(users) > 0 {
+	// 	log.Println("[Seed] Data already exists, skipping...")
+	// 	return
+	// }
 
 	log.Println("[Seed] 🌱 Creating initial data with real scenarios...")
 
