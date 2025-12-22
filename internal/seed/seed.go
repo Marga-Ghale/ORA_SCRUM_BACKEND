@@ -14,11 +14,11 @@ func SeedData(repos *repository.Repositories) {
 	ctx := context.Background()
 
 	// Check if data already exists
-	// users, _ := repos.UserRepo.FindAll(ctx)
-	// if len(users) > 0 {
-	// 	log.Println("[Seed] Data already exists, skipping...")
-	// 	return
-	// }
+	users, _ := repos.UserRepo.FindAll(ctx)
+	if len(users) > 0 {
+		log.Println("[Seed] Data already exists, skipping...")
+		return
+	}
 
 	log.Println("[Seed] 🌱 Creating initial data with real scenarios...")
 
@@ -193,9 +193,18 @@ func SeedData(repos *repository.Repositories) {
 		SpaceID:     engineering.ID,
 		FolderID:    &backendFolder.ID,
 		LeadID:      &bipin.ID,
+		CreatedBy:   &marga.ID, // ✅ CRITICAL: Must set CreatedBy
 		Visibility:  &defaultVisibility,
 	}
-	repos.ProjectRepo.Create(ctx, oraScrum)
+	if err := repos.ProjectRepo.Create(ctx, oraScrum); err != nil {
+		log.Printf("❌ Failed to create ORA Scrum project: %v", err)
+		log.Printf("   SpaceID: %s", engineering.ID)
+		log.Printf("   FolderID: %s", *oraScrum.FolderID)
+		log.Printf("   LeadID: %s", *oraScrum.LeadID)
+		log.Printf("   CreatedBy: %s", *oraScrum.CreatedBy)
+	} else {
+		log.Printf("✅ Created project: ORA Scrum Backend (ID: %s)", oraScrum.ID)
+	}
 
 	// Add project members
 	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
@@ -213,9 +222,14 @@ func SeedData(repos *repository.Repositories) {
 		SpaceID:     design.ID,
 		FolderID:    nil, // NO folder - direct in space
 		LeadID:      &kritim.ID,
+		CreatedBy:   &marga.ID, // ✅ CRITICAL: Must set CreatedBy
 		Visibility:  &defaultVisibility,
 	}
-	repos.ProjectRepo.Create(ctx, designSystem)
+	if err := repos.ProjectRepo.Create(ctx, designSystem); err != nil {
+		log.Printf("❌ Failed to create Design System project: %v", err)
+	} else {
+		log.Printf("✅ Created project: Design System (ID: %s)", designSystem.ID)
+	}
 
 	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
 		ProjectID: designSystem.ID,
@@ -232,9 +246,14 @@ func SeedData(repos *repository.Repositories) {
 		SpaceID:     engineering.ID,
 		FolderID:    nil, // Direct in space
 		LeadID:      &marga.ID,
+		CreatedBy:   &marga.ID, // ✅ CRITICAL: Must set CreatedBy
 		Visibility:  &defaultVisibility,
 	}
-	repos.ProjectRepo.Create(ctx, mobileApp)
+	if err := repos.ProjectRepo.Create(ctx, mobileApp); err != nil {
+		log.Printf("❌ Failed to create Mobile App project: %v", err)
+	} else {
+		log.Printf("✅ Created project: Mobile App (ID: %s)", mobileApp.ID)
+	}
 
 	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
 		ProjectID: mobileApp.ID,
@@ -248,6 +267,15 @@ func SeedData(repos *repository.Repositories) {
 		UserID:    prerak.ID,
 		Role:      "member", // Contractor = member only
 	})
+
+	// Check if projects were created successfully
+	if oraScrum.ID == "" || designSystem.ID == "" || mobileApp.ID == "" {
+		log.Println("⚠️  WARNING: Some projects failed to create. Check errors above.")
+		log.Printf("   ORA Scrum ID: %s", oraScrum.ID)
+		log.Printf("   Design System ID: %s", designSystem.ID)
+		log.Printf("   Mobile App ID: %s", mobileApp.ID)
+		return // Exit early to avoid creating tasks for non-existent projects
+	}
 
 	log.Printf("✅ Created 3 projects:")
 	log.Printf("   ├─ ORA Scrum Backend (Engineering/Backend)")
