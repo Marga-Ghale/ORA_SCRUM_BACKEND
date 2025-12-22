@@ -58,7 +58,18 @@ func (r *taskCommentRepository) Create(ctx context.Context, comment *TaskComment
 
 // FindByID retrieves a comment by ID
 func (r *taskCommentRepository) FindByID(ctx context.Context, id string) (*TaskComment, error) {
-	query := `SELECT * FROM comments WHERE id = $1`
+	query := `
+		SELECT
+			id,
+			task_id,
+			user_id,
+			content,
+			mentioned_users,
+			created_at,
+			updated_at
+		FROM comments
+		WHERE id = $1
+	`
 
 	comment := &TaskComment{}
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
@@ -83,7 +94,19 @@ func (r *taskCommentRepository) FindByID(ctx context.Context, id string) (*TaskC
 
 // FindByTaskID retrieves all comments for a task
 func (r *taskCommentRepository) FindByTaskID(ctx context.Context, taskID string) ([]*TaskComment, error) {
-	query := `SELECT * FROM comments WHERE task_id = $1 ORDER BY created_at ASC`
+	query := `
+		SELECT
+			id,
+			task_id,
+			user_id,
+			content,
+			mentioned_users,
+			created_at,
+			updated_at
+		FROM comments
+		WHERE task_id = $1
+		ORDER BY created_at ASC
+	`
 
 	rows, err := r.db.QueryContext(ctx, query, taskID)
 	if err != nil {

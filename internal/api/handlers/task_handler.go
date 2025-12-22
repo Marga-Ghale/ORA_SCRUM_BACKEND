@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -21,6 +22,19 @@ func NewTaskHandler(taskService service.TaskService) *TaskHandler {
 		taskService: taskService,
 	}
 }
+
+func logAPIError(c *gin.Context, action string, err error, fields map[string]interface{}) {
+	log.Printf(
+		"[API_ERROR] action=%s method=%s path=%s userID=%v fields=%v err=%v",
+		action,
+		c.Request.Method,
+		c.FullPath(),
+		c.GetString("userID"),
+		fields,
+		err,
+	)
+}
+
 
 // ============================================
 // TASK CRUD
@@ -59,12 +73,19 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	task, err := h.taskService.Create(c.Request.Context(), createReq)
-	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.Create", err, map[string]interface{}{
+		"projectID": projectID,
+		"title":     req.Title,
+	})
+	handleServiceError(c, err)
+	return
+}
 
 	c.JSON(http.StatusCreated, toTaskResponse(task))
+
+
+	
 }
 
 func (h *TaskHandler) Get(c *gin.Context) {
@@ -75,10 +96,14 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 	taskID := c.Param("id")
 	task, err := h.taskService.GetByID(c.Request.Context(), taskID, userID)
-	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.Get", err, map[string]interface{}{
+		"taskID": taskID,
+	})
+	handleServiceError(c, err)
+	return
+}
+
 
 	c.JSON(http.StatusOK, toTaskResponse(task))
 }
@@ -112,10 +137,14 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	}
 
 	task, err := h.taskService.Update(c.Request.Context(), taskID, userID, updateReq)
-	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.Update", err, map[string]interface{}{
+		"taskID": taskID,
+	})
+	handleServiceError(c, err)
+	return
+}
+
 
 	c.JSON(http.StatusOK, toTaskResponse(task))
 }
@@ -128,10 +157,14 @@ func (h *TaskHandler) Delete(c *gin.Context) {
 
 	taskID := c.Param("id")
 	err := h.taskService.Delete(c.Request.Context(), taskID, userID)
-	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.Delete", err, map[string]interface{}{
+		"taskID": taskID,
+	})
+	handleServiceError(c, err)
+	return
+}
+
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -150,11 +183,14 @@ func (h *TaskHandler) ListByProject(c *gin.Context) {
 	fmt.Printf("DEBUG: projectID=%s, userID=%s\n", projectID, userID) // ADD THIS
 	
 	tasks, err := h.taskService.ListByProject(c.Request.Context(), projectID, userID)
-	if err != nil {
-		fmt.Printf("DEBUG ERROR: %v\n", err) // ADD THIS
-		handleServiceError(c, err)
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.ListByProject", err, map[string]interface{}{
+		"projectID": projectID,
+	})
+	handleServiceError(c, err)
+	return
+}
+
 
 	c.JSON(http.StatusOK, toTaskResponseList(tasks))
 }
@@ -318,12 +354,16 @@ func (h *TaskHandler) AssignTask(c *gin.Context) {
 		return
 	}
 
-	// ✅ This should send notification internally
 	err := h.taskService.AssignTask(c.Request.Context(), taskID, req.AssigneeID, userID)
-	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.Assign", err, map[string]interface{}{
+		"taskID":     taskID,
+		"assigneeID": req.AssigneeID,
+	})
+	handleServiceError(c, err)
+	return
+}
+
 
 	c.JSON(http.StatusOK, gin.H{"message": "Task assigned successfully"})
 }
@@ -471,9 +511,13 @@ func (h *TaskHandler) AddComment(c *gin.Context) {
 
 	comment, err := h.taskService.AddComment(c.Request.Context(), taskID, userID, req.Content, req.MentionedUsers)
 	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
+	logAPIError(c, "Task.AddComment", err, map[string]interface{}{
+		"taskID": taskID,
+	})
+	handleServiceError(c, err)
+	return
+}
+
 
 	c.JSON(http.StatusCreated, toCommentResponse(comment))
 }
@@ -602,10 +646,14 @@ func (h *TaskHandler) StartTimer(c *gin.Context) {
 
 	taskID := c.Param("id")
 	entry, err := h.taskService.StartTimer(c.Request.Context(), taskID, userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start timer"})
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.StartTimer", err, map[string]interface{}{
+		"taskID": taskID,
+	})
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start timer"})
+	return
+}
+
 
 	c.JSON(http.StatusOK, toTimeEntryResponse(entry))
 }
@@ -1061,10 +1109,15 @@ func (h *TaskHandler) BulkUpdateStatus(c *gin.Context) {
 	}
 
 	err := h.taskService.BulkUpdateStatus(c.Request.Context(), req.TaskIDs, req.Status, userID)
-	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
+if err != nil {
+	logAPIError(c, "Task.BulkUpdateStatus", err, map[string]interface{}{
+		"taskCount": len(req.TaskIDs),
+		"status":    req.Status,
+	})
+	handleServiceError(c, err)
+	return
+}
+
 
 	c.JSON(http.StatusOK, gin.H{"message": "Tasks updated successfully"})
 }
