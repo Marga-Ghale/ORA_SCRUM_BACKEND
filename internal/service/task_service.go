@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
@@ -524,69 +526,233 @@ func (s *taskService) ConvertToSubtask(ctx context.Context, taskID, parentTaskID
 // COMMENTS IMPLEMENTATION
 // ============================================
 
-func (s *taskService) AddComment(ctx context.Context, taskID, userID, content string, mentionedUsers []string) (*repository.TaskComment, error) {
-	// Check access
-	if !s.permService.CanAccessTask(ctx, userID, taskID) {
-		return nil, ErrUnauthorized
-	}
+// func (s *taskService) AddComment(ctx context.Context, taskID, userID, content string, mentionedUsers []string) (*repository.TaskComment, error) {
+// 	// Check access
+// 	if !s.permService.CanAccessTask(ctx, userID, taskID) {
+// 		return nil, ErrUnauthorized
+// 	}
 
-	comment := &repository.TaskComment{
-		TaskID:         taskID,
-		UserID:         userID,
-		Content:        content,
-		MentionedUsers: mentionedUsers,
-	}
+// 	comment := &repository.TaskComment{
+// 		TaskID:         taskID,
+// 		UserID:         userID,
+// 		Content:        content,
+// 		MentionedUsers: mentionedUsers,
+// 	}
 
-	if err := s.commentRepo.Create(ctx, comment); err != nil {
-		return nil, err
-	}
+// 	if err := s.commentRepo.Create(ctx, comment); err != nil {
+// 		return nil, err
+// 	}
 
-	// Log activity
-	s.activityRepo.Create(ctx, &repository.TaskActivity{
-		TaskID: taskID,
-		UserID: &userID,
-		Action: "commented",
-	})
+// 	// Log activity
+// 	s.activityRepo.Create(ctx, &repository.TaskActivity{
+// 		TaskID: taskID,
+// 		UserID: &userID,
+// 		Action: "commented",
+// 	})
 
-	// TODO: Send notifications to mentioned users
+// 	// TODO: Send notifications to mentioned users
 	
-	return comment, nil
+// 	return comment, nil
+// }
+
+func (s *taskService) AddComment(
+    ctx context.Context,
+    taskID, userID, content string,
+    mentionedUsers []string,
+) (*repository.TaskComment, error) {
+
+    if !s.permService.CanAccessTask(ctx, userID, taskID) {
+        log.Printf(
+            "[AddComment] unauthorized access userID=%s taskID=%s",
+            userID, taskID,
+        )
+        return nil, ErrUnauthorized
+    }
+
+    content = strings.TrimSpace(content)
+    if content == "" {
+        log.Printf(
+            "[AddComment] empty content userID=%s taskID=%s",
+            userID, taskID,
+        )
+        return nil, ErrBadRequest
+    }
+
+    comment := &repository.TaskComment{
+        TaskID:         taskID,
+        UserID:         userID,
+        Content:        content,
+        MentionedUsers: mentionedUsers,
+    }
+
+    if err := s.commentRepo.Create(ctx, comment); err != nil {
+        log.Printf(
+            "[AddComment] failed to create comment userID=%s taskID=%s err=%v",
+            userID, taskID, err,
+        )
+        return nil, err
+    }
+
+    // Activity logging should NOT block comment creation
+    if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
+        TaskID: taskID,
+        UserID: &userID,
+        Action: "commented",
+    }); err != nil {
+        log.Printf(
+            "[AddComment] activity log failed commentID=%s taskID=%s err=%v",
+            comment.ID, taskID, err,
+        )
+    }
+
+    return comment, nil
 }
 
-func (s *taskService) ListComments(ctx context.Context, taskID, userID string) ([]*repository.TaskComment, error) {
-	if !s.permService.CanAccessTask(ctx, userID, taskID) {
-		return nil, ErrUnauthorized
-	}
-	return s.commentRepo.FindByTaskID(ctx, taskID)
+
+
+func (s *taskService) ListComments(
+    ctx context.Context,
+    taskID, userID string,
+) ([]*repository.TaskComment, error) {
+
+    if !s.permService.CanAccessTask(ctx, userID, taskID) {
+        log.Printf(
+            "[ListComments] unauthorized access userID=%s taskID=%s",
+            userID, taskID,
+        )
+        return nil, ErrUnauthorized
+    }
+
+    comments, err := s.commentRepo.FindByTaskID(ctx, taskID)
+    if err != nil {
+        log.Printf(
+            "[ListComments] failed userID=%s taskID=%s err=%v",
+            userID, taskID, err,
+        )
+        return nil, err
+    }
+
+    return comments, nil
 }
 
-func (s *taskService) UpdateComment(ctx context.Context, commentID, userID, content string) error {
-	comment, err := s.commentRepo.FindByID(ctx, commentID)
-	if err != nil || comment == nil {
-		return ErrNotFound
-	}
 
-	// Only comment author can update
-	if comment.UserID != userID {
-		return ErrUnauthorized
-	}
+func (s *taskService) UpdateComment(
+    ctx context.Context,
+    commentID, userID, content string,
+) error {
 
-	comment.Content = content
-	return s.commentRepo.Update(ctx, comment)
+    comment, err := s.commentRepo.FindByID(ctx, commentID)
+    if err != nil {
+        log.Printf(
+            "[UpdateComment] find failed commentID=%s err=%v",
+            commentID, err,
+        )
+        return err
+    }
+
+    if comment == nil {
+        log.Printf(
+            "[UpdateComment] not found commentID=%s",
+            commentID,
+        )
+        return ErrNotFound
+    }
+
+    if comment.UserID != userID {
+        log.Printf(
+            "[UpdateComment] unauthorized userID=%s commentID=%s",
+            userID, commentID,
+        )
+        return ErrUnauthorized
+    }
+
+    content = strings.TrimSpace(content)
+    if content == "" {
+        log.Printf(
+            "[UpdateComment] empty content userID=%s commentID=%s",
+            userID, commentID,
+        )
+        return ErrBadRequest
+    }
+
+    comment.Content = content
+
+    if err := s.commentRepo.Update(ctx, comment); err != nil {
+        log.Printf(
+            "[UpdateComment] update failed commentID=%s err=%v",
+            commentID, err,
+        )
+        return err
+    }
+
+    // Optional activity log
+    if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
+        TaskID: comment.TaskID,
+        UserID: &userID,
+        Action: "comment_updated",
+    }); err != nil {
+        log.Printf(
+            "[UpdateComment] activity log failed commentID=%s err=%v",
+            commentID, err,
+        )
+    }
+
+    return nil
 }
 
-func (s *taskService) DeleteComment(ctx context.Context, commentID, userID string) error {
-	comment, err := s.commentRepo.FindByID(ctx, commentID)
-	if err != nil || comment == nil {
-		return ErrNotFound
-	}
+func (s *taskService) DeleteComment(
+    ctx context.Context,
+    commentID, userID string,
+) error {
 
-	// Only comment author or task editors can delete
-	if comment.UserID != userID && !s.permService.CanEditTask(ctx, userID, comment.TaskID) {
-		return ErrUnauthorized
-	}
+    comment, err := s.commentRepo.FindByID(ctx, commentID)
+    if err != nil {
+        log.Printf(
+            "[DeleteComment] find failed commentID=%s err=%v",
+            commentID, err,
+        )
+        return err
+    }
 
-	return s.commentRepo.Delete(ctx, commentID)
+    if comment == nil {
+        log.Printf(
+            "[DeleteComment] not found commentID=%s",
+            commentID,
+        )
+        return ErrNotFound
+    }
+
+    if comment.UserID != userID &&
+        !s.permService.CanEditTask(ctx, userID, comment.TaskID) {
+
+        log.Printf(
+            "[DeleteComment] unauthorized userID=%s commentID=%s taskID=%s",
+            userID, commentID, comment.TaskID,
+        )
+        return ErrUnauthorized
+    }
+
+    if err := s.commentRepo.Delete(ctx, commentID); err != nil {
+        log.Printf(
+            "[DeleteComment] delete failed commentID=%s err=%v",
+            commentID, err,
+        )
+        return err
+    }
+
+    // Optional activity log
+    if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
+        TaskID: comment.TaskID,
+        UserID: &userID,
+        Action: "comment_deleted",
+    }); err != nil {
+        log.Printf(
+            "[DeleteComment] activity log failed commentID=%s err=%v",
+            commentID, err,
+        )
+    }
+
+    return nil
 }
 
 // ============================================

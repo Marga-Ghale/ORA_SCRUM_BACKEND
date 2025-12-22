@@ -22,6 +22,7 @@ var (
 	ErrInvalidEntityType  = errors.New("invalid entity type")
 	ErrInvalidInput       = errors.New("invalid input")
 	ErrHasSubtasks        = errors.New("task has subtasks and cannot be deleted")
+	ErrBadRequest         = errors.New("comment content is required")
 )
 
 // ============================================
