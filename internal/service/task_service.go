@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 )
 
 type TaskService interface {
@@ -103,19 +105,6 @@ type BurndownPoint struct {
 	Points int       `json:"points"`
 }
 
-type taskService struct {
-	taskRepo       repository.TaskRepository
-	commentRepo    repository.TaskCommentRepository
-	attachmentRepo repository.TaskAttachmentRepository
-	timeEntryRepo  repository.TimeEntryRepository
-	dependencyRepo repository.TaskDependencyRepository
-	checklistRepo  repository.TaskChecklistRepository
-	activityRepo   repository.TaskActivityRepository
-	projectRepo    repository.ProjectRepository
-	sprintRepo     repository.SprintRepository
-	memberService  MemberService
-	permService    PermissionService
-}
 
 type CreateTaskRequest struct {
 	ProjectID      string
@@ -149,7 +138,25 @@ type UpdateTaskRequest struct {
 	DueDate        *time.Time
 }
 
-// ✅ Fixed constructor with all repositories
+
+type taskService struct {
+	taskRepo        repository.TaskRepository
+	commentRepo     repository.TaskCommentRepository
+	attachmentRepo  repository.TaskAttachmentRepository
+	timeEntryRepo   repository.TimeEntryRepository
+	dependencyRepo  repository.TaskDependencyRepository
+	checklistRepo   repository.TaskChecklistRepository
+	activityRepo    repository.TaskActivityRepository
+	projectRepo     repository.ProjectRepository
+	sprintRepo      repository.SprintRepository
+	userRepo        repository.UserRepository
+	memberService   MemberService
+	permService     PermissionService
+	notificationSvc *notification.Service
+	broadcaster     *socket.Broadcaster
+}
+
+// Constructor
 func NewTaskService(
 	taskRepo repository.TaskRepository,
 	commentRepo repository.TaskCommentRepository,
@@ -160,26 +167,32 @@ func NewTaskService(
 	activityRepo repository.TaskActivityRepository,
 	projectRepo repository.ProjectRepository,
 	sprintRepo repository.SprintRepository,
+	userRepo repository.UserRepository,
 	memberService MemberService,
 	permService PermissionService,
+	notificationSvc *notification.Service,
+	broadcaster *socket.Broadcaster,
 ) TaskService {
 	return &taskService{
-		taskRepo:       taskRepo,
-		commentRepo:    commentRepo,
-		attachmentRepo: attachmentRepo,
-		timeEntryRepo:  timeEntryRepo,
-		dependencyRepo: dependencyRepo,
-		checklistRepo:  checklistRepo,
-		activityRepo:   activityRepo,
-		projectRepo:    projectRepo,
-		sprintRepo:     sprintRepo,
-		memberService:  memberService,
-		permService:    permService,
+		taskRepo:        taskRepo,
+		commentRepo:     commentRepo,
+		attachmentRepo:  attachmentRepo,
+		timeEntryRepo:   timeEntryRepo,
+		dependencyRepo:  dependencyRepo,
+		checklistRepo:   checklistRepo,
+		activityRepo:    activityRepo,
+		projectRepo:     projectRepo,
+		sprintRepo:      sprintRepo,
+		userRepo:        userRepo,
+		memberService:   memberService,
+		permService:     permService,
+		notificationSvc: notificationSvc,
+		broadcaster:     broadcaster,
 	}
 }
 
 // ============================================
-// CREATE
+// CREATE - With Notifications
 // ============================================
 
 func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repository.Task, error) {
@@ -208,22 +221,23 @@ func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repo
 		}
 	}
 
-	// ✅ Verify assignees have access to project
+	// Verify assignees have access to project
 	for _, assigneeID := range req.AssigneeIDs {
 		hasAccess, _, err := s.memberService.HasEffectiveAccess(ctx, EntityTypeProject, req.ProjectID, assigneeID)
 		if err != nil || !hasAccess {
 			return nil, ErrUnauthorized
 		}
 	}
-	// ✅ Verify creator has access to project
-if req.CreatedBy != nil {
-    hasAccess, _, err := s.memberService.HasEffectiveAccess(
-        ctx, EntityTypeProject, req.ProjectID, *req.CreatedBy,
-    )
-    if err != nil || !hasAccess {
-        return nil, ErrUnauthorized
-    }
-}
+
+	// Verify creator has access to project
+	if req.CreatedBy != nil {
+		hasAccess, _, err := s.memberService.HasEffectiveAccess(
+			ctx, EntityTypeProject, req.ProjectID, *req.CreatedBy,
+		)
+		if err != nil || !hasAccess {
+			return nil, ErrUnauthorized
+		}
+	}
 
 	task := &repository.Task{
 		ProjectID:      req.ProjectID,
@@ -239,16 +253,84 @@ if req.CreatedBy != nil {
 		StoryPoints:    req.StoryPoints,
 		StartDate:      req.StartDate,
 		DueDate:        req.DueDate,
-		CreatedBy:      req.CreatedBy,  
+		CreatedBy:      req.CreatedBy,
+		WatcherIDs:     []string{}, // Initialize empty
+	}
 
+	// Auto-add creator as watcher
+	if req.CreatedBy != nil {
+		task.WatcherIDs = append(task.WatcherIDs, *req.CreatedBy)
 	}
 
 	if err := s.taskRepo.Create(ctx, task); err != nil {
 		return nil, err
 	}
 
+	// ✅ NOTIFICATIONS START
+	creatorID := ""
+	if req.CreatedBy != nil {
+		creatorID = *req.CreatedBy
+	}
+
+	// 1. Notify each assignee (excluding creator)
+	for _, assigneeID := range req.AssigneeIDs {
+		if assigneeID != creatorID {
+			s.notificationSvc.SendTaskAssigned(
+				ctx,
+				assigneeID,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+			)
+		}
+	}
+
+	// 2. Get all project members for notification
+	members, err := s.memberService.ListEffectiveMembers(ctx, EntityTypeProject, req.ProjectID)
+	if err == nil {
+		// Create set of users to exclude (creator + assignees)
+		excludeMap := make(map[string]bool)
+		excludeMap[creatorID] = true
+		for _, assigneeID := range req.AssigneeIDs {
+			excludeMap[assigneeID] = true
+		}
+
+		// Collect member IDs to notify
+		var memberIDs []string
+		for _, member := range members {
+			if !excludeMap[member.UserID] {
+				memberIDs = append(memberIDs, member.UserID)
+			}
+		}
+
+		// Notify about task creation
+		if len(memberIDs) > 0 {
+			taskKey := s.getTaskKey(task)
+			s.notificationSvc.SendTaskCreated(
+				ctx,
+				memberIDs,
+				creatorID,
+				task.Title,
+				taskKey,
+				task.ID,
+				task.ProjectID,
+			)
+		}
+	}
+
+	// 3. Broadcast to project room via WebSocket
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastTaskCreated(
+			task.ProjectID,
+			s.taskToMap(task),
+			creatorID,
+		)
+	}
+	// ✅ NOTIFICATIONS END
+
 	return task, nil
 }
+
 
 // ============================================
 // READ
@@ -328,8 +410,9 @@ func (s *taskService) ListByStatus(ctx context.Context, projectID, status, userI
 	return s.taskRepo.FindByStatus(ctx, projectID, status)
 }
 
+
 // ============================================
-// UPDATE
+// UPDATE - With Notifications
 // ============================================
 
 func (s *taskService) Update(ctx context.Context, taskID, userID string, req *UpdateTaskRequest) (*repository.Task, error) {
@@ -338,30 +421,40 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *Up
 		return nil, ErrNotFound
 	}
 
-	// ✅ Check edit permission via PermissionService
 	if !s.permService.CanEditTask(ctx, userID, taskID) {
 		return nil, ErrUnauthorized
 	}
 
+	// Track changes for notification
+	var changes []string
+	oldStatus := task.Status
+	oldAssignees := make([]string, len(task.AssigneeIDs))
+	copy(oldAssignees, task.AssigneeIDs)
+
 	// Update fields if provided
-	if req.Title != nil {
+	if req.Title != nil && *req.Title != task.Title {
 		task.Title = *req.Title
+		changes = append(changes, "title")
 	}
 	if req.Description != nil {
 		task.Description = req.Description
+		changes = append(changes, "description")
 	}
-	if req.Status != nil {
+	if req.Status != nil && *req.Status != task.Status {
 		task.Status = *req.Status
+		changes = append(changes, "status")
 		if *req.Status == "done" && task.CompletedAt == nil {
 			now := time.Now()
 			task.CompletedAt = &now
 		}
 	}
-	if req.Priority != nil {
+	if req.Priority != nil && *req.Priority != task.Priority {
 		task.Priority = *req.Priority
+		changes = append(changes, "priority")
 	}
 	if req.SprintID != nil {
 		task.SprintID = req.SprintID
+		changes = append(changes, "sprint")
 	}
 	if req.AssigneeIDs != nil {
 		// Verify all assignees have project access
@@ -372,32 +465,150 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *Up
 			}
 		}
 		task.AssigneeIDs = *req.AssigneeIDs
+		changes = append(changes, "assignees")
 	}
 	if req.LabelIDs != nil {
 		task.LabelIDs = *req.LabelIDs
+		changes = append(changes, "labels")
 	}
 	if req.EstimatedHours != nil {
 		task.EstimatedHours = req.EstimatedHours
+		changes = append(changes, "estimated hours")
 	}
 	if req.ActualHours != nil {
 		task.ActualHours = req.ActualHours
+		changes = append(changes, "actual hours")
 	}
 	if req.StoryPoints != nil {
 		task.StoryPoints = req.StoryPoints
+		changes = append(changes, "story points")
 	}
 	if req.StartDate != nil {
 		task.StartDate = req.StartDate
+		changes = append(changes, "start date")
 	}
 	if req.DueDate != nil {
 		task.DueDate = req.DueDate
+		changes = append(changes, "due date")
 	}
 
 	if err := s.taskRepo.Update(ctx, task); err != nil {
 		return nil, err
 	}
 
+	// ✅ NOTIFICATIONS START
+	if len(changes) > 0 {
+		// 1. Notify assignees (excluding updater)
+		notifiedUsers := make(map[string]bool)
+		for _, assigneeID := range task.AssigneeIDs {
+			if assigneeID != userID {
+				s.notificationSvc.SendTaskUpdated(
+					ctx,
+					assigneeID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+					changes,
+				)
+				notifiedUsers[assigneeID] = true
+			}
+		}
+
+		// 2. Notify watchers (excluding updater and already notified)
+		for _, watcherID := range task.WatcherIDs {
+			if watcherID != userID && !notifiedUsers[watcherID] {
+				s.notificationSvc.SendTaskUpdated(
+					ctx,
+					watcherID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+					changes,
+				)
+			}
+		}
+
+		// 3. Broadcast update to project room
+		if s.broadcaster != nil {
+			s.broadcaster.BroadcastTaskUpdated(
+				task.ProjectID,
+				s.taskToMap(task),
+				changes,
+				userID,
+			)
+		}
+	}
+
+	// 4. Handle STATUS CHANGE specifically
+	if req.Status != nil && *req.Status != oldStatus {
+		// Notify assignees
+		for _, assigneeID := range task.AssigneeIDs {
+			if assigneeID != userID {
+				s.notificationSvc.SendTaskStatusChanged(
+					ctx,
+					assigneeID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+					oldStatus,
+					*req.Status,
+				)
+			}
+		}
+
+		// Broadcast status change
+		if s.broadcaster != nil {
+			s.broadcaster.BroadcastTaskStatusChanged(
+				task.ProjectID,
+				s.taskToMap(task),
+				oldStatus,
+				*req.Status,
+				userID,
+			)
+		}
+	}
+
+	// 5. Handle NEW ASSIGNEES
+	if req.AssigneeIDs != nil {
+		newAssignees := s.findNewAssignees(oldAssignees, *req.AssigneeIDs)
+		
+		for _, newAssigneeID := range newAssignees {
+			if newAssigneeID != userID {
+				s.notificationSvc.SendTaskAssigned(
+					ctx,
+					newAssigneeID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+				)
+
+				// Broadcast assignment
+				if s.broadcaster != nil {
+					s.broadcaster.BroadcastTaskAssigned(
+						newAssigneeID,
+						s.taskToMap(task),
+						userID,
+					)
+				}
+
+				// Auto-add new assignee as watcher
+				if !contains(task.WatcherIDs, newAssigneeID) {
+					task.WatcherIDs = append(task.WatcherIDs, newAssigneeID)
+					s.taskRepo.Update(ctx, task)
+				}
+			}
+		}
+	}
+	// ✅ NOTIFICATIONS END
+
 	return task, nil
 }
+
+
+
+// ============================================
+// DELETE - With Notifications
+// ============================================
 
 func (s *taskService) Delete(ctx context.Context, taskID, userID string) error {
 	task, err := s.taskRepo.FindByID(ctx, taskID)
@@ -405,10 +616,47 @@ func (s *taskService) Delete(ctx context.Context, taskID, userID string) error {
 		return ErrNotFound
 	}
 
-	// ✅ Check delete permission via PermissionService
 	if !s.permService.CanDeleteTask(ctx, userID, taskID) {
 		return ErrUnauthorized
 	}
+
+	taskKey := s.getTaskKey(task)
+
+	// ✅ NOTIFICATIONS START
+	// 1. Collect users to notify (assignees + watchers, excluding deleter)
+	notifyUsers := make(map[string]bool)
+	for _, assigneeID := range task.AssigneeIDs {
+		if assigneeID != userID {
+			notifyUsers[assigneeID] = true
+		}
+	}
+	for _, watcherID := range task.WatcherIDs {
+		if watcherID != userID {
+			notifyUsers[watcherID] = true
+		}
+	}
+
+	// 2. Send deletion notifications
+	for notifyUserID := range notifyUsers {
+		s.notificationSvc.SendTaskDeleted(
+			ctx,
+			notifyUserID,
+			task.Title,
+			taskKey,
+			task.ProjectID,
+		)
+	}
+
+	// 3. Broadcast deletion
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastTaskDeleted(
+			task.ProjectID,
+			task.ID,
+			taskKey,
+			userID,
+		)
+	}
+	// ✅ NOTIFICATIONS END
 
 	return s.taskRepo.Delete(ctx, taskID)
 }
@@ -417,13 +665,74 @@ func (s *taskService) Delete(ctx context.Context, taskID, userID string) error {
 // TASK OPERATIONS
 // ============================================
 
+// ============================================
+// UPDATE STATUS - With Notifications
+// ============================================
+
 func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID string) error {
+	task, err := s.taskRepo.FindByID(ctx, taskID)
+	if err != nil || task == nil {
+		return ErrNotFound
+	}
+
 	if !s.permService.CanEditTask(ctx, userID, taskID) {
 		return ErrUnauthorized
 	}
-	return s.taskRepo.UpdateStatus(ctx, taskID, status)
-}
 
+	oldStatus := task.Status
+
+	if err := s.taskRepo.UpdateStatus(ctx, taskID, status); err != nil {
+		return err
+	}
+
+	// ✅ NOTIFICATIONS START
+	// Notify assignees and watchers (excluding updater)
+	notifiedUsers := make(map[string]bool)
+	
+	for _, assigneeID := range task.AssigneeIDs {
+		if assigneeID != userID {
+			s.notificationSvc.SendTaskStatusChanged(
+				ctx,
+				assigneeID,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+				oldStatus,
+				status,
+			)
+			notifiedUsers[assigneeID] = true
+		}
+	}
+
+	for _, watcherID := range task.WatcherIDs {
+		if watcherID != userID && !notifiedUsers[watcherID] {
+			s.notificationSvc.SendTaskStatusChanged(
+				ctx,
+				watcherID,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+				oldStatus,
+				status,
+			)
+		}
+	}
+
+	// Broadcast status change
+	if s.broadcaster != nil {
+		task.Status = status // Update for broadcast
+		s.broadcaster.BroadcastTaskStatusChanged(
+			task.ProjectID,
+			s.taskToMap(task),
+			oldStatus,
+			status,
+			userID,
+		)
+	}
+	// ✅ NOTIFICATIONS END
+
+	return nil
+}
 func (s *taskService) UpdatePriority(ctx context.Context, taskID, priority, userID string) error {
 	if !s.permService.CanEditTask(ctx, userID, taskID) {
 		return ErrUnauthorized
@@ -431,25 +740,60 @@ func (s *taskService) UpdatePriority(ctx context.Context, taskID, priority, user
 	return s.taskRepo.UpdatePriority(ctx, taskID, priority)
 }
 
+
+// ============================================
+// ASSIGN TASK - With Notifications
+// ============================================
+
 func (s *taskService) AssignTask(ctx context.Context, taskID, assigneeID, actorID string) error {
 	task, err := s.taskRepo.FindByID(ctx, taskID)
 	if err != nil || task == nil {
 		return ErrNotFound
 	}
 
-	// Check actor can edit task
 	if !s.permService.CanEditTask(ctx, actorID, taskID) {
 		return ErrUnauthorized
 	}
 
-	// ✅ Verify assignee has access to project
 	hasAccess, _, err := s.memberService.HasEffectiveAccess(ctx, EntityTypeProject, task.ProjectID, assigneeID)
 	if err != nil || !hasAccess {
 		return ErrUnauthorized
 	}
 
-	return s.taskRepo.AddAssignee(ctx, taskID, assigneeID)
+	if err := s.taskRepo.AddAssignee(ctx, taskID, assigneeID); err != nil {
+		return err
+	}
+
+	// ✅ NOTIFICATIONS START
+	// Only notify if not self-assigning
+	if assigneeID != actorID {
+		s.notificationSvc.SendTaskAssigned(
+			ctx,
+			assigneeID,
+			task.Title,
+			task.ID,
+			task.ProjectID,
+		)
+
+		// Broadcast assignment
+		if s.broadcaster != nil {
+			s.broadcaster.BroadcastTaskAssigned(
+				assigneeID,
+				s.taskToMap(task),
+				actorID,
+			)
+		}
+	}
+
+	// Auto-add assignee as watcher
+	if !contains(task.WatcherIDs, assigneeID) {
+		s.taskRepo.AddWatcher(ctx, taskID, assigneeID)
+	}
+	// ✅ NOTIFICATIONS END
+
+	return nil
 }
+
 
 func (s *taskService) UnassignTask(ctx context.Context, taskID, assigneeID, actorID string) error {
 	if !s.permService.CanEditTask(ctx, actorID, taskID) {
@@ -522,90 +866,128 @@ func (s *taskService) ConvertToSubtask(ctx context.Context, taskID, parentTaskID
 	return s.taskRepo.Update(ctx, task)
 }
 
+
 // ============================================
-// COMMENTS IMPLEMENTATION
+// ADD COMMENT - With Notifications
 // ============================================
-
-// func (s *taskService) AddComment(ctx context.Context, taskID, userID, content string, mentionedUsers []string) (*repository.TaskComment, error) {
-// 	// Check access
-// 	if !s.permService.CanAccessTask(ctx, userID, taskID) {
-// 		return nil, ErrUnauthorized
-// 	}
-
-// 	comment := &repository.TaskComment{
-// 		TaskID:         taskID,
-// 		UserID:         userID,
-// 		Content:        content,
-// 		MentionedUsers: mentionedUsers,
-// 	}
-
-// 	if err := s.commentRepo.Create(ctx, comment); err != nil {
-// 		return nil, err
-// 	}
-
-// 	// Log activity
-// 	s.activityRepo.Create(ctx, &repository.TaskActivity{
-// 		TaskID: taskID,
-// 		UserID: &userID,
-// 		Action: "commented",
-// 	})
-
-// 	// TODO: Send notifications to mentioned users
-	
-// 	return comment, nil
-// }
 
 func (s *taskService) AddComment(
-    ctx context.Context,
-    taskID, userID, content string,
-    mentionedUsers []string,
+	ctx context.Context,
+	taskID, userID, content string,
+	mentionedUsers []string,
 ) (*repository.TaskComment, error) {
 
-    if !s.permService.CanAccessTask(ctx, userID, taskID) {
-        log.Printf(
-            "[AddComment] unauthorized access userID=%s taskID=%s",
-            userID, taskID,
-        )
-        return nil, ErrUnauthorized
-    }
+	if !s.permService.CanAccessTask(ctx, userID, taskID) {
+		log.Printf("[AddComment] unauthorized access userID=%s taskID=%s", userID, taskID)
+		return nil, ErrUnauthorized
+	}
 
-    content = strings.TrimSpace(content)
-    if content == "" {
-        log.Printf(
-            "[AddComment] empty content userID=%s taskID=%s",
-            userID, taskID,
-        )
-        return nil, ErrBadRequest
-    }
+	content = strings.TrimSpace(content)
+	if content == "" {
+		log.Printf("[AddComment] empty content userID=%s taskID=%s", userID, taskID)
+		return nil, ErrBadRequest
+	}
 
-    comment := &repository.TaskComment{
-        TaskID:         taskID,
-        UserID:         userID,
-        Content:        content,
-        MentionedUsers: mentionedUsers,
-    }
+	// Get task info for notifications
+	task, err := s.taskRepo.FindByID(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, ErrNotFound
+	}
 
-    if err := s.commentRepo.Create(ctx, comment); err != nil {
-        log.Printf(
-            "[AddComment] failed to create comment userID=%s taskID=%s err=%v",
-            userID, taskID, err,
-        )
-        return nil, err
-    }
+	comment := &repository.TaskComment{
+		TaskID:         taskID,
+		UserID:         userID,
+		Content:        content,
+		MentionedUsers: mentionedUsers,
+	}
 
-    // Activity logging should NOT block comment creation
-    if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
-        TaskID: taskID,
-        UserID: &userID,
-        Action: "commented",
-    }); err != nil {
-        log.Printf(
-            "[AddComment] activity log failed commentID=%s taskID=%s err=%v",
-            comment.ID, taskID, err,
-        )
-    }
+	if err := s.commentRepo.Create(ctx, comment); err != nil {
+		log.Printf("[AddComment] failed to create comment userID=%s taskID=%s err=%v",
+			userID, taskID, err)
+		return nil, err
+	}
 
-    return comment, nil
+	// ✅ NOTIFICATIONS START
+	// Get commenter info
+	commenter, _ := s.userRepo.FindByID(ctx, userID)
+	commenterName := "Someone"
+	if commenter != nil {
+		commenterName = commenter.Name
+	}
+
+	// Collect users to notify (excluding commenter)
+	notifiedUsers := make(map[string]bool)
+
+	// 1. Notify assignees
+	for _, assigneeID := range task.AssigneeIDs {
+		if assigneeID != userID {
+			s.notificationSvc.SendTaskCommented(
+				ctx,
+				assigneeID,
+				commenterName,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+			)
+			notifiedUsers[assigneeID] = true
+		}
+	}
+
+	// 2. Notify watchers (excluding already notified)
+	for _, watcherID := range task.WatcherIDs {
+		if watcherID != userID && !notifiedUsers[watcherID] {
+			s.notificationSvc.SendTaskCommented(
+				ctx,
+				watcherID,
+				commenterName,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+			)
+			notifiedUsers[watcherID] = true
+		}
+	}
+
+	// 3. Parse and send mention notifications
+	if s.notificationSvc != nil {
+		s.notificationSvc.ParseAndSendMentions(
+			ctx,
+			content,
+			commenterName,
+			task.Title,
+			task.ID,
+			task.ProjectID,
+			userID,
+		)
+	}
+
+	// 4. Broadcast comment
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastCommentAdded(
+			task.ProjectID,
+			task.ID,
+			map[string]interface{}{
+				"id":        comment.ID,
+				"content":   comment.Content,
+				"userId":    comment.UserID,
+				"createdAt": comment.CreatedAt,
+			},
+			userID,
+		)
+	}
+	// ✅ NOTIFICATIONS END
+
+	// Activity logging
+	if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
+		TaskID: taskID,
+		UserID: &userID,
+		Action: "commented",
+	}); err != nil {
+		log.Printf("[AddComment] activity log failed commentID=%s taskID=%s err=%v",
+			comment.ID, taskID, err)
+	}
+
+	return comment, nil
 }
 
 
@@ -636,133 +1018,146 @@ func (s *taskService) ListComments(
 }
 
 
+
+// ============================================
+// UPDATE COMMENT - With Notifications
+// ============================================
+
 func (s *taskService) UpdateComment(
-    ctx context.Context,
-    commentID, userID, content string,
+	ctx context.Context,
+	commentID, userID, content string,
 ) error {
 
-    comment, err := s.commentRepo.FindByID(ctx, commentID)
-    if err != nil {
-        log.Printf(
-            "[UpdateComment] find failed commentID=%s err=%v",
-            commentID, err,
-        )
-        return err
-    }
+	comment, err := s.commentRepo.FindByID(ctx, commentID)
+	if err != nil {
+		log.Printf("[UpdateComment] find failed commentID=%s err=%v", commentID, err)
+		return err
+	}
 
-    if comment == nil {
-        log.Printf(
-            "[UpdateComment] not found commentID=%s",
-            commentID,
-        )
-        return ErrNotFound
-    }
+	if comment == nil {
+		log.Printf("[UpdateComment] not found commentID=%s", commentID)
+		return ErrNotFound
+	}
 
-    if comment.UserID != userID {
-        log.Printf(
-            "[UpdateComment] unauthorized userID=%s commentID=%s",
-            userID, commentID,
-        )
-        return ErrUnauthorized
-    }
+	if comment.UserID != userID {
+		log.Printf("[UpdateComment] unauthorized userID=%s commentID=%s", userID, commentID)
+		return ErrUnauthorized
+	}
 
-    content = strings.TrimSpace(content)
-    if content == "" {
-        log.Printf(
-            "[UpdateComment] empty content userID=%s commentID=%s",
-            userID, commentID,
-        )
-        return ErrBadRequest
-    }
+	content = strings.TrimSpace(content)
+	if content == "" {
+		log.Printf("[UpdateComment] empty content userID=%s commentID=%s", userID, commentID)
+		return ErrBadRequest
+	}
 
-    comment.Content = content
+	comment.Content = content
 
-    if err := s.commentRepo.Update(ctx, comment); err != nil {
-        log.Printf(
-            "[UpdateComment] update failed commentID=%s err=%v",
-            commentID, err,
-        )
-        return err
-    }
+	if err := s.commentRepo.Update(ctx, comment); err != nil {
+		log.Printf("[UpdateComment] update failed commentID=%s err=%v", commentID, err)
+		return err
+	}
 
-    // Optional activity log
-    if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
-        TaskID: comment.TaskID,
-        UserID: &userID,
-        Action: "comment_updated",
-    }); err != nil {
-        log.Printf(
-            "[UpdateComment] activity log failed commentID=%s err=%v",
-            commentID, err,
-        )
-    }
+	// ✅ BROADCAST COMMENT UPDATE
+	if s.broadcaster != nil {
+		task, _ := s.taskRepo.FindByID(ctx, comment.TaskID)
+		if task != nil {
+			s.broadcaster.BroadcastCommentUpdated(
+				task.ProjectID,
+				comment.TaskID,
+				map[string]interface{}{
+					"id":        comment.ID,
+					"content":   comment.Content,
+					"userId":    comment.UserID,
+					"updatedAt": comment.UpdatedAt,
+				},
+				userID,
+			)
+		}
+	}
 
-    return nil
-}
+	// Activity log
+	if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
+		TaskID: comment.TaskID,
+		UserID: &userID,
+		Action: "comment_updated",
+	}); err != nil {
+		log.Printf("[UpdateComment] activity log failed commentID=%s err=%v", commentID, err)
+	}
 
-func (s *taskService) DeleteComment(
-    ctx context.Context,
-    commentID, userID string,
-) error {
-
-    comment, err := s.commentRepo.FindByID(ctx, commentID)
-    if err != nil {
-        log.Printf(
-            "[DeleteComment] find failed commentID=%s err=%v",
-            commentID, err,
-        )
-        return err
-    }
-
-    if comment == nil {
-        log.Printf(
-            "[DeleteComment] not found commentID=%s",
-            commentID,
-        )
-        return ErrNotFound
-    }
-
-    if comment.UserID != userID &&
-        !s.permService.CanEditTask(ctx, userID, comment.TaskID) {
-
-        log.Printf(
-            "[DeleteComment] unauthorized userID=%s commentID=%s taskID=%s",
-            userID, commentID, comment.TaskID,
-        )
-        return ErrUnauthorized
-    }
-
-    if err := s.commentRepo.Delete(ctx, commentID); err != nil {
-        log.Printf(
-            "[DeleteComment] delete failed commentID=%s err=%v",
-            commentID, err,
-        )
-        return err
-    }
-
-    // Optional activity log
-    if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
-        TaskID: comment.TaskID,
-        UserID: &userID,
-        Action: "comment_deleted",
-    }); err != nil {
-        log.Printf(
-            "[DeleteComment] activity log failed commentID=%s err=%v",
-            commentID, err,
-        )
-    }
-
-    return nil
+	return nil
 }
 
 // ============================================
-// ATTACHMENTS IMPLEMENTATION
+// DELETE COMMENT - With Notifications
+// ============================================
+
+func (s *taskService) DeleteComment(
+	ctx context.Context,
+	commentID, userID string,
+) error {
+
+	comment, err := s.commentRepo.FindByID(ctx, commentID)
+	if err != nil {
+		log.Printf("[DeleteComment] find failed commentID=%s err=%v", commentID, err)
+		return err
+	}
+
+	if comment == nil {
+		log.Printf("[DeleteComment] not found commentID=%s", commentID)
+		return ErrNotFound
+	}
+
+	if comment.UserID != userID &&
+		!s.permService.CanEditTask(ctx, userID, comment.TaskID) {
+		log.Printf("[DeleteComment] unauthorized userID=%s commentID=%s taskID=%s",
+			userID, commentID, comment.TaskID)
+		return ErrUnauthorized
+	}
+
+	if err := s.commentRepo.Delete(ctx, commentID); err != nil {
+		log.Printf("[DeleteComment] delete failed commentID=%s err=%v", commentID, err)
+		return err
+	}
+
+	// ✅ BROADCAST COMMENT DELETION
+	if s.broadcaster != nil {
+		task, _ := s.taskRepo.FindByID(ctx, comment.TaskID)
+		if task != nil {
+			s.broadcaster.BroadcastCommentDeleted(
+				task.ProjectID,
+				comment.TaskID,
+				commentID,
+				userID,
+			)
+		}
+	}
+
+	// Activity log
+	if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
+		TaskID: comment.TaskID,
+		UserID: &userID,
+		Action: "comment_deleted",
+	}); err != nil {
+		log.Printf("[DeleteComment] activity log failed commentID=%s err=%v", commentID, err)
+	}
+
+	return nil
+}
+
+
+// ============================================
+// ADD ATTACHMENT - With Notifications
 // ============================================
 
 func (s *taskService) AddAttachment(ctx context.Context, taskID, userID, filename, fileURL string, fileSize int64, mimeType string) (*repository.TaskAttachment, error) {
-	// Check access
 	if !s.permService.CanAccessTask(ctx, userID, taskID) {
 		return nil, ErrUnauthorized
+	}
+
+	// Get task for notifications
+	task, err := s.taskRepo.FindByID(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, ErrNotFound
 	}
 
 	attachment := &repository.TaskAttachment{
@@ -778,12 +1173,63 @@ func (s *taskService) AddAttachment(ctx context.Context, taskID, userID, filenam
 		return nil, err
 	}
 
+	// ✅ NOTIFICATIONS START
+	// Get uploader info
+	uploader, _ := s.userRepo.FindByID(ctx, userID)
+	uploaderName := "Someone"
+	if uploader != nil {
+		uploaderName = uploader.Name
+	}
+
+	// Notify assignees and watchers (excluding uploader)
+	notifiedUsers := make(map[string]bool)
+	
+	for _, assigneeID := range task.AssigneeIDs {
+		if assigneeID != userID {
+			s.notificationSvc.SendBatchNotifications(
+				ctx,
+				[]string{assigneeID},
+				userID,
+				"TASK_ATTACHMENT_ADDED",
+				"Attachment Added",
+				uploaderName+" added an attachment to task: "+task.Title,
+				map[string]interface{}{
+					"taskId":     taskID,
+					"projectId":  task.ProjectID,
+					"filename":   filename,
+					"action":     "view_task",
+				},
+			)
+			notifiedUsers[assigneeID] = true
+		}
+	}
+
+	for _, watcherID := range task.WatcherIDs {
+		if watcherID != userID && !notifiedUsers[watcherID] {
+			s.notificationSvc.SendBatchNotifications(
+				ctx,
+				[]string{watcherID},
+				userID,
+				"TASK_ATTACHMENT_ADDED",
+				"Attachment Added",
+				uploaderName+" added an attachment to task: "+task.Title,
+				map[string]interface{}{
+					"taskId":     taskID,
+					"projectId":  task.ProjectID,
+					"filename":   filename,
+					"action":     "view_task",
+				},
+			)
+		}
+	}
+	// ✅ NOTIFICATIONS END
+
 	// Log activity
 	s.activityRepo.Create(ctx, &repository.TaskActivity{
-		TaskID:    taskID,
-		UserID:    &userID,
-		Action:    "added_attachment",
-		NewValue:  &filename,
+		TaskID:   taskID,
+		UserID:   &userID,
+		Action:   "added_attachment",
+		NewValue: &filename,
 	})
 
 	return attachment, nil
@@ -1118,6 +1564,11 @@ func (s *taskService) AddChecklistItem(ctx context.Context, checklistID, userID,
 	return item, nil
 }
 
+
+// ============================================
+// CHECKLIST ITEM TOGGLE - With Notifications
+// ============================================
+
 func (s *taskService) ToggleChecklistItem(ctx context.Context, itemID, userID string) error {
 	item, err := s.checklistRepo.FindItemByID(ctx, itemID)
 	if err != nil || item == nil {
@@ -1133,8 +1584,48 @@ func (s *taskService) ToggleChecklistItem(ctx context.Context, itemID, userID st
 		return ErrUnauthorized
 	}
 
-	return s.checklistRepo.ToggleItem(ctx, itemID)
+	if err := s.checklistRepo.ToggleItem(ctx, itemID); err != nil {
+		return err
+	}
+
+	// ✅ NOTIFICATIONS START
+	// Get updated item
+	updatedItem, _ := s.checklistRepo.FindItemByID(ctx, itemID)
+	if updatedItem != nil && updatedItem.Completed {
+		// Get task for notifications
+		task, _ := s.taskRepo.FindByID(ctx, checklist.TaskID)
+		if task != nil {
+			// Get completer info
+			completer, _ := s.userRepo.FindByID(ctx, userID)
+			completerName := "Someone"
+			if completer != nil {
+				completerName = completer.Name
+			}
+
+			// Notify assignee if item has one (excluding completer)
+			if item.AssigneeID != nil && *item.AssigneeID != userID {
+				s.notificationSvc.SendBatchNotifications(
+					ctx,
+					[]string{*item.AssigneeID},
+					userID,
+					"CHECKLIST_ITEM_COMPLETED",
+					"Checklist Item Completed",
+					completerName+" completed a checklist item in task: "+task.Title,
+					map[string]interface{}{
+						"taskId":    checklist.TaskID,
+						"projectId": task.ProjectID,
+						"itemId":    itemID,
+						"action":    "view_task",
+					},
+				)
+			}
+		}
+	}
+	// ✅ NOTIFICATIONS END
+
+	return nil
 }
+
 
 func (s *taskService) DeleteChecklistItem(ctx context.Context, itemID, userID string) error {
 	item, err := s.checklistRepo.FindItemByID(ctx, itemID)
@@ -1409,4 +1900,62 @@ func (s *taskService) BulkMoveToSprint(ctx context.Context, taskIDs []string, sp
 	}
 
 	return s.taskRepo.BulkMoveToSprint(ctx, taskIDs, sprintID)
+}
+
+
+
+
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+func (s *taskService) taskToMap(task *repository.Task) map[string]interface{} {
+	return map[string]interface{}{
+		"id":          task.ID,
+		"projectId":   task.ProjectID,
+		"title":       task.Title,
+		"description": task.Description,
+		"status":      task.Status,
+		"priority":    task.Priority,
+		"assigneeIds": task.AssigneeIDs,
+		"watcherIds":  task.WatcherIDs,
+		"dueDate":     task.DueDate,
+		"createdAt":   task.CreatedAt,
+		"updatedAt":   task.UpdatedAt,
+	}
+}
+
+func (s *taskService) getTaskKey(task *repository.Task) string {
+	// If task has a Key field, use it
+	// Otherwise generate a simple key
+	if task.ID != "" {
+		return task.ID
+	}
+	// Fallback: use task ID or generate project prefix + number
+	return task.ID[:8] // Use first 8 chars of ID
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *taskService) findNewAssignees(oldAssignees, newAssignees []string) []string {
+	oldMap := make(map[string]bool)
+	for _, id := range oldAssignees {
+		oldMap[id] = true
+	}
+
+	var result []string
+	for _, id := range newAssignees {
+		if !oldMap[id] {
+			result = append(result, id)
+		}
+	}
+	return result
 }
