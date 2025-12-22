@@ -6,6 +6,21 @@ docker exec -it ora_scrum_db psql -U postgres -d ora_scrum
 
 docker image prune -a && docker builder prune -a
 
+docker exec -it ora_scrum_db psql -U postgres -d ora_scrum -c "
+DELETE FROM tasks;
+DELETE FROM sprints;
+DELETE FROM labels;
+DELETE FROM project_members;
+DELETE FROM projects;
+DELETE FROM folder_members;
+DELETE FROM folders;
+DELETE FROM space_members;
+DELETE FROM spaces;
+DELETE FROM workspace_members;
+DELETE FROM workspaces;
+DELETE FROM users;
+"
+
 curl -X POST http://localhost:8080/api/spaces/c5712068-db10-4087-84e1-8bbb9fa16288/projects \
  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NjYyMTc3NTEsImlhdCI6MTc2NjEzMTM1MSwic3ViIjoiZWFmYmYzZjUtMjBhYS00YTgxLTlhNzEtMzA3ODQ4MmVmZDEyIn0.MHuaXw0NIOUw05hst_mQ4mndJ8A5zSYY5oFIdjONEy0" \
  -H "Content-Type: application/json" \

@@ -163,39 +163,131 @@ func (r *taskRepository) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error) {
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE id = $1`
+	
+	task := &Task{}
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&task.ID,
+		&task.ProjectID,
+		&task.SprintID,
+		&task.ParentTaskID,
+		&task.Title,
+		&task.Description,
+		&task.Status,
+		&task.Priority,
+		&task.Type,
+		pq.Array(&task.AssigneeIDs),
+		pq.Array(&task.WatcherIDs),
+		pq.Array(&task.LabelIDs),
+		&task.StoryPoints,
+		&task.EstimatedHours,
+		&task.ActualHours,
+		&task.StartDate,
+		&task.DueDate,
+		&task.CompletedAt,
+		&task.Blocked,
+		&task.Position,
+		&task.CreatedBy,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+	)
+	
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	
+	return task, nil
+}
 // FindByProjectID retrieves all tasks for a project
 func (r *taskRepository) FindByProjectID(ctx context.Context, projectID string) ([]*Task, error) {
-	query := `SELECT * FROM tasks WHERE project_id = $1 ORDER BY position ASC, created_at DESC`
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE project_id = $1 
+		ORDER BY position ASC, created_at DESC`
 	return r.queryTasks(ctx, query, projectID)
 }
 
 // FindBySprintID retrieves all tasks for a sprint
 func (r *taskRepository) FindBySprintID(ctx context.Context, sprintID string) ([]*Task, error) {
-	query := `SELECT * FROM tasks WHERE sprint_id = $1 ORDER BY position ASC, created_at DESC`
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE sprint_id = $1 
+		ORDER BY position ASC, created_at DESC`
 	return r.queryTasks(ctx, query, sprintID)
 }
 
 // FindByParentTaskID retrieves all subtasks
 func (r *taskRepository) FindByParentTaskID(ctx context.Context, parentTaskID string) ([]*Task, error) {
-	query := `SELECT * FROM tasks WHERE parent_task_id = $1 ORDER BY position ASC, created_at DESC`
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE parent_task_id = $1 
+		ORDER BY position ASC, created_at DESC`
 	return r.queryTasks(ctx, query, parentTaskID)
 }
 
 // FindByAssigneeID retrieves tasks assigned to a user
 func (r *taskRepository) FindByAssigneeID(ctx context.Context, assigneeID string) ([]*Task, error) {
-	query := `SELECT * FROM tasks WHERE $1 = ANY(assignee_ids) ORDER BY due_date ASC NULLS LAST, created_at DESC`
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE $1 = ANY(assignee_ids) 
+		ORDER BY due_date ASC NULLS LAST, created_at DESC`
 	return r.queryTasks(ctx, query, assigneeID)
 }
 
-// FindByStatus retrieves tasks by status in a project
 func (r *taskRepository) FindByStatus(ctx context.Context, projectID, status string) ([]*Task, error) {
-	query := `SELECT * FROM tasks WHERE project_id = $1 AND status = $2 ORDER BY position ASC`
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE project_id = $1 AND status = $2 
+		ORDER BY position ASC`
 	return r.queryTasks(ctx, query, projectID, status)
 }
 
-// FindBacklog retrieves backlog tasks (not in any sprint)
 func (r *taskRepository) FindBacklog(ctx context.Context, projectID string) ([]*Task, error) {
-	query := `SELECT * FROM tasks WHERE project_id = $1 AND sprint_id IS NULL AND parent_task_id IS NULL ORDER BY position ASC`
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE project_id = $1 AND sprint_id IS NULL AND parent_task_id IS NULL 
+		ORDER BY position ASC`
 	return r.queryTasks(ctx, query, projectID)
 }
 
@@ -325,22 +417,32 @@ func (r *taskRepository) FindWithFilters(ctx context.Context, filters *TaskFilte
 	return tasks, total, err
 }
 
-// FindOverdue retrieves overdue tasks
 func (r *taskRepository) FindOverdue(ctx context.Context, projectID string) ([]*Task, error) {
 	query := `
-		SELECT * FROM tasks 
-		WHERE project_id = $1 
-		  AND due_date < NOW() 
-		  AND status != 'done'
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE project_id = $1 AND due_date < NOW() AND status != 'done'
 		ORDER BY due_date ASC`
 	return r.queryTasks(ctx, query, projectID)
 }
 
-// FindBlocked retrieves blocked tasks
 func (r *taskRepository) FindBlocked(ctx context.Context, projectID string) ([]*Task, error) {
-	query := `SELECT * FROM tasks WHERE project_id = $1 AND blocked = true ORDER BY created_at DESC`
+	query := `
+		SELECT 
+			id, project_id, sprint_id, parent_task_id, title, description,
+			status, priority, type, assignee_ids, watcher_ids, label_ids,
+			story_points, estimated_hours, actual_hours, start_date, due_date,
+			completed_at, blocked, position, created_by, created_at, updated_at
+		FROM tasks 
+		WHERE project_id = $1 AND blocked = true 
+		ORDER BY created_at DESC`
 	return r.queryTasks(ctx, query, projectID)
 }
+
 
 // GetSprintVelocity calculates total story points in a sprint
 func (r *taskRepository) GetSprintVelocity(ctx context.Context, sprintID string) (int, error) {
@@ -427,43 +529,3 @@ func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...i
 	return tasks, rows.Err()
 }
 
-// FindByID - FIXED with correct column order
-func (r *taskRepository) FindByID(ctx context.Context, id string) (*Task, error) {
-	query := `SELECT * FROM tasks WHERE id = $1`
-	
-	task := &Task{}
-	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&task.ID,                    // 1. id
-		&task.ProjectID,             // 2. project_id
-		&task.SprintID,              // 3. sprint_id
-		&task.ParentTaskID,          // 4. parent_task_id
-		&task.Title,                 // 5. title
-		&task.Description,           // 6. description
-		&task.Status,                // 7. status
-		&task.Priority,              // 8. priority
-		&task.Type,                  // 9. type
-		pq.Array(&task.AssigneeIDs), // 10. assignee_ids
-		pq.Array(&task.WatcherIDs),  // 11. watcher_ids
-		pq.Array(&task.LabelIDs),    // 12. label_ids
-		&task.StoryPoints,           // 13. story_points
-		&task.EstimatedHours,        // 14. estimated_hours
-		&task.ActualHours,           // 15. actual_hours
-		&task.StartDate,             // 16. start_date
-		&task.DueDate,               // 17. due_date
-		&task.CompletedAt,           // 18. completed_at
-		&task.Blocked,               // 19. blocked
-		&task.Position,              // 20. position
-		&task.CreatedBy,             // 21. created_by
-		&task.CreatedAt,             // 22. created_at
-		&task.UpdatedAt,             // 23. updated_at
-	)
-	
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	
-	return task, nil
-}
