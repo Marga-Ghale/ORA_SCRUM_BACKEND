@@ -20,171 +20,242 @@ func SeedData(repos *repository.Repositories) {
 		return
 	}
 
-	log.Println("[Seed] Creating initial data...")
+	log.Println("[Seed] 🌱 Creating initial data with real scenarios...")
 
 	// ============================================
-	// CREATE USERS
+	// CREATE USERS (4 real team members)
 	// ============================================
 	password, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 
-	user1 := &repository.User{
-		Email:    "test@example.com",
+	// 1. MARGA - Workspace Owner (Admin)
+	marga := &repository.User{
+		Email:    "marga.ghale@oratechnologies.io",
 		Password: string(password),
-		Name:     "Test User",
+		Name:     "Marga Ghale",
 		Status:   "online",
 	}
-	repos.UserRepo.Create(ctx, user1)
+	repos.UserRepo.Create(ctx, marga)
 
-	user2 := &repository.User{
-		Email:    "dev@example.com",
+	// 2. BIPIN - Full Workspace Member
+	bipin := &repository.User{
+		Email:    "bipin.dhimal@oratechnologies.io",
 		Password: string(password),
-		Name:     "Dev User",
+		Name:     "Bipin Dhimal",
 		Status:   "online",
 	}
-	repos.UserRepo.Create(ctx, user2)
+	repos.UserRepo.Create(ctx, bipin)
 
-	user3 := &repository.User{
-		Email:    "admin@example.com",
+	// 3. KRITIM - Space-Only Member (Limited Access)
+	kritim := &repository.User{
+		Email:    "kritim.kafle@oratechnologies.io",
 		Password: string(password),
-		Name:     "Admin User",
+		Name:     "Kritim Kafle",
 		Status:   "away",
 	}
-	repos.UserRepo.Create(ctx, user3)
+	repos.UserRepo.Create(ctx, kritim)
+
+	// 4. PRERAK - Project-Only Contractor
+	prerak := &repository.User{
+		Email:    "prerak.khadka@oratechnologies.io",
+		Password: string(password),
+		Name:     "Prerak Khadka",
+		Status:   "online",
+	}
+	repos.UserRepo.Create(ctx, prerak)
+
+	log.Printf("✅ Created 4 users: Marga (admin), Bipin (member), Kritim (space-only), Prerak (contractor)")
 
 	// ============================================
-	// CREATE WORKSPACE
+	// SCENARIO 1: CREATE WORKSPACE
+	// Marga creates "ORA Technologies" workspace
 	// ============================================
 	defaultVisibility := "private"
 	workspace := &repository.Workspace{
-		Name:       "My Workspace",
-		OwnerID:    user1.ID,
-		Visibility: &defaultVisibility,
+		Name:        "ORA Technologies",
+		Description: stringPtr("Main company workspace for all projects"),
+		OwnerID:     marga.ID,
+		Visibility:  &defaultVisibility,
 	}
 	repos.WorkspaceRepo.Create(ctx, workspace)
 
-	// Add members to workspace
+	// Add workspace members
+	// Marga = OWNER (full control)
 	repos.WorkspaceRepo.AddMember(ctx, &repository.WorkspaceMember{
 		WorkspaceID: workspace.ID,
-		UserID:      user1.ID,
+		UserID:      marga.ID,
 		Role:        "owner",
 	})
+
+	// Bipin = MEMBER (can see everything, but limited permissions)
 	repos.WorkspaceRepo.AddMember(ctx, &repository.WorkspaceMember{
 		WorkspaceID: workspace.ID,
-		UserID:      user2.ID,
-		Role:        "admin",
-	})
-	repos.WorkspaceRepo.AddMember(ctx, &repository.WorkspaceMember{
-		WorkspaceID: workspace.ID,
-		UserID:      user3.ID,
+		UserID:      bipin.ID,
 		Role:        "member",
 	})
 
+	// ❌ Kritim NOT added to workspace (will only access Design space)
+	// ❌ Prerak NOT added to workspace (will only access one project)
+
+	log.Printf("✅ Created workspace: ORA Technologies")
+	log.Printf("   └─ Members: Marga (owner), Bipin (member)")
+	log.Printf("   └─ NOT in workspace: Kritim, Prerak")
+
 	// ============================================
-	// CREATE SPACE (under workspace)
+	// SCENARIO 2: CREATE SPACES
+	// Bipin creates "Engineering" space (he's workspace member)
+	// Marga creates "Design" space
 	// ============================================
-	space := &repository.Space{
+
+	// Space 1: Engineering (created by Bipin)
+	engineering := &repository.Space{
 		Name:        "Engineering",
-		WorkspaceID: workspace.ID, // ✅ Must have workspace
-		OwnerID:     user1.ID,     // ✅ Must have owner
+		Description: stringPtr("All engineering projects"),
+		WorkspaceID: workspace.ID,
+		OwnerID:     bipin.ID,
 		Visibility:  &defaultVisibility,
 	}
-	repos.SpaceRepo.Create(ctx, space)
+	repos.SpaceRepo.Create(ctx, engineering)
 
-	// Add space members
+	// Add Bipin as space owner
 	repos.SpaceRepo.AddMember(ctx, &repository.SpaceMember{
-		SpaceID: space.ID,
-		UserID:  user1.ID,
+		SpaceID: engineering.ID,
+		UserID:  bipin.ID,
 		Role:    "owner",
 	})
+
+	// Space 2: Design (created by Marga)
+	design := &repository.Space{
+		Name:        "Design",
+		Description: stringPtr("Design and UI/UX projects"),
+		WorkspaceID: workspace.ID,
+		OwnerID:     marga.ID,
+		Visibility:  &defaultVisibility,
+	}
+	repos.SpaceRepo.Create(ctx, design)
+
+	// Add Marga as space owner
 	repos.SpaceRepo.AddMember(ctx, &repository.SpaceMember{
-		SpaceID: space.ID,
-		UserID:  user2.ID,
-		Role:    "admin",
+		SpaceID: design.ID,
+		UserID:  marga.ID,
+		Role:    "owner",
 	})
+
+	// ✅ Add Kritim ONLY to Design space (she's a designer, not full workspace member)
 	repos.SpaceRepo.AddMember(ctx, &repository.SpaceMember{
-		SpaceID: space.ID,
-		UserID:  user3.ID,
+		SpaceID: design.ID,
+		UserID:  kritim.ID,
 		Role:    "member",
 	})
 
-	// ============================================
-	// CREATE FOLDER (optional, under space)
-	// ============================================
-	folder := &repository.Folder{
-		Name:       "Backend Projects",
-		SpaceID:    space.ID, // ✅ Must have space
-		OwnerID:    user1.ID, // ✅ Must have owner
-		Visibility: &defaultVisibility,
-	}
-	repos.FolderRepo.Create(ctx, folder)
+	log.Printf("✅ Created 2 spaces:")
+	log.Printf("   ├─ Engineering (Bipin created)")
+	log.Printf("   │  └─ Direct members: Bipin (owner)")
+	log.Printf("   │  └─ Inherited: Marga (from workspace)")
+	log.Printf("   └─ Design (Marga created)")
+	log.Printf("      └─ Direct members: Marga (owner), Kritim (member)")
+	log.Printf("      └─ Inherited: Bipin (from workspace)")
 
-	// Add folder members
+	// ============================================
+	// SCENARIO 3: CREATE FOLDERS
+	// Bipin creates "Backend" folder in Engineering
+	// ============================================
+	backendFolder := &repository.Folder{
+		Name:        "Backend Projects",
+		Description: stringPtr("All backend microservices"),
+		SpaceID:     engineering.ID,
+		OwnerID:     bipin.ID,
+		Visibility:  &defaultVisibility,
+	}
+	repos.FolderRepo.Create(ctx, backendFolder)
+
 	repos.FolderRepo.AddMember(ctx, &repository.FolderMember{
-		FolderID: folder.ID,
-		UserID:   user1.ID,
+		FolderID: backendFolder.ID,
+		UserID:   bipin.ID,
 		Role:     "owner",
 	})
-	repos.FolderRepo.AddMember(ctx, &repository.FolderMember{
-		FolderID: folder.ID,
-		UserID:   user2.ID,
-		Role:     "member",
-	})
+
+	log.Printf("✅ Created folder: Backend Projects")
+	log.Printf("   └─ Direct: Bipin (owner)")
+	log.Printf("   └─ Inherited: Marga (workspace)")
 
 	// ============================================
-	// CREATE PROJECT (under space, optionally in folder)
+	// SCENARIO 4: CREATE PROJECTS
+	// Project 1: ORA Scrum (in Backend folder, Engineering space)
+	// Project 2: Design System (in Design space, NO folder)
+	// Project 3: Mobile App (Prerak is contractor, project-only access)
 	// ============================================
-	project := &repository.Project{
-		Name:       "ORA Scrum",
-		Key:        "ORA",
-		SpaceID:    space.ID,   // ✅ Must have space
-		FolderID:   &folder.ID, // ✅ Optional folder (can be nil)
-		LeadID:     &user1.ID,
-		Visibility: &defaultVisibility,
+
+	// Project 1: ORA Scrum Backend (Bipin leads)
+	oraScrum := &repository.Project{
+		Name:        "ORA Scrum Backend",
+		Key:         "ORA",
+		Description: stringPtr("Main scrum management system backend"),
+		SpaceID:     engineering.ID,
+		FolderID:    &backendFolder.ID,
+		LeadID:      &bipin.ID,
+		Visibility:  &defaultVisibility,
 	}
-	
-	repos.ProjectRepo.Create(ctx, project)
+	repos.ProjectRepo.Create(ctx, oraScrum)
 
 	// Add project members
 	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
-		ProjectID: project.ID,
-		UserID:    user1.ID,
-		Role:      "lead",
+		ProjectID: oraScrum.ID,
+		UserID:    bipin.ID,
+		Role:      "lead", // Bipin is project lead
 	})
-	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
-		ProjectID: project.ID,
-		UserID:    user2.ID,
-		Role:      "member",
-	})
-	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
-		ProjectID: project.ID,
-		UserID:    user3.ID,
-		Role:      "member",
-	})
+	// Marga has access via workspace (inherited)
 
-	// ============================================
-	// CREATE PROJECT WITHOUT FOLDER (direct in space)
-	// ============================================
-	project2 := &repository.Project{
-		Name:       "Mobile App",
-		Key:        "MOB",
-		SpaceID:    space.ID, // ✅ Must have space
-		FolderID:   nil,      // ✅ No folder - direct in space
-		LeadID:     &user2.ID,
-		Visibility: &defaultVisibility,
+	// Project 2: Design System (Kritim + Marga)
+	designSystem := &repository.Project{
+		Name:        "Design System",
+		Key:         "DS",
+		Description: stringPtr("Company-wide design system and components"),
+		SpaceID:     design.ID,
+		FolderID:    nil, // NO folder - direct in space
+		LeadID:      &kritim.ID,
+		Visibility:  &defaultVisibility,
 	}
-	repos.ProjectRepo.Create(ctx, project2)
+	repos.ProjectRepo.Create(ctx, designSystem)
 
-	// Add project2 members
 	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
-		ProjectID: project2.ID,
-		UserID:    user2.ID,
+		ProjectID: designSystem.ID,
+		UserID:    kritim.ID,
+		Role:      "lead", // Kritim leads design
+	})
+	// Marga & Bipin have access via workspace/space
+
+	// Project 3: Mobile App (Prerak is CONTRACTOR - project-only access)
+	mobileApp := &repository.Project{
+		Name:        "Mobile App",
+		Key:         "MOB",
+		Description: stringPtr("Customer-facing mobile application"),
+		SpaceID:     engineering.ID,
+		FolderID:    nil, // Direct in space
+		LeadID:      &marga.ID,
+		Visibility:  &defaultVisibility,
+	}
+	repos.ProjectRepo.Create(ctx, mobileApp)
+
+	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
+		ProjectID: mobileApp.ID,
+		UserID:    marga.ID,
 		Role:      "lead",
 	})
+
+	// ✅ Add Prerak ONLY to this project (he's a contractor)
 	repos.ProjectRepo.AddMember(ctx, &repository.ProjectMember{
-		ProjectID: project2.ID,
-		UserID:    user1.ID,
-		Role:      "member",
+		ProjectID: mobileApp.ID,
+		UserID:    prerak.ID,
+		Role:      "member", // Contractor = member only
 	})
+
+	log.Printf("✅ Created 3 projects:")
+	log.Printf("   ├─ ORA Scrum Backend (Engineering/Backend)")
+	log.Printf("   │  └─ Lead: Bipin | Access: Marga (workspace), Bipin (direct)")
+	log.Printf("   ├─ Design System (Design, no folder)")
+	log.Printf("   │  └─ Lead: Kritim | Access: Marga (workspace), Bipin (workspace), Kritim (direct)")
+	log.Printf("   └─ Mobile App (Engineering, no folder)")
+	log.Printf("      └─ Lead: Marga | Access: Marga (direct), Bipin (workspace), Prerak (contractor)")
 
 	// ============================================
 	// CREATE LABELS
@@ -198,13 +269,14 @@ func SeedData(repos *repository.Repositories) {
 		{"bug", "#EF4444"},
 		{"feature", "#8B5CF6"},
 		{"documentation", "#F59E0B"},
+		{"urgent", "#DC2626"},
 	}
 
 	for _, l := range labels {
 		repos.LabelRepo.Create(ctx, &repository.Label{
 			Name:      l.Name,
 			Color:     l.Color,
-			ProjectID: project.ID,
+			ProjectID: oraScrum.ID,
 		})
 	}
 
@@ -216,8 +288,8 @@ func SeedData(repos *repository.Repositories) {
 	sprintEnd := now.AddDate(0, 0, 7)
 
 	sprint := &repository.Sprint{
-		Name:      "Sprint 1",
-		ProjectID: project.ID,
+		Name:      "Sprint 1 - December",
+		ProjectID: oraScrum.ID,
 		Status:    "active",
 		StartDate: sprintStart,
 		EndDate:   sprintEnd,
@@ -233,15 +305,16 @@ func SeedData(repos *repository.Repositories) {
 		Priority    string
 		AssigneeIDs []string
 		SprintID    *string
+		ProjectID   string
 	}{
-		{"Setup project structure", "done", "high", []string{user1.ID}, &sprint.ID},
-		{"Implement authentication", "done", "urgent", []string{user1.ID}, &sprint.ID},
-		{"Create dashboard UI", "in_progress", "high", []string{user2.ID}, &sprint.ID},
-		{"API integration", "in_progress", "medium", []string{user2.ID}, &sprint.ID},
-		{"Fix login bug", "todo", "urgent", []string{user1.ID}, &sprint.ID},
-		{"Add dark mode", "todo", "low", []string{user3.ID}, &sprint.ID},
-		{"Write documentation", "backlog", "low", []string{}, nil},
-		{"Performance optimization", "backlog", "medium", []string{}, nil},
+		{"Setup project structure", "done", "high", []string{bipin.ID}, &sprint.ID, oraScrum.ID},
+		{"Implement authentication", "done", "urgent", []string{bipin.ID}, &sprint.ID, oraScrum.ID},
+		{"Create dashboard UI", "in_progress", "high", []string{kritim.ID}, &sprint.ID, oraScrum.ID},
+		{"API integration", "in_progress", "medium", []string{bipin.ID}, &sprint.ID, oraScrum.ID},
+		{"Fix login bug", "todo", "urgent", []string{marga.ID}, &sprint.ID, oraScrum.ID},
+		{"Add dark mode", "todo", "low", []string{kritim.ID}, &sprint.ID, oraScrum.ID},
+		{"Write documentation", "backlog", "low", []string{}, nil, oraScrum.ID},
+		{"Performance optimization", "backlog", "medium", []string{prerak.ID}, nil, oraScrum.ID},
 	}
 
 	for i, t := range tasks {
@@ -249,11 +322,11 @@ func SeedData(repos *repository.Repositories) {
 			Title:       t.Title,
 			Status:      t.Status,
 			Priority:    t.Priority,
-			ProjectID:   project.ID,
+			ProjectID:   t.ProjectID,
 			SprintID:    t.SprintID,
 			AssigneeIDs: t.AssigneeIDs,
 			LabelIDs:    []string{},
-			CreatedBy:   &user1.ID,
+			CreatedBy:   &marga.ID,
 			Position:    i,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -264,134 +337,185 @@ func SeedData(repos *repository.Repositories) {
 	// ============================================
 	// CREATE SAMPLE NOTIFICATIONS
 	// ============================================
-	seedNotifications(ctx, repos, user1.ID, user2.ID, user3.ID, project.ID, workspace.ID, sprint.ID)
+	seedNotifications(ctx, repos, marga.ID, bipin.ID, kritim.ID, prerak.ID, oraScrum.ID, workspace.ID, sprint.ID)
 
-	log.Println("[Seed] ✅ Initial data created successfully!")
-	log.Printf("[Seed] Created hierarchy: Workspace → Space → Folder → Project")
-	log.Printf("[Seed] Workspace ID: %s", workspace.ID)
-	log.Printf("[Seed] Space ID: %s", space.ID)
-	log.Printf("[Seed] Folder ID: %s", folder.ID)
-	log.Printf("[Seed] Project 1 ID (in folder): %s", project.ID)
-	log.Printf("[Seed] Project 2 ID (direct in space): %s", project2.ID)
+	// ============================================
+	// FINAL SUMMARY
+	// ============================================
+	log.Println("")
+	log.Println("🎉 ============================================")
+	log.Println("🎉 SEED COMPLETE - ACCESS SUMMARY")
+	log.Println("🎉 ============================================")
+	log.Println("")
+	log.Println("👤 MARGA GHALE (marga.ghale@oratechnologies.io)")
+	log.Println("   Role: WORKSPACE OWNER")
+	log.Println("   Access:")
+	log.Println("   ✅ Workspace: ORA Technologies (owner)")
+	log.Println("   ✅ Space: Engineering (inherited)")
+	log.Println("   ✅ Space: Design (owner)")
+	log.Println("   ✅ Folder: Backend Projects (inherited)")
+	log.Println("   ✅ Project: ORA Scrum Backend (inherited)")
+	log.Println("   ✅ Project: Design System (inherited)")
+	log.Println("   ✅ Project: Mobile App (lead)")
+	log.Println("")
+	log.Println("👤 BIPIN DHIMAL (bipin.dhimal@oratechnologies.io)")
+	log.Println("   Role: WORKSPACE MEMBER")
+	log.Println("   Access:")
+	log.Println("   ✅ Workspace: ORA Technologies (member)")
+	log.Println("   ✅ Space: Engineering (owner)")
+	log.Println("   ✅ Space: Design (inherited)")
+	log.Println("   ✅ Folder: Backend Projects (owner)")
+	log.Println("   ✅ Project: ORA Scrum Backend (lead)")
+	log.Println("   ✅ Project: Design System (inherited)")
+	log.Println("   ✅ Project: Mobile App (inherited)")
+	log.Println("")
+	log.Println("👤 KRITIM KAFLE (kritim.kafle@oratechnologies.io)")
+	log.Println("   Role: SPACE-ONLY MEMBER (Designer)")
+	log.Println("   Access:")
+	log.Println("   ❌ Workspace: ORA Technologies (no access)")
+	log.Println("   ❌ Space: Engineering (no access)")
+	log.Println("   ✅ Space: Design (member)")
+	log.Println("   ❌ Folder: Backend Projects (no access)")
+	log.Println("   ❌ Project: ORA Scrum Backend (no access)")
+	log.Println("   ✅ Project: Design System (lead)")
+	log.Println("   ❌ Project: Mobile App (no access)")
+	log.Println("")
+	log.Println("👤 PRERAK KHADKA (prerak.khadka@oratechnologies.io)")
+	log.Println("   Role: PROJECT-ONLY CONTRACTOR")
+	log.Println("   Access:")
+	log.Println("   ❌ Workspace: ORA Technologies (no access)")
+	log.Println("   ❌ Space: Engineering (no access)")
+	log.Println("   ❌ Space: Design (no access)")
+	log.Println("   ❌ Folder: Backend Projects (no access)")
+	log.Println("   ❌ Project: ORA Scrum Backend (no access)")
+	log.Println("   ❌ Project: Design System (no access)")
+	log.Println("   ✅ Project: Mobile App (member)")
+	log.Println("")
+	log.Println("🎯 Test Credentials:")
+	log.Println("   Email: any of the above")
+	log.Println("   Password: password123")
+	log.Println("")
 }
 
-// seedNotifications creates sample notifications for testing
-func seedNotifications(ctx context.Context, repos *repository.Repositories, user1ID, user2ID, user3ID, projectID, workspaceID, sprintID string) {
+// seedNotifications creates sample notifications for all users
+func seedNotifications(ctx context.Context, repos *repository.Repositories, margaID, bipinID, kritimID, prerakID, projectID, workspaceID, sprintID string) {
 	now := time.Now()
 
 	notifications := []repository.Notification{
-		// Task notifications for user1 (test@example.com)
+		// Marga's notifications (workspace owner)
 		{
-			UserID:    user1ID,
+			UserID:    margaID,
+			Type:      "WORKSPACE_CREATED",
+			Title:     "Workspace Created",
+			Message:   "You created workspace: ORA Technologies",
+			Read:      true,
+			Data:      map[string]interface{}{"workspaceId": workspaceID},
+			CreatedAt: now.Add(-10 * 24 * time.Hour),
+		},
+		{
+			UserID:    margaID,
 			Type:      "TASK_ASSIGNED",
 			Title:     "Task Assigned",
-			Message:   "You have been assigned to task: Create dashboard UI",
+			Message:   "You have been assigned to task: Fix login bug",
 			Read:      false,
-			Data:      map[string]interface{}{"taskId": "task-1", "projectId": projectID, "taskKey": "ORA-3"},
-			CreatedAt: now.Add(-5 * time.Minute),
-		},
-		{
-			UserID:    user1ID,
-			Type:      "TASK_COMMENTED",
-			Title:     "New Comment",
-			Message:   "Dev User commented on task: Setup project structure",
-			Read:      false,
-			Data:      map[string]interface{}{"taskId": "task-2", "projectId": projectID, "taskKey": "ORA-1"},
-			CreatedAt: now.Add(-15 * time.Minute),
-		},
-		{
-			UserID:    user1ID,
-			Type:      "TASK_STATUS_CHANGED",
-			Title:     "Task Status Changed",
-			Message:   "Task 'API integration' moved from To Do to In Progress",
-			Read:      false,
-			Data:      map[string]interface{}{"taskId": "task-3", "projectId": projectID, "taskKey": "ORA-4", "oldStatus": "todo", "newStatus": "in_progress"},
+			Data:      map[string]interface{}{"taskId": "task-5", "projectId": projectID, "taskKey": "ORA-5"},
 			CreatedAt: now.Add(-1 * time.Hour),
 		},
 		{
-			UserID:    user1ID,
+			UserID:    margaID,
 			Type:      "SPRINT_ENDING",
 			Title:     "Sprint Ending Soon",
-			Message:   "Sprint 'Sprint 1' ends in 7 days",
+			Message:   "Sprint 'Sprint 1 - December' ends in 7 days",
 			Read:      false,
 			Data:      map[string]interface{}{"sprintId": sprintID, "projectId": projectID, "daysRemaining": 7},
-			CreatedAt: now.Add(-2 * time.Hour),
-		},
-		{
-			UserID:    user1ID,
-			Type:      "MENTION",
-			Title:     "You were mentioned",
-			Message:   "Dev User mentioned you in task: Fix login bug",
-			Read:      true,
-			Data:      map[string]interface{}{"taskId": "task-4", "projectId": projectID, "taskKey": "ORA-5"},
-			CreatedAt: now.Add(-1 * 24 * time.Hour),
-		},
-		{
-			UserID:    user1ID,
-			Type:      "TASK_DUE_SOON",
-			Title:     "Task Due Tomorrow",
-			Message:   "Task 'Create dashboard UI' is due tomorrow",
-			Read:      true,
-			Data:      map[string]interface{}{"taskId": "task-5", "projectId": projectID, "taskKey": "ORA-3", "daysUntilDue": 1},
-			CreatedAt: now.Add(-2 * 24 * time.Hour),
-		},
-		{
-			UserID:    user1ID,
-			Type:      "PROJECT_INVITATION",
-			Title:     "Project Invitation",
-			Message:   "Admin User added you to project: Mobile App",
-			Read:      true,
-			Data:      map[string]interface{}{"projectId": "project-2"},
-			CreatedAt: now.Add(-5 * 24 * time.Hour),
+			CreatedAt: now.Add(-3 * time.Hour),
 		},
 
-		// Notifications for user2 (dev@example.com)
+		// Bipin's notifications (workspace member, space owner)
 		{
-			UserID:    user2ID,
+			UserID:    bipinID,
+			Type:      "WORKSPACE_INVITATION",
+			Title:     "Workspace Invitation",
+			Message:   "Marga Ghale added you to workspace: ORA Technologies",
+			Read:      true,
+			Data:      map[string]interface{}{"workspaceId": workspaceID},
+			CreatedAt: now.Add(-9 * 24 * time.Hour),
+		},
+		{
+			UserID:    bipinID,
+			Type:      "SPACE_CREATED",
+			Title:     "Space Created",
+			Message:   "You created space: Engineering",
+			Read:      true,
+			Data:      map[string]interface{}{"spaceId": "space-eng"},
+			CreatedAt: now.Add(-8 * 24 * time.Hour),
+		},
+		{
+			UserID:    bipinID,
 			Type:      "TASK_ASSIGNED",
 			Title:     "Task Assigned",
 			Message:   "You have been assigned to task: API integration",
 			Read:      false,
-			Data:      map[string]interface{}{"taskId": "task-6", "projectId": projectID, "taskKey": "ORA-4"},
-			CreatedAt: now.Add(-30 * time.Minute),
+			Data:      map[string]interface{}{"taskId": "task-4", "projectId": projectID, "taskKey": "ORA-4"},
+			CreatedAt: now.Add(-2 * time.Hour),
 		},
 		{
-			UserID:    user2ID,
-			Type:      "TASK_CREATED",
-			Title:     "New Task Created",
-			Message:   "New task created: Performance optimization (ORA-8)",
-			Read:      false,
-			Data:      map[string]interface{}{"taskId": "task-7", "projectId": projectID, "taskKey": "ORA-8"},
-			CreatedAt: now.Add(-45 * time.Minute),
-		},
-		{
-			UserID:    user2ID,
-			Type:      "SPRINT_STARTED",
-			Title:     "Sprint Started",
-			Message:   "Sprint 'Sprint 1' has started! Time to get to work.",
+			UserID:    bipinID,
+			Type:      "TASK_COMPLETED",
+			Title:     "Task Completed",
+			Message:   "You completed task: Implement authentication",
 			Read:      true,
-			Data:      map[string]interface{}{"sprintId": sprintID, "projectId": projectID},
-			CreatedAt: now.Add(-7 * 24 * time.Hour),
+			Data:      map[string]interface{}{"taskId": "task-2", "projectId": projectID, "taskKey": "ORA-2"},
+			CreatedAt: now.Add(-5 * 24 * time.Hour),
 		},
 
-		// Notifications for user3 (admin@example.com)
+		// Kritim's notifications (space-only member)
 		{
-			UserID:    user3ID,
-			Type:      "TASK_ASSIGNED",
-			Title:     "Task Assigned",
-			Message:   "You have been assigned to task: Add dark mode",
-			Read:      false,
-			Data:      map[string]interface{}{"taskId": "task-8", "projectId": projectID, "taskKey": "ORA-6"},
-			CreatedAt: now.Add(-1 * time.Hour),
+			UserID:    kritimID,
+			Type:      "SPACE_INVITATION",
+			Title:     "Space Invitation",
+			Message:   "Marga Ghale added you to space: Design",
+			Read:      true,
+			Data:      map[string]interface{}{"spaceId": "space-design"},
+			CreatedAt: now.Add(-7 * 24 * time.Hour),
 		},
 		{
-			UserID:    user3ID,
-			Type:      "WORKSPACE_INVITATION",
-			Title:     "Workspace Invitation",
-			Message:   "Test User added you to workspace: My Workspace",
-			Read:      true,
-			Data:      map[string]interface{}{"workspaceId": workspaceID},
-			CreatedAt: now.Add(-10 * 24 * time.Hour),
+			UserID:    kritimID,
+			Type:      "PROJECT_INVITATION",
+			Title:     "Project Lead",
+			Message:   "You are now lead of project: Design System",
+			Read:      false,
+			Data:      map[string]interface{}{"projectId": "project-ds"},
+			CreatedAt: now.Add(-6 * 24 * time.Hour),
+		},
+		{
+			UserID:    kritimID,
+			Type:      "TASK_ASSIGNED",
+			Title:     "Task Assigned",
+			Message:   "You have been assigned to task: Create dashboard UI",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-3", "projectId": projectID, "taskKey": "ORA-3"},
+			CreatedAt: now.Add(-4 * time.Hour),
+		},
+
+		// Prerak's notifications (contractor - project only)
+		{
+			UserID:    prerakID,
+			Type:      "PROJECT_INVITATION",
+			Title:     "Project Invitation",
+			Message:   "Marga Ghale added you to project: Mobile App",
+			Read:      false,
+			Data:      map[string]interface{}{"projectId": "project-mobile"},
+			CreatedAt: now.Add(-2 * 24 * time.Hour),
+		},
+		{
+			UserID:    prerakID,
+			Type:      "TASK_ASSIGNED",
+			Title:     "Task Assigned",
+			Message:   "You have been assigned to task: Performance optimization",
+			Read:      false,
+			Data:      map[string]interface{}{"taskId": "task-8", "projectId": projectID, "taskKey": "ORA-8"},
+			CreatedAt: now.Add(-1 * 24 * time.Hour),
 		},
 	}
 
@@ -400,5 +524,10 @@ func seedNotifications(ctx context.Context, repos *repository.Repositories, user
 		repos.NotificationRepo.Create(ctx, &notif)
 	}
 
-	log.Printf("[Seed] Created %d sample notifications", len(notifications))
+	log.Printf("✅ Created %d notifications for all users", len(notifications))
+}
+
+// Helper function to create string pointers
+func stringPtr(s string) *string {
+	return &s
 }
