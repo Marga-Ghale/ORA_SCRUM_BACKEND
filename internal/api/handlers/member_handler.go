@@ -123,6 +123,10 @@ func (h *MemberHandler) InviteMemberByEmail(c *gin.Context) {
 
 	err := h.memberService.InviteMemberByEmail(c.Request.Context(), entityType, entityID, req.Email, req.Role, inviterID)
 	if err != nil {
+		// ✅ ADD LOGGING
+		log.Printf("[MemberHandler][InviteMemberByEmail] entityType=%s entityID=%s email=%s inviterID=%s error=%v", 
+			entityType, entityID, req.Email, inviterID, err)
+		
 		if err == service.ErrUserNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "User with this email not found"})
 			return
@@ -131,11 +135,16 @@ func (h *MemberHandler) InviteMemberByEmail(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
 			return
 		}
+		// ✅ ADD THIS CHECK
+		if err == service.ErrUnauthorized {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to add members"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to invite member"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"message": "Invitation sent successfully"})
+	c.JSON(http.StatusCreated, gin.H{"message": "Member added successfully"})
 }
 
 // UpdateMemberRole updates a member's role

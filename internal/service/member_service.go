@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
@@ -101,6 +102,121 @@ func NewMemberService(
 // ============================================
 
 
+// func (s *memberService) AddMember(ctx context.Context, entityType, entityID, userID, role, inviterID string) error {
+// 	// Verify user exists first
+// 	user, err := s.userRepo.FindByID(ctx, userID)
+// 	if err != nil || user == nil {
+// 		return ErrUserNotFound
+// 	}
+
+// 	// Check if already a direct member
+// 	existing, _ := s.GetMember(ctx, entityType, entityID, userID)
+// 	if existing != nil && !existing.IsInherited {
+// 		return ErrConflict
+// 	}
+
+// 	// ✅ FIXED: Skip permission check if creator is adding themselves
+// 	// This happens when creating new workspace/space/folder/project
+// 	if inviterID != userID {
+// 		// Only check permissions if someone else is adding this user
+// 		hasPermission := false
+		
+// 		switch entityType {
+// 		case EntityTypeWorkspace:
+// 			member, _ := s.workspaceRepo.FindMember(ctx, entityID, inviterID)
+// 			if member != nil {
+// 				roleVal := getRoleLevel(member.Role)
+// 				hasPermission = roleVal >= 4  // admin or owner
+// 			}
+// 		case EntityTypeSpace:
+// 			space, _ := s.spaceRepo.FindByID(ctx, entityID)
+// 			if space != nil {
+// 				wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+// 				if wsMember != nil {
+// 					roleVal := getRoleLevel(wsMember.Role)
+// 					hasPermission = roleVal >= 4  // admin or owner
+// 				}
+// 			}
+// 		case EntityTypeFolder:
+// 			folder, _ := s.folderRepo.FindByID(ctx, entityID)
+// 			if folder != nil {
+// 				spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
+// 				if spaceMember != nil {
+// 					roleVal := getRoleLevel(spaceMember.Role)
+// 					hasPermission = roleVal >= 4  // admin or owner
+// 				}
+// 			}
+// 		case EntityTypeProject:
+// 			projMember, _ := s.projectRepo.FindMember(ctx, entityID, inviterID)
+// 			if projMember != nil {
+// 				roleVal := getRoleLevel(projMember.Role)
+// 				hasPermission = roleVal >= 3  // ✅ FIXED: lead, admin, or owner
+// 			}
+// 		}
+
+// 		if !hasPermission {
+// 			return ErrUnauthorized
+// 		}
+// 	}
+
+// 	// Delegate to appropriate repository
+// 	switch entityType {
+// 	case EntityTypeWorkspace:
+// 		member := &repository.WorkspaceMember{
+// 			WorkspaceID: entityID,
+// 			UserID:      userID,
+// 			Role:        role,
+// 		}
+// 		if err := s.workspaceRepo.AddMember(ctx, member); err != nil {
+// 			return err
+// 		}
+// 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
+// 		return nil
+
+// 	case EntityTypeSpace:
+// 		member := &repository.SpaceMember{
+// 			SpaceID: entityID,
+// 			UserID:  userID,
+// 			Role:    role,
+// 		}
+// 		if err := s.spaceRepo.AddMember(ctx, member); err != nil {
+// 			return err
+// 		}
+// 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
+// 		return nil
+
+// 	case EntityTypeFolder:
+// 		member := &repository.FolderMember{
+// 			FolderID: entityID,
+// 			UserID:   userID,
+// 			Role:     role,
+// 		}
+// 		if err := s.folderRepo.AddMember(ctx, member); err != nil {
+// 			return err
+// 		}
+// 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
+// 		return nil
+
+// 	case EntityTypeProject:
+// 		member := &repository.ProjectMember{
+// 			ProjectID: entityID,
+// 			UserID:    userID,
+// 			Role:      role,
+// 		}
+// 		if err := s.projectRepo.AddMember(ctx, member); err != nil {
+// 			return err
+// 		}
+// 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
+// 		return nil
+
+// 	default:
+// 		return ErrInvalidEntityType
+// 	}
+// }
+
+
+
+// ✅ FIXED: AddMember with proper permission checks
 func (s *memberService) AddMember(ctx context.Context, entityType, entityID, userID, role, inviterID string) error {
 	// Verify user exists first
 	user, err := s.userRepo.FindByID(ctx, userID)
@@ -114,48 +230,118 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 		return ErrConflict
 	}
 
-	// ✅ FIXED: Skip permission check if creator is adding themselves
-	// This happens when creating new workspace/space/folder/project
-	if inviterID != userID {
-		// Only check permissions if someone else is adding this user
-		hasPermission := false
-		
+	// ✅ FIXED: Permission check logic
+	hasPermission := false
+	isCreatorAddingSelf := inviterID == userID
+
+	// ✅ CRITICAL FIX: For workspace creation, skip permission check
+	if entityType == EntityTypeWorkspace && isCreatorAddingSelf {
+		// When creating workspace, creator adds themselves - ALWAYS ALLOW
+		hasPermission = true
+	} else {
+		// Check permissions for adding OTHER users
 		switch entityType {
 		case EntityTypeWorkspace:
+			// Only workspace admin/owner can add members
 			member, _ := s.workspaceRepo.FindMember(ctx, entityID, inviterID)
 			if member != nil {
 				roleVal := getRoleLevel(member.Role)
-				hasPermission = roleVal >= 4  // admin or owner
+				hasPermission = roleVal >= 4 // admin or owner
 			}
-		case EntityTypeSpace:
-			space, _ := s.spaceRepo.FindByID(ctx, entityID)
-			if space != nil {
-				wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
-				if wsMember != nil {
-					roleVal := getRoleLevel(wsMember.Role)
-					hasPermission = roleVal >= 4  // admin or owner
-				}
-			}
-		case EntityTypeFolder:
-			folder, _ := s.folderRepo.FindByID(ctx, entityID)
-			if folder != nil {
-				spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
-				if spaceMember != nil {
-					roleVal := getRoleLevel(spaceMember.Role)
-					hasPermission = roleVal >= 4  // admin or owner
-				}
-			}
-		case EntityTypeProject:
-			projMember, _ := s.projectRepo.FindMember(ctx, entityID, inviterID)
-			if projMember != nil {
-				roleVal := getRoleLevel(projMember.Role)
-				hasPermission = roleVal >= 3  // ✅ FIXED: lead, admin, or owner
-			}
-		}
 
-		if !hasPermission {
-			return ErrUnauthorized
+		case EntityTypeSpace:
+			// Space creation: creator adds themselves
+			if isCreatorAddingSelf {
+				// ✅ Check workspace permission
+				space, _ := s.spaceRepo.FindByID(ctx, entityID)
+				if space != nil {
+					// Check if inviter has workspace access
+					wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+					hasPermission = wsMember != nil // Any workspace member can create space
+				}
+			} else {
+				// Adding other users: need admin/owner
+				space, _ := s.spaceRepo.FindByID(ctx, entityID)
+				if space != nil {
+					wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+					if wsMember != nil {
+						roleVal := getRoleLevel(wsMember.Role)
+						hasPermission = roleVal >= 4
+					}
+				}
+			}
+
+		case EntityTypeFolder:
+			// Folder creation: creator adds themselves
+			if isCreatorAddingSelf {
+				folder, _ := s.folderRepo.FindByID(ctx, entityID)
+				if folder != nil {
+					// Check space access
+					spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
+					if spaceMember != nil {
+						hasPermission = true
+					} else {
+						// Check workspace access
+						space, _ := s.spaceRepo.FindByID(ctx, folder.SpaceID)
+						if space != nil {
+							wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+							hasPermission = wsMember != nil
+						}
+					}
+				}
+			} else {
+				// Adding other users
+				folder, _ := s.folderRepo.FindByID(ctx, entityID)
+				if folder != nil {
+					spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
+					if spaceMember != nil {
+						roleVal := getRoleLevel(spaceMember.Role)
+						hasPermission = roleVal >= 4
+					}
+				}
+			}
+
+		case EntityTypeProject:
+			// Project creation: creator adds themselves
+			if isCreatorAddingSelf {
+				project, _ := s.projectRepo.FindByID(ctx, entityID)
+				if project != nil {
+					// Check folder/space/workspace access
+					if project.FolderID != nil {
+						folderMember, _ := s.folderRepo.FindMember(ctx, *project.FolderID, inviterID)
+						if folderMember != nil {
+							hasPermission = true
+						}
+					}
+					if !hasPermission {
+						spaceMember, _ := s.spaceRepo.FindMember(ctx, project.SpaceID, inviterID)
+						if spaceMember != nil {
+							hasPermission = true
+						}
+					}
+					if !hasPermission {
+						space, _ := s.spaceRepo.FindByID(ctx, project.SpaceID)
+						if space != nil {
+							wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+							hasPermission = wsMember != nil
+						}
+					}
+				}
+			} else {
+				// Adding other users: need lead/admin/owner
+				projMember, _ := s.projectRepo.FindMember(ctx, entityID, inviterID)
+				if projMember != nil {
+					roleVal := getRoleLevel(projMember.Role)
+					hasPermission = roleVal >= 3 // lead, admin, or owner
+				}
+			}
 		}
+	}
+
+	if !hasPermission {
+		log.Printf("[AddMember] DENIED: entityType=%s entityID=%s userID=%s inviterID=%s", 
+			entityType, entityID, userID, inviterID)
+		return ErrUnauthorized
 	}
 
 	// Delegate to appropriate repository
@@ -212,8 +398,6 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 		return ErrInvalidEntityType
 	}
 }
-
-// ✅ ADD this helper at bottom of member_service.go
 func getRoleLevel(role string) int {
 	roleMap := map[string]int{
 		"owner":  5,
