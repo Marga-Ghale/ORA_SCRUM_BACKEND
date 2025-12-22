@@ -51,9 +51,7 @@ func toUserResponse(u *repository.User) models.UserResponse {
 	}
 }
 
-// internal/api/handlers/handlers.go - toTaskResponse function
 
-// ✅ ADD THIS MISSING HELPER FUNCTION
 // ============================================
 // COMPREHENSIVE TASK RESPONSE MAPPER
 // ============================================

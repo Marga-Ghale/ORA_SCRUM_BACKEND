@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"time"
 
 	"github.com/lib/pq"
@@ -17,7 +18,7 @@ type Task struct {
 	Description    *string    `json:"description,omitempty" db:"description"`
 	Status         string     `json:"status" db:"status"`
 	Priority       string     `json:"priority" db:"priority"`
-	Type           *string    `json:"type,omitempty" db:"type"` // ← ADD THIS
+	Type           *string    `json:"type,omitempty" db:"type"` 
 	ProjectID      string     `json:"projectId" db:"project_id"`
 	SprintID       *string    `json:"sprintId,omitempty" db:"sprint_id"`
 	ParentTaskID   *string    `json:"parentTaskId,omitempty" db:"parent_task_id"`
@@ -365,15 +366,24 @@ func (r *taskRepository) RemoveWatcher(ctx context.Context, taskID, watcherID st
 // FindWithFilters performs advanced filtering
 func (r *taskRepository) FindWithFilters(ctx context.Context, filters *TaskFilters) ([]*Task, int, error) {
 	// Build dynamic query based on filters
-	baseQuery := `SELECT * FROM tasks WHERE project_id = $1`
+baseQuery := `
+	SELECT 
+		id, project_id, sprint_id, parent_task_id, title, description,
+		status, priority, type, assignee_ids, watcher_ids, label_ids,
+		story_points, estimated_hours, actual_hours, start_date, due_date,
+		completed_at, blocked, position, created_by, created_at, updated_at
+	FROM tasks 
+	WHERE project_id = $1
+`
 	countQuery := `SELECT COUNT(*) FROM tasks WHERE project_id = $1`
 	args := []interface{}{filters.ProjectID}
 	argIndex := 2
 
 	// Apply filters
 	if filters.SprintID != nil {
-		baseQuery += ` AND sprint_id = $` + string(rune(argIndex))
-		countQuery += ` AND sprint_id = $` + string(rune(argIndex))
+		baseQuery += " AND sprint_id = $" + strconv.Itoa(argIndex)
+countQuery += " AND sprint_id = $" + strconv.Itoa(argIndex)
+
 		args = append(args, *filters.SprintID)
 		argIndex++
 	}
