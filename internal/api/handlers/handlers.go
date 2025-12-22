@@ -51,37 +51,7 @@ func toUserResponse(u *repository.User) models.UserResponse {
 	}
 }
 
-// internal/api/handlers/handlers.go - toTaskResponse function
-// func toTaskResponse(t *repository.Task) models.TaskResponse {
-// 	return models.TaskResponse{
-// 		ID:             t.ID,
-// 		Title:          t.Title,
-// 		Description:    t.Description,
-// 		Status:         t.Status,
-// 		Priority:       t.Priority,
-// 		Type:           t.Type,
-// 		ProjectID:      t.ProjectID,
-// 		SprintID:       t.SprintID,
-// 		ParentTaskID:   t.ParentTaskID,
-// 		AssigneeIDs:    t.AssigneeIDs,
-// 		WatcherIDs:     t.WatcherIDs,
-// 		LabelIDs:       t.LabelIDs,
-// 		StoryPoints:    t.StoryPoints,
-// 		EstimatedHours: t.EstimatedHours,
-// 		ActualHours:    t.ActualHours,
-// 		StartDate:      t.StartDate,
-// 		DueDate:        t.DueDate,
-// 		CompletedAt:    t.CompletedAt,
-// 		Blocked:        t.Blocked,
-// 		Position:       t.Position,
-// 		CreatedBy:      t.CreatedBy,
-// 		CreatedAt:      t.CreatedAt,
-// 		UpdatedAt:      t.UpdatedAt,
-// 	}
-// }
 
-
-// ✅ ADD THIS MISSING HELPER FUNCTION
 // ============================================
 // COMPREHENSIVE TASK RESPONSE MAPPER
 // ============================================
