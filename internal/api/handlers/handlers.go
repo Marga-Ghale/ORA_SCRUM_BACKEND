@@ -85,7 +85,26 @@ func toTaskResponse(t *repository.Task) models.TaskResponse {
 		CreatedBy:      t.CreatedBy,
 		CreatedAt:      t.CreatedAt,
 		UpdatedAt:      t.UpdatedAt,
+		SubtaskCount:   0,    // Will be populated separately if needed
+		Subtasks:       nil,  // Will be populated separately if needed
 	}
+}
+
+
+// Enhanced converter with subtasks
+// Enhanced converter with subtasks
+func toTaskResponseWithSubtasks(t *repository.Task, subtasks []*repository.Task) models.TaskResponse {
+	response := toTaskResponse(t)
+	response.SubtaskCount = len(subtasks)
+	
+	if len(subtasks) > 0 {
+		response.Subtasks = make([]models.TaskResponse, len(subtasks)) // ✅ Changed from []*models.TaskResponse to []models.TaskResponse
+		for i, st := range subtasks {
+			response.Subtasks[i] = toTaskResponse(st) // ✅ This now works
+		}
+	}
+	
+	return response
 }
 
 // Helper to ensure nil slices become empty slices

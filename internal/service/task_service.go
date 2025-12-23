@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/models"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
@@ -13,9 +14,9 @@ import (
 
 type TaskService interface {
 	// Task CRUD
-	Create(ctx context.Context, req *CreateTaskRequest) (*repository.Task, error)
+	Create(ctx context.Context, req *models.CreateTaskRequest) (*repository.Task, error)
 	GetByID(ctx context.Context, taskID, userID string) (*repository.Task, error)
-	Update(ctx context.Context, taskID, userID string, req *UpdateTaskRequest) (*repository.Task, error)
+	Update(ctx context.Context, taskID, userID string, req *models.UpdateTaskRequest) (*repository.Task, error)
 	Delete(ctx context.Context, taskID, userID string) error
 	
 	// Listing
@@ -35,6 +36,7 @@ type TaskService interface {
 	MarkComplete(ctx context.Context, taskID, userID string) error
 	MoveToSprint(ctx context.Context, taskID, sprintID, userID string) error
 	ConvertToSubtask(ctx context.Context, taskID, parentTaskID, userID string) error
+	PromoteToTask(ctx context.Context, taskID, userID string) error
 
 	// COMMENTS
 	AddComment(ctx context.Context, taskID, userID, content string, mentionedUsers []string) (*repository.TaskComment, error)
@@ -106,37 +108,7 @@ type BurndownPoint struct {
 }
 
 
-type CreateTaskRequest struct {
-	ProjectID      string
-	SprintID       *string
-	ParentTaskID   *string
-	Title          string
-	Description    *string
-	Status         string
-	Priority       string
-	AssigneeIDs    []string
-	LabelIDs       []string
-	EstimatedHours *float64
-	StoryPoints    *int
-	StartDate      *time.Time
-	DueDate        *time.Time
-	CreatedBy      *string
-}
 
-type UpdateTaskRequest struct {
-	Title          *string
-	Description    *string
-	Status         *string
-	Priority       *string
-	SprintID       *string
-	AssigneeIDs    *[]string
-	LabelIDs       *[]string
-	EstimatedHours *float64
-	ActualHours    *float64
-	StoryPoints    *int
-	StartDate      *time.Time
-	DueDate        *time.Time
-}
 
 
 type taskService struct {
@@ -195,7 +167,7 @@ func NewTaskService(
 // CREATE - With Notifications
 // ============================================
 
-func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repository.Task, error) {
+func (s *taskService) Create(ctx context.Context, req *models.CreateTaskRequest) (*repository.Task, error) {
 	// Verify project exists
 	project, err := s.projectRepo.FindByID(ctx, req.ProjectID)
 	if err != nil || project == nil {
@@ -247,6 +219,7 @@ func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repo
 		Description:    req.Description,
 		Status:         req.Status,
 		Priority:       req.Priority,
+		Type:           req.Type,           // ✅ Include Type
 		AssigneeIDs:    req.AssigneeIDs,
 		LabelIDs:       req.LabelIDs,
 		EstimatedHours: req.EstimatedHours,
@@ -265,6 +238,56 @@ func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repo
 	if err := s.taskRepo.Create(ctx, task); err != nil {
 		return nil, err
 	}
+
+	// ✅ CREATE SUBTASKS
+	if len(req.Subtasks) > 0 {
+		for _, subtaskReq := range req.Subtasks {
+			subtask := &repository.Task{
+				ProjectID:      task.ProjectID,
+				SprintID:       task.SprintID,
+				ParentTaskID:   &task.ID,  // ✅ Link to parent
+				Title:          subtaskReq.Title,
+				Description:    subtaskReq.Description,
+				Status:         subtaskReq.Status,
+				Priority:       subtaskReq.Priority,
+				Type:           strPtr("subtask"), // ✅ Mark as subtask
+				AssigneeIDs:    subtaskReq.AssigneeIDs,
+				LabelIDs:       []string{},
+				EstimatedHours: subtaskReq.EstimatedHours,
+				StoryPoints:    subtaskReq.StoryPoints,
+				CreatedBy:      req.CreatedBy,
+				WatcherIDs:     []string{},
+			}
+			
+			// Set defaults for subtask
+			if subtask.Status == "" {
+				subtask.Status = "todo"
+			}
+			if subtask.Priority == "" {
+				subtask.Priority = "medium"
+			}
+			
+			// Auto-add creator as watcher to subtask
+			if req.CreatedBy != nil {
+				subtask.WatcherIDs = append(subtask.WatcherIDs, *req.CreatedBy)
+			}
+			
+			// Verify subtask assignees have access
+			for _, assigneeID := range subtask.AssigneeIDs {
+				hasAccess, _, err := s.memberService.HasEffectiveAccess(ctx, EntityTypeProject, task.ProjectID, assigneeID)
+				if err != nil || !hasAccess {
+					continue // Skip invalid assignees
+				}
+			}
+			
+			// Create the subtask
+			if err := s.taskRepo.Create(ctx, subtask); err != nil {
+				log.Printf("Failed to create subtask: %v", err)
+				continue // Continue creating other subtasks even if one fails
+			}
+		}
+	}
+	// ✅ END SUBTASK CREATION
 
 	// ✅ NOTIFICATIONS START
 	creatorID := ""
@@ -330,7 +353,6 @@ func (s *taskService) Create(ctx context.Context, req *CreateTaskRequest) (*repo
 
 	return task, nil
 }
-
 
 // ============================================
 // READ
@@ -415,7 +437,7 @@ func (s *taskService) ListByStatus(ctx context.Context, projectID, status, userI
 // UPDATE - With Notifications
 // ============================================
 
-func (s *taskService) Update(ctx context.Context, taskID, userID string, req *UpdateTaskRequest) (*repository.Task, error) {
+func (s *taskService) Update(ctx context.Context, taskID, userID string, req *models.UpdateTaskRequest) (*repository.Task, error) {
 	task, err := s.taskRepo.FindByID(ctx, taskID)
 	if err != nil || task == nil {
 		return nil, ErrNotFound
@@ -452,6 +474,10 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *Up
 		task.Priority = *req.Priority
 		changes = append(changes, "priority")
 	}
+		if req.Type != nil {
+			task.Type = req.Type
+			changes = append(changes, "type")
+		}
 	if req.SprintID != nil {
 		task.SprintID = req.SprintID
 		changes = append(changes, "sprint")
@@ -842,10 +868,16 @@ func (s *taskService) MoveToSprint(ctx context.Context, taskID, sprintID, userID
 	return s.taskRepo.Update(ctx, task)
 }
 
+// In task_service.go, add these methods:
+
 func (s *taskService) ConvertToSubtask(ctx context.Context, taskID, parentTaskID, userID string) error {
 	task, err := s.taskRepo.FindByID(ctx, taskID)
 	if err != nil || task == nil {
 		return ErrNotFound
+	}
+
+	if !s.permService.CanEditTask(ctx, userID, taskID) {
+		return ErrUnauthorized
 	}
 
 	parentTask, err := s.taskRepo.FindByID(ctx, parentTaskID)
@@ -853,19 +885,65 @@ func (s *taskService) ConvertToSubtask(ctx context.Context, taskID, parentTaskID
 		return ErrNotFound
 	}
 
-	// Verify both tasks in same project
+	// Verify same project
 	if task.ProjectID != parentTask.ProjectID {
 		return ErrInvalidInput
+	}
+
+	// Prevent circular reference
+	if parentTask.ParentTaskID != nil && *parentTask.ParentTaskID == taskID {
+		return ErrInvalidInput
+	}
+
+	task.ParentTaskID = &parentTaskID
+	if err := s.taskRepo.Update(ctx, task); err != nil {
+		return err
+	}
+
+	// Broadcast update
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastTaskUpdated(
+			task.ProjectID,
+			s.taskToMap(task),
+			[]string{"converted to subtask"},
+			userID,
+		)
+	}
+
+	return nil
+}
+
+// Add helper method to convert subtask to main task
+func (s *taskService) PromoteToTask(ctx context.Context, taskID, userID string) error {
+	task, err := s.taskRepo.FindByID(ctx, taskID)
+	if err != nil || task == nil {
+		return ErrNotFound
 	}
 
 	if !s.permService.CanEditTask(ctx, userID, taskID) {
 		return ErrUnauthorized
 	}
 
-	task.ParentTaskID = &parentTaskID
-	return s.taskRepo.Update(ctx, task)
-}
+	if task.ParentTaskID == nil {
+		return ErrInvalidInput // Already a main task
+	}
 
+	task.ParentTaskID = nil
+	if err := s.taskRepo.Update(ctx, task); err != nil {
+		return err
+	}
+
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastTaskUpdated(
+			task.ProjectID,
+			s.taskToMap(task),
+			[]string{"promoted to main task"},
+			userID,
+		)
+	}
+
+	return nil
+}
 
 // ============================================
 // ADD COMMENT - With Notifications

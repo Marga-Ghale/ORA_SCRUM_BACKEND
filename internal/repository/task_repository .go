@@ -71,6 +71,9 @@ type TaskRepository interface {
 	FindByStatus(ctx context.Context, projectID, status string) ([]*Task, error)
 	FindBacklog(ctx context.Context, projectID string) ([]*Task, error)
 
+	GetSubtaskCount(ctx context.Context, taskID string) (int, error)
+
+
 	// Quick updates
 	UpdateStatus(ctx context.Context, taskID, status string) error
 	UpdatePriority(ctx context.Context, taskID, priority string) error
@@ -310,6 +313,15 @@ func (r *taskRepository) UpdatePriority(ctx context.Context, taskID, priority st
 	query := `UPDATE tasks SET priority = $2, updated_at = NOW() WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, taskID, priority)
 	return err
+}
+
+
+// Add implementation in taskRepository:
+func (r *taskRepository) GetSubtaskCount(ctx context.Context, taskID string) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM tasks WHERE parent_task_id = $1`
+	err := r.db.QueryRowContext(ctx, query, taskID).Scan(&count)
+	return count, err
 }
 
 // MarkComplete marks a task as complete

@@ -27,10 +27,13 @@ type TaskResponse struct {
 	CreatedBy      *string    `json:"createdBy,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
+	SubtaskCount   int             `json:"subtaskCount"`           // ADD THIS
+	Subtasks       []TaskResponse `json:"subtasks,omitempty"`     // ADD THIS
 }
 
 // CreateTaskRequest for creating tasks
 type CreateTaskRequest struct {
+	ProjectID      string
 	SprintID       *string    `json:"sprintId,omitempty"`
 	ParentTaskID   *string    `json:"parentTaskId,omitempty"`
 	Title          string     `json:"title" binding:"required"`
@@ -44,8 +47,19 @@ type CreateTaskRequest struct {
 	StoryPoints    *int       `json:"storyPoints,omitempty"`
 	StartDate      *time.Time `json:"startDate,omitempty"`
 	DueDate        *time.Time `json:"dueDate,omitempty"`
+	CreatedBy      *string
+	Subtasks       []SubtaskRequest `json:"subtasks,omitempty"` 
 }
 
+type SubtaskRequest struct {
+	Title          string   `json:"title" binding:"required"`
+	Description    *string  `json:"description"`
+	Status         string   `json:"status"`
+	Priority       string   `json:"priority"`
+	AssigneeIDs    []string `json:"assigneeIds"`
+	EstimatedHours *float64 `json:"estimatedHours"`
+	StoryPoints    *int     `json:"storyPoints"`
+}
 // UpdateTaskRequest for updating tasks
 type UpdateTaskRequest struct {
 	Title          *string    `json:"title,omitempty"`
