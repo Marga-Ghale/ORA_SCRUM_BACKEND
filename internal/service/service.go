@@ -46,6 +46,7 @@ type Services struct {
 	Permission   PermissionService
 	Member       MemberService
 	Broadcaster  *socket.Broadcaster
+	notifiServicev1  *notification.Service
 }
 
 // ServiceDeps contains all dependencies needed to create services
@@ -101,18 +102,21 @@ func NewServices(deps *ServiceDeps) *Services {
 		),
 		// ✅ CORRECTED TaskService with ALL required repos and services
 		Task: NewTaskService(
-			deps.Repos.TaskRepo,
-			deps.Repos.TaskCommentRepo,
-			deps.Repos.TaskAttachmentRepo,
-			deps.Repos.TimeEntryRepo,
-			deps.Repos.TaskDependencyRepo,
-			deps.Repos.TaskChecklistRepo,
-			deps.Repos.TaskActivityRepo,
-			deps.Repos.ProjectRepo,
-			deps.Repos.SprintRepo,
-			memberService,
-			permissionService,
-		),
+					deps.Repos.TaskRepo,
+					deps.Repos.TaskCommentRepo,
+					deps.Repos.TaskAttachmentRepo,
+					deps.Repos.TimeEntryRepo,
+					deps.Repos.TaskDependencyRepo,
+					deps.Repos.TaskChecklistRepo,
+					deps.Repos.TaskActivityRepo,
+					deps.Repos.ProjectRepo,
+					deps.Repos.SprintRepo,
+					deps.Repos.UserRepo,
+					memberService,
+					permissionService,
+					deps.NotifSvc,   
+					deps.Broadcaster,
+				),
 		Label:        NewLabelService(deps.Repos.LabelRepo),
 		Notification: NewNotificationService(deps.Repos.NotificationRepo),
 		Team:         NewTeamService(deps.Repos.TeamRepo, deps.Repos.UserRepo, deps.Repos.WorkspaceRepo, deps.NotifSvc, deps.EmailSvc, deps.Broadcaster),

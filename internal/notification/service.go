@@ -26,6 +26,12 @@ const (
 	TypeWorkspaceInvitation = "WORKSPACE_INVITATION"
 	TypeTaskCreated         = "TASK_CREATED"
 	TypeTaskDeleted         = "TASK_DELETED"
+	TypeTaskAttachmentAdded   = "TASK_ATTACHMENT_ADDED"
+	TypeTaskAttachmentDeleted = "TASK_ATTACHMENT_DELETED"
+	TypeChecklistItemComplete = "CHECKLIST_ITEM_COMPLETED"
+	TypeDependencyAdded       = "DEPENDENCY_ADDED"
+	TypeDependencyBlocking    = "DEPENDENCY_BLOCKING"
+	TypeTimeLoggedToTask      = "TIME_LOGGED_TO_TASK"
 )
 
 // Service handles sending notifications
