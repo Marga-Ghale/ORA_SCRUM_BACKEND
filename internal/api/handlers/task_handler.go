@@ -46,7 +46,6 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// ✅ Get projectID from URL
 	projectID := c.Param("id")
 
 	var req models.CreateTaskRequest
@@ -55,37 +54,39 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	createReq := &service.CreateTaskRequest{
-		ProjectID:      projectID,        // ✅ From URL
+	createReq := &models.CreateTaskRequest{
+		ProjectID:      projectID,
 		SprintID:       req.SprintID,
 		ParentTaskID:   req.ParentTaskID,
 		Title:          req.Title,
 		Description:    req.Description,
 		Status:         req.Status,
 		Priority:       req.Priority,
+		Type:           req.Type,           // ✅ Add Type
 		AssigneeIDs:    req.AssigneeIDs,
 		LabelIDs:       req.LabelIDs,
 		EstimatedHours: req.EstimatedHours,
 		StoryPoints:    req.StoryPoints,
 		StartDate:      req.StartDate,
 		DueDate:        req.DueDate,
-		CreatedBy:      &userID,          // ✅ From authenticated user
+		CreatedBy:      &userID,
+		Subtasks:       req.Subtasks,       // ✅ Add Subtasks
 	}
 
 	task, err := h.taskService.Create(c.Request.Context(), createReq)
-if err != nil {
-	logAPIError(c, "Task.Create", err, map[string]interface{}{
-		"projectID": projectID,
-		"title":     req.Title,
-	})
-	handleServiceError(c, err)
-	return
-}
+	if err != nil {
+		logAPIError(c, "Task.Create", err, map[string]interface{}{
+			"projectID": projectID,
+			"title":     req.Title,
+		})
+		handleServiceError(c, err)
+		return
+	}
 
-	c.JSON(http.StatusCreated, toTaskResponse(task))
-
-
+	// ✅ Fetch subtasks for response
+	subtasks, _ := h.taskService.ListSubtasks(c.Request.Context(), task.ID, userID)
 	
+	c.JSON(http.StatusCreated, toTaskResponseWithSubtasks(task, subtasks))
 }
 
 func (h *TaskHandler) Get(c *gin.Context) {
@@ -96,16 +97,18 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 	taskID := c.Param("id")
 	task, err := h.taskService.GetByID(c.Request.Context(), taskID, userID)
-if err != nil {
-	logAPIError(c, "Task.Get", err, map[string]interface{}{
-		"taskID": taskID,
-	})
-	handleServiceError(c, err)
-	return
-}
+	if err != nil {
+		logAPIError(c, "Task.Get", err, map[string]interface{}{
+			"taskID": taskID,
+		})
+		handleServiceError(c, err)
+		return
+	}
 
+	// ✅ Fetch subtasks for response
+	subtasks, _ := h.taskService.ListSubtasks(c.Request.Context(), task.ID, userID)
 
-	c.JSON(http.StatusOK, toTaskResponse(task))
+	c.JSON(http.StatusOK, toTaskResponseWithSubtasks(task, subtasks))
 }
 
 func (h *TaskHandler) Update(c *gin.Context) {
@@ -121,11 +124,12 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		return
 	}
 
-	updateReq := &service.UpdateTaskRequest{
+	updateReq := &models.UpdateTaskRequest{
 		Title:          req.Title,
 		Description:    req.Description,
 		Status:         req.Status,
 		Priority:       req.Priority,
+		Type:           req.Type,           // ✅ Add Type
 		SprintID:       req.SprintID,
 		AssigneeIDs:    req.AssigneeIDs,
 		LabelIDs:       req.LabelIDs,
@@ -137,16 +141,18 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	}
 
 	task, err := h.taskService.Update(c.Request.Context(), taskID, userID, updateReq)
-if err != nil {
-	logAPIError(c, "Task.Update", err, map[string]interface{}{
-		"taskID": taskID,
-	})
-	handleServiceError(c, err)
-	return
-}
+	if err != nil {
+		logAPIError(c, "Task.Update", err, map[string]interface{}{
+			"taskID": taskID,
+		})
+		handleServiceError(c, err)
+		return
+	}
 
+	// ✅ Fetch subtasks for response
+	subtasks, _ := h.taskService.ListSubtasks(c.Request.Context(), task.ID, userID)
 
-	c.JSON(http.StatusOK, toTaskResponse(task))
+	c.JSON(http.StatusOK, toTaskResponseWithSubtasks(task, subtasks))
 }
 
 func (h *TaskHandler) Delete(c *gin.Context) {
@@ -491,6 +497,22 @@ func (h *TaskHandler) ConvertToSubtask(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Task converted to subtask successfully"})
 }
+
+
+func (h *TaskHandler) PromoteToTask(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+	taskID := c.Param("id")
+	 err := h.taskService.PromoteToTask(c.Request.Context(), taskID, userID); 
+		if err != nil {
+				handleServiceError(c, err)
+				return
+			}
+	c.JSON(http.StatusOK, gin.H{"message": "Task promoted successfully"})
+}
+
 
 // ============================================
 // COMMENTS

@@ -84,3 +84,31 @@ curl -X POST http://localhost:8080/api/tasks/67d7f3fa-8926-4d3b-8e23-87668d0b0d1
 "content": "I can help with this!",
 "mentionedUsers": ["10726571-8d1b-4e9a-96d3-6fae0bff285a"]
 }'
+
+curl -X POST http://localhost:8080/api/projects/b5adca6c-1cf7-4c11-8b3d-ce00b8617853/tasks \
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NjY1NzI3MzksImlhdCI6MTc2NjQ4NjMzOSwic3ViIjoiMWUyODY1MzItNWMyYS00YmUzLWI3YjUtZjQxZDFjMmE0NzAwIn0.qQdOZ1fYVJLsjKkmh0Zox_FF8o_TNu-6tBcUJTvDAMo" \
+ -d '{
+"title": "Main Task with Subtasks",
+"description": "Testing subtask creation",
+"status": "todo",
+"priority": "high",
+"type": "task",
+"assigneeIds": ["1e286532-5c2a-4be3-b7b5-f41d1c2a4700"],
+"subtasks": [
+{
+"title": "Subtask 1",
+"description": "First subtask",
+"status": "todo",
+"priority": "medium",
+"assigneeIds": []
+},
+{
+"title": "Subtask 2",
+"description": "Second subtask",
+"status": "todo",
+"priority": "low",
+"assigneeIds": ["1e286532-5c2a-4be3-b7b5-f41d1c2a4700"]
+}
+]
+}'
