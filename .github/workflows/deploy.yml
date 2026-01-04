@@ -73,6 +73,22 @@ jobs:
           strip_components: 0
           overwrite: true
 
+      - name: Ensure database password is correct
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            cd /root/ORA_SCRUM
+
+            # Wait for DB to be ready
+            docker compose up -d db redis
+            sleep 5
+
+            # Reset the postgres user password to match .env
+            docker exec ora_scrum_db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" 2>/dev/null || echo "Password already set or DB not ready"
+
       - name: Deploy application
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -85,6 +101,7 @@ jobs:
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/marga-ghale/ora_scrum_backend:latest
 
+            # Recreate only the API container
             docker compose stop api
             docker compose rm -f api
             docker compose up -d api
