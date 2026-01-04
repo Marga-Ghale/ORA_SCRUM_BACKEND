@@ -85,8 +85,10 @@ jobs:
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/marga-ghale/ora_scrum_backend:latest
 
-            # Restart only API (migrations run inside container via Go app)
-            docker compose up -d --force-recreate --no-deps api
+            # Stop and remove API container, then recreate with proper network
+            docker compose stop api
+            docker compose rm -f api
+            docker compose up -d api
 
             sleep 20
             docker compose ps api
