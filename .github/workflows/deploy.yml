@@ -1,4 +1,4 @@
-name: CD Pipeline
+name: Deploy to Production
 
 on:
   workflow_run:
@@ -57,7 +57,7 @@ jobs:
             SMTP_USE_TLS=true
 
             # Application
-            ENVIRONMENT=development
+            ENVIRONMENT=production
             API_PORT=8080
             FRONTEND_URL=https://scrum.oratechnologies.io
             EOF
