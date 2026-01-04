@@ -1,4 +1,4 @@
-name: Deploy
+name: CD Pipeline
 
 on:
   workflow_run:
@@ -31,7 +31,6 @@ jobs:
           script: |
             cd /root/ORA_SCRUM
 
-            # Create .env WITHOUT DATABASE_URL (docker-compose sets it)
             cat > .env << 'EOF'
             # GitHub Configuration
             GITHUB_REPOSITORY=marga-ghale/ora_scrum_backend
@@ -63,8 +62,6 @@ jobs:
             FRONTEND_URL=https://scrum.oratechnologies.io
             EOF
 
-            echo "✅ .env file created"
-
       - name: Copy migration files to server
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -85,55 +82,28 @@ jobs:
           script: |
             cd /root/ORA_SCRUM
 
-            # Login to registry
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            # Pull latest image
             docker pull ghcr.io/marga-ghale/ora_scrum_backend:latest
 
-            # Run migrations (while containers are running)
-            echo "🔄 Running migrations..."
-            docker run --rm \
-              --network ora_scrum_ora_network \
-              -v "$(pwd)/internal/db/migrations:/migrations" \
-              migrate/migrate \
-              -path=/migrations \
-              -database "postgresql://postgres:postgres@db:5432/ora_scrum?sslmode=disable" \
-              up || echo "⚠️ Migrations already applied or error"
-
-            # Restart ONLY API container (nginx/certbot/db/redis untouched)
-            echo "🔄 Restarting API..."
+            # Restart only API (migrations run inside container via Go app)
             docker compose up -d --force-recreate --no-deps api
 
-            # Wait for API
-            echo "⏳ Waiting for API to start..."
             sleep 20
-
-            # Show status
             docker compose ps api
-            echo ""
-            echo "=== Recent API Logs ==="
             docker logs ora_scrum_api --tail 50
-
-            # Cleanup old images
             docker image prune -f
 
       - name: Verify deployment
         run: |
-          echo "⏳ Verifying deployment..."
           sleep 20
-
           for i in {1..10}; do
             response=$(curl -s -o /dev/null -w "%{http_code}" https://scrum-api.oratechnologies.io/health 2>/dev/null || echo "000")
-            
             if [ "$response" = "200" ]; then
               echo "✅ Deployment successful!"
               exit 0
             fi
-            
             echo "Attempt $i/10: Status $response, retrying..."
             sleep 5
           done
-
-          echo "❌ Deployment verification failed"
+          echo "❌ Deployment failed"
           exit 1

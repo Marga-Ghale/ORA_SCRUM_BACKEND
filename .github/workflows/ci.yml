@@ -57,23 +57,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Install golang-migrate
-        run: |
-          curl -L https://github.com/golang-migrate/migrate/releases/download/v4.16.2/migrate.linux-amd64.tar.gz | tar xvz
-          sudo mv migrate /usr/local/bin/migrate
-          migrate -version
-
-      - name: Run migrations
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ora_scrum_test?sslmode=disable
-        run: |
-          migrate -path ./internal/db/migrations -database "$DATABASE_URL" up
-
       - name: Run tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ora_scrum_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
-          JWT_SECRET: test-secret-key-for-ci
+          JWT_SECRET: test-secret-key
           ENVIRONMENT: test
         run: |
           go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
@@ -82,8 +70,6 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.txt
-          flags: unittests
-          name: codecov-umbrella
         continue-on-error: true
 
   build:
