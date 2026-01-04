@@ -85,12 +85,11 @@ jobs:
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/marga-ghale/ora_scrum_backend:latest
 
-            # Stop and remove API container, then recreate with proper network
             docker compose stop api
             docker compose rm -f api
             docker compose up -d api
 
-            sleep 20
+            sleep 15
             docker compose ps api
             docker logs ora_scrum_api --tail 50
             docker image prune -f
