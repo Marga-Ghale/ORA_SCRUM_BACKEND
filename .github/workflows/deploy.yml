@@ -57,7 +57,7 @@ jobs:
             SMTP_USE_TLS=true
 
             # Application
-            ENVIRONMENT=production
+            ENVIRONMENT=development
             API_PORT=8080
             FRONTEND_URL=https://scrum.oratechnologies.io
             EOF
