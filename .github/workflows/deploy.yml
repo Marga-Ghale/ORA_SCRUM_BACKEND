@@ -1,4 +1,4 @@
-name: Deploy to Production
+name: Deploy
 
 on:
   workflow_run:
@@ -31,7 +31,7 @@ jobs:
           script: |
             cd /root/ORA_SCRUM
 
-            # Create .env file
+            # Create .env WITHOUT DATABASE_URL (docker-compose sets it)
             cat > .env << 'EOF'
             # GitHub Configuration
             GITHUB_REPOSITORY=marga-ghale/ora_scrum_backend
@@ -58,10 +58,12 @@ jobs:
             SMTP_USE_TLS=true
 
             # Application
-            ENVIRONMENT=deployment
+            ENVIRONMENT=development
             API_PORT=8080
             FRONTEND_URL=https://scrum.oratechnologies.io
             EOF
+
+            echo "✅ .env file created"
 
       - name: Copy migration files to server
         uses: appleboy/scp-action@v0.1.7
@@ -89,7 +91,7 @@ jobs:
             # Pull latest image
             docker pull ghcr.io/marga-ghale/ora_scrum_backend:latest
 
-            # Run migrations BEFORE restarting (while old container still running)
+            # Run migrations (while containers are running)
             echo "🔄 Running migrations..."
             docker run --rm \
               --network ora_scrum_ora_network \
@@ -97,30 +99,28 @@ jobs:
               migrate/migrate \
               -path=/migrations \
               -database "postgresql://postgres:postgres@db:5432/ora_scrum?sslmode=disable" \
-              up || echo "⚠️ Migration warning (may be already applied)"
+              up || echo "⚠️ Migrations already applied or error"
 
-            # Now restart the API with new code
+            # Restart ONLY API container (nginx/certbot/db/redis untouched)
             echo "🔄 Restarting API..."
             docker compose up -d --force-recreate --no-deps api
 
-            # Wait for API to be healthy
+            # Wait for API
             echo "⏳ Waiting for API to start..."
-            sleep 15
+            sleep 20
 
-            # Verify API is running
+            # Show status
             docker compose ps api
-
-            # Show recent logs
             echo ""
             echo "=== Recent API Logs ==="
             docker logs ora_scrum_api --tail 50
 
-            # Cleanup
+            # Cleanup old images
             docker image prune -f
 
       - name: Verify deployment
         run: |
-          echo "⏳ Waiting for API..."
+          echo "⏳ Verifying deployment..."
           sleep 20
 
           for i in {1..10}; do
@@ -135,5 +135,5 @@ jobs:
             sleep 5
           done
 
-          echo "❌ Deployment failed"
+          echo "❌ Deployment verification failed"
           exit 1
