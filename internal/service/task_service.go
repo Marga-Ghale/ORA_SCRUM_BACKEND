@@ -592,7 +592,7 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 				s.taskToMap(task),
 				oldStatus,
 				*req.Status,
-				userID,
+				"",
 			)
 		}
 	}
@@ -616,7 +616,7 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 					s.broadcaster.BroadcastTaskAssigned(
 						newAssigneeID,
 						s.taskToMap(task),
-						userID,
+						"",
 					)
 				}
 
@@ -682,7 +682,7 @@ func (s *taskService) Delete(ctx context.Context, taskID, userID string) error {
 			task.ProjectID,
 			task.ID,
 			taskKey,
-			userID,
+			"",
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -755,7 +755,7 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 			s.taskToMap(task),
 			oldStatus,
 			status,
-			userID,
+			"",
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -909,7 +909,7 @@ func (s *taskService) ConvertToSubtask(ctx context.Context, taskID, parentTaskID
 			task.ProjectID,
 			s.taskToMap(task),
 			[]string{"converted to subtask"},
-			userID,
+			"",
 		)
 	}
 
@@ -941,7 +941,7 @@ func (s *taskService) PromoteToTask(ctx context.Context, taskID, userID string) 
 			task.ProjectID,
 			s.taskToMap(task),
 			[]string{"promoted to main task"},
-			userID,
+			"",
 		)
 	}
 
@@ -1053,7 +1053,7 @@ func (s *taskService) AddComment(
 				"userId":    comment.UserID,
 				"createdAt": comment.CreatedAt,
 			},
-			userID,
+			"",
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -1151,7 +1151,7 @@ func (s *taskService) UpdateComment(
 					"userId":    comment.UserID,
 					"updatedAt": comment.UpdatedAt,
 				},
-				userID,
+				"",
 			)
 		}
 	}
@@ -1208,7 +1208,7 @@ func (s *taskService) DeleteComment(
 				task.ProjectID,
 				comment.TaskID,
 				commentID,
-				userID,
+				"",
 			)
 		}
 	}
@@ -2093,15 +2093,25 @@ func (s *taskService) ReorderTasksInColumn(
 	log.Printf("✅ Reordering complete")
 
 
+	// ✅ CRITICAL FIX: Broadcast to ALL users (including the one who moved it!)
 	if s.broadcaster != nil {
-    log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
-    s.broadcaster.BroadcastTaskUpdated(
-        projectID,
-        s.taskToMap(movedTask), // movedTask is already loaded at top
-        []string{"position"},
-        userID,
-    )
-}
+		log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
+		
+		// Fetch the updated task with all relations
+		updatedTask, err := s.taskRepo.FindByID(ctx, movedTaskID)
+		if err != nil {
+			log.Printf("⚠️ Failed to fetch updated task: %v", err)
+		} else {
+			// ✅ Pass empty string "" for excludeUserID to broadcast to EVERYONE
+			s.broadcaster.BroadcastTaskUpdated(
+				projectID,
+				s.taskToMap(updatedTask),
+				[]string{"position", "status"},
+				"", // ❌ CRITICAL: Empty string = broadcast to ALL users!
+			)
+			log.Printf("✅ Broadcasted task update to all users in project")
+		}
+	}
 
 
 	return nil

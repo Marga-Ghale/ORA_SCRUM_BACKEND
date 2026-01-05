@@ -2,6 +2,7 @@ package socket
 
 import (
 	"fmt"
+	"log"
 )
 
 // Broadcaster provides high-level methods for broadcasting events
@@ -42,15 +43,26 @@ func (b *Broadcaster) BroadcastTaskCreated(projectID string, task map[string]int
 }
 
 // BroadcastTaskUpdated broadcasts task updates to project members
-func (b *Broadcaster) BroadcastTaskUpdated(projectID string, task map[string]interface{}, changes []string, excludeUserID string) {
+func (b *Broadcaster) BroadcastTaskUpdated(
+	projectID string, 
+	task map[string]interface{}, 
+	changes []string, 
+	excludeUserID string,
+) {
 	room := fmt.Sprintf("project:%s", projectID)
+	
 	payload := map[string]interface{}{
-		"task":    task,
-		"changes": changes,
+		"task":           task,
+		"changedFields":  changes,
+		"changedByUser":  excludeUserID, // ✅ Keep track of who made the change
+		"projectId":      projectID,
 	}
+	
+	log.Printf("📡 BroadcastTaskUpdated: room=%s, taskId=%v, exclude=%s", 
+		room, task["id"], excludeUserID)
+	
 	b.hub.SendToRoom(room, MessageTaskUpdated, payload, excludeUserID)
 }
-
 // BroadcastTaskDeleted broadcasts task deletion to project members
 func (b *Broadcaster) BroadcastTaskDeleted(projectID, taskID, taskKey string, excludeUserID string) {
 	room := fmt.Sprintf("project:%s", projectID)
