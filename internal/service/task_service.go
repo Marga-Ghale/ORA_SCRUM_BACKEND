@@ -1997,7 +1997,6 @@ func (s *taskService) UpdatePosition(ctx context.Context, taskID string, positio
 
 
 // ✅ FIXED: service/task_service.go - ReorderTasksInColumn
-// ✅ FIXED: service/task_service.go
 func (s *taskService) ReorderTasksInColumn(
 	ctx context.Context,
 	projectID string,
@@ -2092,6 +2091,19 @@ func (s *taskService) ReorderTasksInColumn(
 	}
 
 	log.Printf("✅ Reordering complete")
+
+
+	if s.broadcaster != nil {
+    log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
+    s.broadcaster.BroadcastTaskUpdated(
+        projectID,
+        s.taskToMap(movedTask), // movedTask is already loaded at top
+        []string{"position"},
+        userID,
+    )
+}
+
+
 	return nil
 }
 
