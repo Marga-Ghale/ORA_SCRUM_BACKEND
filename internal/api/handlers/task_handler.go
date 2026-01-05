@@ -319,30 +319,6 @@ func (h *TaskHandler) UpdatePriority(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Priority updated successfully"})
 }
 
-// func (h *TaskHandler) AssignTask(c *gin.Context) {
-// 	userID, ok := middleware.RequireUserID(c)
-// 	if !ok {
-// 		return
-// 	}
-
-// 	taskID := c.Param("id")
-// 	var req struct {
-// 		AssigneeID string `json:"assigneeId" binding:"required"`
-// 	}
-// 	if err := c.ShouldBindJSON(&req); err != nil {
-// 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-// 		return
-// 	}
-
-// 	err := h.taskService.AssignTask(c.Request.Context(), taskID, req.AssigneeID, userID)
-// 	if err != nil {
-// 		handleServiceError(c, err)
-// 		return
-// 	}
-
-// 	c.JSON(http.StatusOK, gin.H{"message": "Task assigned successfully"})
-// }
-
 
 
 func (h *TaskHandler) AssignTask(c *gin.Context) {
@@ -1112,6 +1088,82 @@ func (h *TaskHandler) GetSprintBurndown(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, toBurndownResponse(burndown))
+}
+
+
+
+// ✅ FIXED: In task_handler.go - UpdatePositionAndStatus
+func (h *TaskHandler) UpdatePositionAndStatus(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	taskID := c.Param("id")
+	
+	// ✅ CRITICAL FIX: Change Position validation from "required" to "gte=0"
+	var req struct {
+		Status   string `json:"status" binding:"required"`
+		Position int    `json:"position" binding:"gte=0"` // ✅ Changed here - accepts 0 and above
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("❌ Binding error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	log.Printf("✅ Successfully parsed: status=%s, position=%d", req.Status, req.Position)
+
+	// Get current task state
+	task, err := h.taskService.GetByID(c.Request.Context(), taskID, userID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	oldStatus := task.Status
+	statusChanged := oldStatus != req.Status
+
+	// Update task status
+	updateReq := &models.UpdateTaskRequest{
+		Status: &req.Status,
+	}
+	
+	task, err = h.taskService.Update(c.Request.Context(), taskID, userID, updateReq)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	// Handle subtasks if status changed
+	if statusChanged && task.ParentTaskID == nil {
+		subtasks, _ := h.taskService.ListSubtasks(c.Request.Context(), taskID, userID)
+		for _, subtask := range subtasks {
+			subUpdateReq := &models.UpdateTaskRequest{
+				Status: &req.Status,
+			}
+			h.taskService.Update(c.Request.Context(), subtask.ID, userID, subUpdateReq)
+		}
+	}
+
+	// Reindex positions in target column
+	if err := h.taskService.ReorderTasksInColumn(
+		c.Request.Context(),
+		task.ProjectID,
+		req.Status,
+		taskID,
+		req.Position,
+		userID,
+	); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	// Fetch updated task with subtasks
+	subtasks, _ := h.taskService.ListSubtasks(c.Request.Context(), task.ID, userID)
+
+	c.JSON(http.StatusOK, toTaskResponseWithSubtasks(task, subtasks))
 }
 
 // ============================================

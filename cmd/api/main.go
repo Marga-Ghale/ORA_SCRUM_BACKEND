@@ -388,6 +388,9 @@ func main() {
 				tasks.GET("/timer/active", h.Task.GetActiveTimer)
 				tasks.POST("/:id/time", h.Task.LogTime)
 
+				tasks.PATCH("/:id/move", h.Task.UpdatePositionAndStatus)
+
+
 				tasks.POST("/:id/dependencies", h.Task.AddDependency)
 				tasks.DELETE("/:id/dependencies/:dependsOnTaskId", h.Task.RemoveDependency)
 
