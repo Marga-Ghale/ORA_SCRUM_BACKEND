@@ -94,6 +94,9 @@ type TaskRepository interface {
 	GetSprintVelocity(ctx context.Context, sprintID string) (int, error)
 	GetCompletedStoryPoints(ctx context.Context, sprintID string) (int, error)
 
+	UpdatePosition(ctx context.Context, taskID string, position int) error
+
+
 	// Bulk operations
 	BulkUpdateStatus(ctx context.Context, taskIDs []string, status string) error
 	BulkMoveToSprint(ctx context.Context, taskIDs []string, sprintID string) error
@@ -500,6 +503,16 @@ func (r *taskRepository) BulkMoveToSprint(ctx context.Context, taskIDs []string,
 	_, err := r.db.ExecContext(ctx, query, pq.Array(taskIDs), sprintID)
 	return err
 }
+
+
+
+// UpdatePosition updates only the position field
+func (r *taskRepository) UpdatePosition(ctx context.Context, taskID string, position int) error {
+	query := `UPDATE tasks SET position = $2, updated_at = NOW() WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, taskID, position)
+	return err
+}
+
 
 // queryTasks - FIXED with correct column order matching database
 func (r *taskRepository) queryTasks(ctx context.Context, query string, args ...interface{}) ([]*Task, error) {

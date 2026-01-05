@@ -83,6 +83,9 @@ type TaskService interface {
 	GetSprintBoard(ctx context.Context, sprintID, userID string) (map[string][]*repository.Task, error)
 	GetSprintVelocity(ctx context.Context, sprintID, userID string) (int, error)
 	GetSprintBurndown(ctx context.Context, sprintID, userID string) (*SprintBurndown, error)
+	UpdatePosition(ctx context.Context, taskID string, position int, userID string) error
+
+	ReorderTasksInColumn(ctx context.Context, projectID, status, movedTaskID string, newPosition int, userID string) error
 	
 	// BULK OPERATIONS
 	BulkUpdateStatus(ctx context.Context, taskIDs []string, status, userID string) error
@@ -1981,8 +1984,116 @@ func (s *taskService) BulkMoveToSprint(ctx context.Context, taskIDs []string, sp
 }
 
 
+// ============================================
+// DRAG AND DROP
+// ============================================
+
+func (s *taskService) UpdatePosition(ctx context.Context, taskID string, position int, userID string) error {
+	if !s.permService.CanEditTask(ctx, userID, taskID) {
+		return ErrUnauthorized
+	}
+	return s.taskRepo.UpdatePosition(ctx, taskID, position)
+}
 
 
+// ✅ FIXED: service/task_service.go - ReorderTasksInColumn
+// ✅ FIXED: service/task_service.go
+func (s *taskService) ReorderTasksInColumn(
+	ctx context.Context,
+	projectID string,
+	status string,
+	movedTaskID string,
+	newPosition int,
+	userID string,
+) error {
+	log.Printf("🔄 ReorderTasksInColumn: project=%s, status=%s, movedTask=%s, newPos=%d",
+		projectID, status, movedTaskID, newPosition)
+
+	// Get ALL tasks in target column
+	allTasks, err := s.taskRepo.FindByStatus(ctx, projectID, status)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("📊 Found %d tasks in column %s", len(allTasks), status)
+
+	// Separate parents from subtasks
+	parents := make([]*repository.Task, 0)
+	subtasksMap := make(map[string][]*repository.Task)
+	
+	for _, t := range allTasks {
+		if t.ParentTaskID == nil {
+			parents = append(parents, t)
+		} else {
+			if _, exists := subtasksMap[*t.ParentTaskID]; !exists {
+				subtasksMap[*t.ParentTaskID] = make([]*repository.Task, 0)
+			}
+			subtasksMap[*t.ParentTaskID] = append(subtasksMap[*t.ParentTaskID], t)
+		}
+	}
+
+	// Find moved task in parents list
+	var movedTask *repository.Task
+	movedIndex := -1
+	for i, t := range parents {
+		if t.ID == movedTaskID {
+			movedTask = t
+			movedIndex = i
+			break
+		}
+	}
+
+	if movedTask == nil {
+		log.Printf("❌ Moved task not found in parents list")
+		return ErrNotFound
+	}
+
+	log.Printf("🎯 Found moved task at index %d", movedIndex)
+
+	// Build list without moved task
+	otherParents := make([]*repository.Task, 0, len(parents)-1)
+	for i, t := range parents {
+		if i != movedIndex {
+			otherParents = append(otherParents, t)
+		}
+	}
+
+	// Clamp new position
+	if newPosition < 0 {
+		newPosition = 0
+	}
+	if newPosition > len(otherParents) {
+		newPosition = len(otherParents)
+	}
+
+	log.Printf("📍 Inserting at position %d (out of %d tasks)", newPosition, len(otherParents))
+
+	// Build final order with moved task inserted at new position
+	finalOrder := make([]*repository.Task, 0, len(parents))
+	finalOrder = append(finalOrder, otherParents[:newPosition]...)
+	finalOrder = append(finalOrder, movedTask)
+	finalOrder = append(finalOrder, otherParents[newPosition:]...)
+
+	// ✅ Update positions in database - CRITICAL FIX
+	for i, task := range finalOrder {
+		log.Printf("✏️ Updating %s to position %d", task.Title, i)
+		
+		if err := s.taskRepo.UpdatePosition(ctx, task.ID, i); err != nil {
+			log.Printf("❌ Failed to update position for task %s: %v", task.ID, err)
+			return err
+		}
+
+		// ✅ Update subtasks (they stay right after parent in visual order)
+		// But we don't need to update their DB position if they follow parent
+		// Just log for debugging
+		if subtasks := subtasksMap[task.ID]; len(subtasks) > 0 {
+			log.Printf("   └─ Task has %d subtasks", len(subtasks))
+		}
+	}
+
+	log.Printf("✅ Reordering complete")
+	return nil
+}
 
 // ============================================
 // HELPER FUNCTIONS
@@ -2037,3 +2148,5 @@ func (s *taskService) findNewAssignees(oldAssignees, newAssignees []string) []st
 	}
 	return result
 }
+
+
