@@ -349,7 +349,7 @@ func (s *taskService) Create(ctx context.Context, req *models.CreateTaskRequest)
 		s.broadcaster.BroadcastTaskCreated(
 			task.ProjectID,
 			s.taskToMap(task),
-			creatorID,
+			"",
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -563,10 +563,12 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 				task.ProjectID,
 				s.taskToMap(task),
 				changes,
-				userID,
+				"",
 			)
 		}
 	}
+
+	
 
 	// 4. Handle STATUS CHANGE specifically
 	if req.Status != nil && *req.Status != oldStatus {
@@ -809,7 +811,7 @@ func (s *taskService) AssignTask(ctx context.Context, taskID, assigneeID, actorI
 			s.broadcaster.BroadcastTaskAssigned(
 				assigneeID,
 				s.taskToMap(task),
-				actorID,
+				"",
 			)
 		}
 	}
