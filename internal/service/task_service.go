@@ -301,13 +301,14 @@ func (s *taskService) Create(ctx context.Context, req *models.CreateTaskRequest)
 	// 1. Notify each assignee (excluding creator)
 	for _, assigneeID := range req.AssigneeIDs {
 		if assigneeID != creatorID {
-			s.notificationSvc.SendTaskAssigned(
-				ctx,
-				assigneeID,
-				task.Title,
-				task.ID,
-				task.ProjectID,
-			)
+			s.notificationSvc.SendTaskAssignedBy(
+			ctx,
+			assigneeID,
+			creatorID,  // Pass the creator ID
+			task.Title,
+			task.ID,
+			task.ProjectID,
+		)
 		}
 	}
 
@@ -531,14 +532,15 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		notifiedUsers := make(map[string]bool)
 		for _, assigneeID := range task.AssigneeIDs {
 			if assigneeID != userID {
-				s.notificationSvc.SendTaskUpdated(
-					ctx,
-					assigneeID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					changes,
-				)
+				s.notificationSvc.SendTaskUpdatedBy(
+    ctx,
+    assigneeID,
+    userID,  // ✅ Pass the updater ID
+    task.Title,
+    task.ID,
+    task.ProjectID,
+    changes,
+)
 				notifiedUsers[assigneeID] = true
 			}
 		}
@@ -546,14 +548,15 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		// 2. Notify watchers (excluding updater and already notified)
 		for _, watcherID := range task.WatcherIDs {
 			if watcherID != userID && !notifiedUsers[watcherID] {
-				s.notificationSvc.SendTaskUpdated(
-					ctx,
-					watcherID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					changes,
-				)
+				s.notificationSvc.SendTaskUpdatedBy(
+    ctx,
+    watcherID,
+    userID,  // ✅ Pass the updater ID
+    task.Title,
+    task.ID,
+    task.ProjectID,
+    changes,
+)
 			}
 		}
 
@@ -575,15 +578,16 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		// Notify assignees
 		for _, assigneeID := range task.AssigneeIDs {
 			if assigneeID != userID {
-				s.notificationSvc.SendTaskStatusChanged(
-					ctx,
-					assigneeID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					oldStatus,
-					*req.Status,
-				)
+				s.notificationSvc.SendTaskStatusChangedBy(
+    ctx,
+    assigneeID,
+    userID,  // ✅ Pass the changer ID
+    task.Title,
+    task.ID,
+    task.ProjectID,
+    oldStatus,
+    *req.Status,
+)
 			}
 		}
 
@@ -605,13 +609,14 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		
 		for _, newAssigneeID := range newAssignees {
 			if newAssigneeID != userID {
-				s.notificationSvc.SendTaskAssigned(
-					ctx,
-					newAssigneeID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-				)
+				s.notificationSvc.SendTaskAssignedBy(
+    ctx,
+    newAssigneeID,
+    userID,  // ✅ Pass the assigner ID
+    task.Title,
+    task.ID,
+    task.ProjectID,
+)
 
 				// Broadcast assignment
 				if s.broadcaster != nil {
@@ -722,30 +727,32 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 	
 	for _, assigneeID := range task.AssigneeIDs {
 		if assigneeID != userID {
-			s.notificationSvc.SendTaskStatusChanged(
-				ctx,
-				assigneeID,
-				task.Title,
-				task.ID,
-				task.ProjectID,
-				oldStatus,
-				status,
-			)
+			s.notificationSvc.SendTaskStatusChangedBy(
+    ctx,
+    assigneeID,
+    userID,  // ✅ Pass the changer ID
+    task.Title,
+    task.ID,
+    task.ProjectID,
+    oldStatus,
+    status,
+)
 			notifiedUsers[assigneeID] = true
 		}
 	}
 
 	for _, watcherID := range task.WatcherIDs {
 		if watcherID != userID && !notifiedUsers[watcherID] {
-			s.notificationSvc.SendTaskStatusChanged(
-				ctx,
-				watcherID,
-				task.Title,
-				task.ID,
-				task.ProjectID,
-				oldStatus,
-				status,
-			)
+			s.notificationSvc.SendTaskStatusChangedBy(
+    ctx,
+    watcherID,
+    userID,  // ✅ Pass the changer ID
+    task.Title,
+    task.ID,
+    task.ProjectID,
+    oldStatus,
+    status,
+)
 		}
 	}
 
@@ -798,13 +805,14 @@ func (s *taskService) AssignTask(ctx context.Context, taskID, assigneeID, actorI
 	// ✅ NOTIFICATIONS START
 	// Only notify if not self-assigning
 	if assigneeID != actorID {
-		s.notificationSvc.SendTaskAssigned(
-			ctx,
-			assigneeID,
-			task.Title,
-			task.ID,
-			task.ProjectID,
-		)
+		s.notificationSvc.SendTaskAssignedBy(
+    ctx,
+    assigneeID,
+    actorID,  // ✅ Pass the actor ID
+    task.Title,
+    task.ID,
+    task.ProjectID,
+)
 
 		// Broadcast assignment
 		if s.broadcaster != nil {
