@@ -6,6 +6,8 @@ docker exec -it ora_scrum_db psql -U postgres -d ora_scrum
 
 docker image prune -a && docker builder prune -a
 
+docker exec -it ora_scrum_db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+
 docker exec -it ora_scrum_db psql -U postgres -d ora_scrum -c "
 DELETE FROM tasks;
 DELETE FROM sprints;

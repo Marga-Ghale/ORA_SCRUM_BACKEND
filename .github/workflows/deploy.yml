@@ -81,13 +81,9 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
             cd /root/ORA_SCRUM
-
             # Wait for DB to be ready
             docker compose up -d db redis
             sleep 5
-
-            # Reset the postgres user password to match .env
-            docker exec ora_scrum_db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" 2>/dev/null || echo "Password already set or DB not ready"
 
       - name: Deploy application
         uses: appleboy/ssh-action@v1.0.3
@@ -107,6 +103,10 @@ jobs:
             docker compose up -d api
 
             sleep 15
+
+            # Reset the postgres user password to match .env
+            docker exec ora_scrum_db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" 2>/dev/null || echo "Password already set or DB not ready"
+
             docker compose ps api
             docker logs ora_scrum_api --tail 50
             docker image prune -f
