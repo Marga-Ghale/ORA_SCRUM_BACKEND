@@ -1,8 +1,10 @@
+// ✅ COMPLETE REPLACEMENT: internal/notification/service.go
 package notification
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 
@@ -12,20 +14,20 @@ import (
 
 // Notification types
 const (
-	TypeTaskAssigned        = "TASK_ASSIGNED"
-	TypeTaskUpdated         = "TASK_UPDATED"
-	TypeTaskCommented       = "TASK_COMMENTED"
-	TypeTaskStatusChanged   = "TASK_STATUS_CHANGED"
-	TypeTaskDueSoon         = "TASK_DUE_SOON"
-	TypeTaskOverdue         = "TASK_OVERDUE"
-	TypeSprintStarted       = "SPRINT_STARTED"
-	TypeSprintCompleted     = "SPRINT_COMPLETED"
-	TypeSprintEnding        = "SPRINT_ENDING"
-	TypeMention             = "MENTION"
-	TypeProjectInvitation   = "PROJECT_INVITATION"
-	TypeWorkspaceInvitation = "WORKSPACE_INVITATION"
-	TypeTaskCreated         = "TASK_CREATED"
-	TypeTaskDeleted         = "TASK_DELETED"
+	TypeTaskAssigned          = "TASK_ASSIGNED"
+	TypeTaskUpdated           = "TASK_UPDATED"
+	TypeTaskCommented         = "TASK_COMMENTED"
+	TypeTaskStatusChanged     = "TASK_STATUS_CHANGED"
+	TypeTaskDueSoon           = "TASK_DUE_SOON"
+	TypeTaskOverdue           = "TASK_OVERDUE"
+	TypeSprintStarted         = "SPRINT_STARTED"
+	TypeSprintCompleted       = "SPRINT_COMPLETED"
+	TypeSprintEnding          = "SPRINT_ENDING"
+	TypeMention               = "MENTION"
+	TypeProjectInvitation     = "PROJECT_INVITATION"
+	TypeWorkspaceInvitation   = "WORKSPACE_INVITATION"
+	TypeTaskCreated           = "TASK_CREATED"
+	TypeTaskDeleted           = "TASK_DELETED"
 	TypeTaskAttachmentAdded   = "TASK_ATTACHMENT_ADDED"
 	TypeTaskAttachmentDeleted = "TASK_ATTACHMENT_DELETED"
 	TypeChecklistItemComplete = "CHECKLIST_ITEM_COMPLETED"
@@ -77,6 +79,23 @@ func (s *Service) SetProjectRepo(projectRepo repository.ProjectRepository) {
 }
 
 // ============================================
+// Helper: Get User Name by ID
+// ============================================
+func (s *Service) getUserName(ctx context.Context, userID string) string {
+	if s.userRepo == nil || userID == "" {
+		return "Someone"
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil || user == nil {
+		log.Printf("⚠️ Failed to fetch user name for ID %s: %v", userID, err)
+		return "Someone"
+	}
+
+	return user.Name
+}
+
+// ============================================
 // WebSocket Helper
 // ============================================
 
@@ -98,65 +117,41 @@ func (s *Service) sendWebSocketNotification(notification *repository.Notificatio
 }
 
 // ============================================
-// Task Notifications
+// Task Notifications - ENHANCED
 // ============================================
 
-// SendTaskAssigned sends a notification when a task is assigned
-func (s *Service) SendTaskAssigned(ctx context.Context, userID, taskTitle, taskID, projectID string) error {
-	if userID == "" {
-		return nil // Skip if no user to notify
-	}
-
-	notification := &repository.Notification{
-		UserID:  userID,
-		Type:    TypeTaskAssigned,
-		Title:   "Task Assigned",
-		Message: fmt.Sprintf("You have been assigned to task: %s", taskTitle),
-		Read:    false,
-		Data: map[string]interface{}{
-			"taskId":    taskID,
-			"projectId": projectID,
-			"action":    "view_task",
-		},
-	}
-
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		return err
-	}
-
-	// Send real-time WebSocket notification
-	s.sendWebSocketNotification(notification)
-
-	return nil
-}
-
-// SendTaskCreated sends a notification when a task is created in a project
+// ✅ ENHANCED: SendTaskCreated with creator name
 func (s *Service) SendTaskCreated(ctx context.Context, userIDs []string, creatorID, taskTitle, taskKey, taskID, projectID string) error {
+	// ✅ Fetch creator name
+	creatorName := s.getUserName(ctx, creatorID)
+
 	var errs []error
 
 	for _, userID := range userIDs {
 		if userID == "" || userID == creatorID {
-			continue // Don't notify the creator or empty IDs
+			continue
 		}
 
 		notification := &repository.Notification{
 			UserID:  userID,
 			Type:    TypeTaskCreated,
 			Title:   "New Task Created",
-			Message: fmt.Sprintf("New task created: %s (%s)", taskTitle, taskKey),
+			Message: fmt.Sprintf("%s created: %s", creatorName, taskTitle),
 			Read:    false,
 			Data: map[string]interface{}{
-				"taskId":    taskID,
-				"taskKey":   taskKey,
-				"projectId": projectID,
-				"action":    "view_task",
+				"taskId":        taskID,
+				"taskKey":       taskKey,
+				"taskTitle":     taskTitle,
+				"projectId":     projectID,
+				"createdBy":     creatorID,
+				"createdByName": creatorName, // ✅ Added
+				"action":        "view_task",
 			},
 		}
 
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
 		} else {
-			// Send real-time WebSocket notification
 			s.sendWebSocketNotification(notification)
 		}
 	}
@@ -167,28 +162,38 @@ func (s *Service) SendTaskCreated(ctx context.Context, userIDs []string, creator
 	return nil
 }
 
-// SendTaskUpdated sends a notification when a task is updated
-func (s *Service) SendTaskUpdated(ctx context.Context, userID, taskTitle, taskID, projectID string, changes []string) error {
+// ✅ ENHANCED: SendTaskAssigned (backward compatible)
+func (s *Service) SendTaskAssigned(ctx context.Context, userID, taskTitle, taskID, projectID string) error {
+	return s.SendTaskAssignedBy(ctx, userID, "", taskTitle, taskID, projectID)
+}
+
+// ✅ NEW: SendTaskAssignedBy with assigner info
+func (s *Service) SendTaskAssignedBy(ctx context.Context, userID, assignedByID, taskTitle, taskID, projectID string) error {
 	if userID == "" {
 		return nil
 	}
 
-	changeText := "updated"
-	if len(changes) > 0 {
-		changeText = strings.Join(changes, ", ") + " changed"
+	// ✅ Fetch assigner name
+	assignedByName := s.getUserName(ctx, assignedByID)
+
+	message := fmt.Sprintf("You've been assigned to: %s", taskTitle)
+	if assignedByID != "" && assignedByName != "Someone" {
+		message = fmt.Sprintf("%s assigned you to: %s", assignedByName, taskTitle)
 	}
 
 	notification := &repository.Notification{
 		UserID:  userID,
-		Type:    TypeTaskUpdated,
-		Title:   "Task Updated",
-		Message: fmt.Sprintf("Task %s: %s", changeText, taskTitle),
+		Type:    TypeTaskAssigned,
+		Title:   "Task Assigned",
+		Message: message,
 		Read:    false,
 		Data: map[string]interface{}{
-			"taskId":    taskID,
-			"projectId": projectID,
-			"changes":   changes,
-			"action":    "view_task",
+			"taskId":         taskID,
+			"taskTitle":      taskTitle,
+			"projectId":      projectID,
+			"assignedBy":     assignedByID,
+			"assignedByName": assignedByName, // ✅ Added
+			"action":         "view_task",
 		},
 	}
 
@@ -196,9 +201,55 @@ func (s *Service) SendTaskUpdated(ctx context.Context, userID, taskTitle, taskID
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
+	return nil
+}
 
+// ✅ ENHANCED: SendTaskUpdated (backward compatible)
+func (s *Service) SendTaskUpdated(ctx context.Context, userID, taskTitle, taskID, projectID string, changes []string) error {
+	return s.SendTaskUpdatedBy(ctx, userID, "", taskTitle, taskID, projectID, changes)
+}
+
+// ✅ NEW: SendTaskUpdatedBy with updater info
+func (s *Service) SendTaskUpdatedBy(ctx context.Context, userID, updatedByID, taskTitle, taskID, projectID string, changes []string) error {
+	if userID == "" {
+		return nil
+	}
+
+	updatedByName := s.getUserName(ctx, updatedByID)
+
+	changeText := "updated"
+	if len(changes) > 0 {
+		changeText = strings.Join(changes, ", ")
+	}
+
+	message := fmt.Sprintf("Task '%s' - %s", taskTitle, changeText)
+	if updatedByID != "" && updatedByName != "Someone" {
+		message = fmt.Sprintf("%s updated '%s': %s", updatedByName, taskTitle, changeText)
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeTaskUpdated,
+		Title:   "Task Updated",
+		Message: message,
+		Read:    false,
+		Data: map[string]interface{}{
+			"taskId":        taskID,
+			"taskTitle":     taskTitle,
+			"projectId":     projectID,
+			"changes":       changes,
+			"updatedBy":     updatedByID,
+			"updatedByName": updatedByName, // ✅ Added
+			"action":        "view_task",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
 	return nil
 }
 
@@ -211,7 +262,7 @@ func (s *Service) SendTaskUpdatedToUsers(ctx context.Context, userIDs []string, 
 			continue
 		}
 
-		if err := s.SendTaskUpdated(ctx, userID, taskTitle, taskID, projectID, changes); err != nil {
+		if err := s.SendTaskUpdatedBy(ctx, userID, excludeUserID, taskTitle, taskID, projectID, changes); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -222,24 +273,39 @@ func (s *Service) SendTaskUpdatedToUsers(ctx context.Context, userIDs []string, 
 	return nil
 }
 
-// SendTaskStatusChanged sends a notification when task status changes
+// ✅ ENHANCED: SendTaskStatusChanged with changer info
 func (s *Service) SendTaskStatusChanged(ctx context.Context, userID, taskTitle, taskID, projectID, oldStatus, newStatus string) error {
+	return s.SendTaskStatusChangedBy(ctx, userID, "", taskTitle, taskID, projectID, oldStatus, newStatus)
+}
+
+// ✅ NEW: SendTaskStatusChangedBy with changer info
+func (s *Service) SendTaskStatusChangedBy(ctx context.Context, userID, changedByID, taskTitle, taskID, projectID, oldStatus, newStatus string) error {
 	if userID == "" {
 		return nil
+	}
+
+	changedByName := s.getUserName(ctx, changedByID)
+
+	message := fmt.Sprintf("'%s' moved from %s to %s", taskTitle, formatStatus(oldStatus), formatStatus(newStatus))
+	if changedByID != "" && changedByName != "Someone" {
+		message = fmt.Sprintf("%s moved '%s' from %s to %s", changedByName, taskTitle, formatStatus(oldStatus), formatStatus(newStatus))
 	}
 
 	notification := &repository.Notification{
 		UserID:  userID,
 		Type:    TypeTaskStatusChanged,
 		Title:   "Task Status Changed",
-		Message: fmt.Sprintf("Task '%s' moved from %s to %s", taskTitle, formatStatus(oldStatus), formatStatus(newStatus)),
+		Message: message,
 		Read:    false,
 		Data: map[string]interface{}{
-			"taskId":    taskID,
-			"projectId": projectID,
-			"oldStatus": oldStatus,
-			"newStatus": newStatus,
-			"action":    "view_task",
+			"taskId":          taskID,
+			"taskTitle":       taskTitle,
+			"projectId":       projectID,
+			"oldStatus":       oldStatus,
+			"newStatus":       newStatus,
+			"changedBy":       changedByID,
+			"changedByName":   changedByName, // ✅ Added
+			"action":          "view_task",
 		},
 	}
 
@@ -247,9 +313,7 @@ func (s *Service) SendTaskStatusChanged(ctx context.Context, userID, taskTitle, 
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -262,7 +326,7 @@ func (s *Service) SendTaskStatusChangedToUsers(ctx context.Context, userIDs []st
 			continue
 		}
 
-		if err := s.SendTaskStatusChanged(ctx, userID, taskTitle, taskID, projectID, oldStatus, newStatus); err != nil {
+		if err := s.SendTaskStatusChangedBy(ctx, userID, excludeUserID, taskTitle, taskID, projectID, oldStatus, newStatus); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -283,12 +347,14 @@ func (s *Service) SendTaskCommented(ctx context.Context, userID, commenterName, 
 		UserID:  userID,
 		Type:    TypeTaskCommented,
 		Title:   "New Comment",
-		Message: fmt.Sprintf("%s commented on task: %s", commenterName, taskTitle),
+		Message: fmt.Sprintf("%s commented on: %s", commenterName, taskTitle),
 		Read:    false,
 		Data: map[string]interface{}{
-			"taskId":    taskID,
-			"projectId": projectID,
-			"action":    "view_task",
+			"taskId":       taskID,
+			"taskTitle":    taskTitle,
+			"projectId":    projectID,
+			"commentedBy":  commenterName,
+			"action":       "view_task",
 		},
 	}
 
@@ -296,9 +362,7 @@ func (s *Service) SendTaskCommented(ctx context.Context, userID, commenterName, 
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -315,6 +379,7 @@ func (s *Service) SendTaskDeleted(ctx context.Context, userID, taskTitle, taskKe
 		Message: fmt.Sprintf("Task '%s' (%s) has been deleted", taskTitle, taskKey),
 		Read:    false,
 		Data: map[string]interface{}{
+			"taskTitle": taskTitle,
 			"taskKey":   taskKey,
 			"projectId": projectID,
 			"action":    "view_project",
@@ -325,9 +390,7 @@ func (s *Service) SendTaskDeleted(ctx context.Context, userID, taskTitle, taskKe
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -368,9 +431,10 @@ func (s *Service) SendSprintStarted(ctx context.Context, userID, sprintName, spr
 		Message: fmt.Sprintf("Sprint '%s' has started", sprintName),
 		Read:    false,
 		Data: map[string]interface{}{
-			"sprintId":  sprintID,
-			"projectId": projectID,
-			"action":    "view_sprint",
+			"sprintId":   sprintID,
+			"sprintName": sprintName,
+			"projectId":  projectID,
+			"action":     "view_sprint",
 		},
 	}
 
@@ -378,9 +442,7 @@ func (s *Service) SendSprintStarted(ctx context.Context, userID, sprintName, spr
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -400,16 +462,16 @@ func (s *Service) SendSprintStartedToMembers(ctx context.Context, members []stri
 			Message: fmt.Sprintf("Sprint '%s' has started! Time to get to work.", sprintName),
 			Read:    false,
 			Data: map[string]interface{}{
-				"sprintId":  sprintID,
-				"projectId": projectID,
-				"action":    "view_sprint",
+				"sprintId":   sprintID,
+				"sprintName": sprintName,
+				"projectId":  projectID,
+				"action":     "view_sprint",
 			},
 		}
 
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
 		} else {
-			// Send real-time WebSocket notification
 			s.sendWebSocketNotification(notification)
 		}
 	}
@@ -433,9 +495,10 @@ func (s *Service) SendSprintCompleted(ctx context.Context, userID, sprintName, s
 		Message: fmt.Sprintf("Sprint '%s' has been completed", sprintName),
 		Read:    false,
 		Data: map[string]interface{}{
-			"sprintId":  sprintID,
-			"projectId": projectID,
-			"action":    "view_sprint",
+			"sprintId":   sprintID,
+			"sprintName": sprintName,
+			"projectId":  projectID,
+			"action":     "view_sprint",
 		},
 	}
 
@@ -443,9 +506,7 @@ func (s *Service) SendSprintCompleted(ctx context.Context, userID, sprintName, s
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -466,6 +527,7 @@ func (s *Service) SendSprintCompletedToMembers(ctx context.Context, members []st
 			Read:    false,
 			Data: map[string]interface{}{
 				"sprintId":       sprintID,
+				"sprintName":     sprintName,
 				"projectId":      projectID,
 				"completedTasks": completedTasks,
 				"totalTasks":     totalTasks,
@@ -476,7 +538,6 @@ func (s *Service) SendSprintCompletedToMembers(ctx context.Context, members []st
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
 		} else {
-			// Send real-time WebSocket notification
 			s.sendWebSocketNotification(notification)
 		}
 	}
@@ -511,6 +572,7 @@ func (s *Service) SendSprintEnding(ctx context.Context, userID, sprintName, spri
 		Read:    false,
 		Data: map[string]interface{}{
 			"sprintId":      sprintID,
+			"sprintName":    sprintName,
 			"projectId":     projectID,
 			"daysRemaining": daysRemaining,
 			"action":        "view_sprint",
@@ -521,9 +583,7 @@ func (s *Service) SendSprintEnding(ctx context.Context, userID, sprintName, spri
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -561,10 +621,11 @@ func (s *Service) SendMention(ctx context.Context, userID, mentionedBy, taskTitl
 		UserID:  userID,
 		Type:    TypeMention,
 		Title:   "You were mentioned",
-		Message: fmt.Sprintf("%s mentioned you in task: %s", mentionedBy, taskTitle),
+		Message: fmt.Sprintf("%s mentioned you in: %s", mentionedBy, taskTitle),
 		Read:    false,
 		Data: map[string]interface{}{
 			"taskId":      taskID,
+			"taskTitle":   taskTitle,
 			"projectId":   projectID,
 			"mentionedBy": mentionedBy,
 			"action":      "view_task",
@@ -575,23 +636,20 @@ func (s *Service) SendMention(ctx context.Context, userID, mentionedBy, taskTitl
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
 // ParseAndSendMentions parses text for @mentions and sends notifications
 func (s *Service) ParseAndSendMentions(ctx context.Context, content, authorName, taskTitle, taskID, projectID, authorID string) error {
 	if s.userRepo == nil {
-		return nil // Can't look up users without repo
+		return nil
 	}
 
-	// Find all @mentions (e.g., @john.doe or @john or @user@email.com)
 	mentionRegex := regexp.MustCompile(`@([a-zA-Z0-9._]+(?:@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})?)`)
 	matches := mentionRegex.FindAllStringSubmatch(content, -1)
 
-	mentionedUsers := make(map[string]bool) // Avoid duplicate notifications
+	mentionedUsers := make(map[string]bool)
 	var errs []error
 
 	for _, match := range matches {
@@ -603,7 +661,6 @@ func (s *Service) ParseAndSendMentions(ctx context.Context, content, authorName,
 		var user *repository.User
 		var err error
 
-		// Check if it's an email mention
 		if strings.Contains(mention, "@") {
 			user, err = s.userRepo.FindByEmail(ctx, mention)
 		} else {
@@ -614,12 +671,10 @@ func (s *Service) ParseAndSendMentions(ctx context.Context, content, authorName,
 			continue
 		}
 
-		// Don't notify the author
 		if user.ID == authorID {
 			continue
 		}
 
-		// Avoid duplicate notifications
 		if mentionedUsers[user.ID] {
 			continue
 		}
@@ -651,13 +706,13 @@ func (s *Service) SendDueDateReminder(ctx context.Context, userID, taskTitle, ta
 	switch daysUntilDue {
 	case 0:
 		title = "Task Due Today!"
-		message = fmt.Sprintf("Task '%s' is due today", taskTitle)
+		message = fmt.Sprintf("'%s' is due today", taskTitle)
 	case 1:
 		title = "Task Due Tomorrow"
-		message = fmt.Sprintf("Task '%s' is due tomorrow", taskTitle)
+		message = fmt.Sprintf("'%s' is due tomorrow", taskTitle)
 	default:
 		title = "Upcoming Due Date"
-		message = fmt.Sprintf("Task '%s' is due in %d days", taskTitle, daysUntilDue)
+		message = fmt.Sprintf("'%s' is due in %d days", taskTitle, daysUntilDue)
 	}
 
 	notification := &repository.Notification{
@@ -668,6 +723,7 @@ func (s *Service) SendDueDateReminder(ctx context.Context, userID, taskTitle, ta
 		Read:    false,
 		Data: map[string]interface{}{
 			"taskId":       taskID,
+			"taskTitle":    taskTitle,
 			"projectId":    projectID,
 			"daysUntilDue": daysUntilDue,
 			"action":       "view_task",
@@ -678,9 +734,7 @@ func (s *Service) SendDueDateReminder(ctx context.Context, userID, taskTitle, ta
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -692,9 +746,9 @@ func (s *Service) SendOverdueTaskReminder(ctx context.Context, userID, taskTitle
 
 	var message string
 	if daysOverdue == 1 {
-		message = fmt.Sprintf("Task '%s' is 1 day overdue", taskTitle)
+		message = fmt.Sprintf("'%s' is 1 day overdue", taskTitle)
 	} else {
-		message = fmt.Sprintf("Task '%s' is %d days overdue", taskTitle, daysOverdue)
+		message = fmt.Sprintf("'%s' is %d days overdue", taskTitle, daysOverdue)
 	}
 
 	notification := &repository.Notification{
@@ -705,6 +759,7 @@ func (s *Service) SendOverdueTaskReminder(ctx context.Context, userID, taskTitle
 		Read:    false,
 		Data: map[string]interface{}{
 			"taskId":      taskID,
+			"taskTitle":   taskTitle,
 			"projectId":   projectID,
 			"daysOverdue": daysOverdue,
 			"isOverdue":   true,
@@ -716,9 +771,7 @@ func (s *Service) SendOverdueTaskReminder(ctx context.Context, userID, taskTitle
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -744,8 +797,9 @@ func (s *Service) SendProjectInvitation(ctx context.Context, userID, projectName
 		Message: message,
 		Read:    false,
 		Data: map[string]interface{}{
-			"projectId": projectID,
-			"action":    "view_project",
+			"projectId":   projectID,
+			"projectName": projectName,
+			"action":      "view_project",
 		},
 	}
 
@@ -753,9 +807,7 @@ func (s *Service) SendProjectInvitation(ctx context.Context, userID, projectName
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -777,8 +829,9 @@ func (s *Service) SendWorkspaceInvitation(ctx context.Context, userID, workspace
 		Message: message,
 		Read:    false,
 		Data: map[string]interface{}{
-			"workspaceId": workspaceID,
-			"action":      "view_workspace",
+			"workspaceId":   workspaceID,
+			"workspaceName": workspaceName,
+			"action":        "view_workspace",
 		},
 	}
 
@@ -786,9 +839,7 @@ func (s *Service) SendWorkspaceInvitation(ctx context.Context, userID, workspace
 		return err
 	}
 
-	// Send real-time WebSocket notification
 	s.sendWebSocketNotification(notification)
-
 	return nil
 }
 
@@ -817,7 +868,6 @@ func (s *Service) SendBatchNotifications(ctx context.Context, userIDs []string, 
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			errs = append(errs, fmt.Errorf("failed to notify user %s: %w", userID, err))
 		} else {
-			// Send real-time WebSocket notification
 			s.sendWebSocketNotification(notification)
 		}
 	}
@@ -835,6 +885,12 @@ func (s *Service) SendBatchNotifications(ctx context.Context, userIDs []string, 
 // formatStatus converts status codes to human-readable text
 func formatStatus(status string) string {
 	statusMap := map[string]string{
+		"backlog":     "Backlog",
+		"todo":        "To Do",
+		"in_progress": "In Progress",
+		"in_review":   "In Review",
+		"done":        "Done",
+		"cancelled":   "Cancelled",
 		"BACKLOG":     "Backlog",
 		"TODO":        "To Do",
 		"IN_PROGRESS": "In Progress",
@@ -846,7 +902,7 @@ func formatStatus(status string) string {
 	if formatted, ok := statusMap[status]; ok {
 		return formatted
 	}
-	return status
+	return strings.Title(strings.ReplaceAll(status, "_", " "))
 }
 
 // GetProjectMemberIDs returns user IDs of project members (helper for services)
