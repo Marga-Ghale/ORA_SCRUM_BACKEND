@@ -350,7 +350,8 @@ func (s *taskService) Create(ctx context.Context, req *models.CreateTaskRequest)
 		s.broadcaster.BroadcastTaskCreated(
 			task.ProjectID,
 			s.taskToMap(task),
-			"",
+						creatorID,
+
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -527,20 +528,30 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 	}
 
 	// ✅ NOTIFICATIONS START
+	// Track newly assigned users so we don't send them TASK_UPDATED (they get TASK_ASSIGNED instead)
+	newAssigneeMap := make(map[string]bool)
+	if req.AssigneeIDs != nil {
+		newAssignees := s.findNewAssignees(oldAssignees, *req.AssigneeIDs)
+		for _, id := range newAssignees {
+			newAssigneeMap[id] = true
+		}
+	}
+
 	if len(changes) > 0 {
-		// 1. Notify assignees (excluding updater)
+		// 1. Notify assignees (excluding updater AND newly assigned users)
 		notifiedUsers := make(map[string]bool)
 		for _, assigneeID := range task.AssigneeIDs {
-			if assigneeID != userID {
+			// Skip if: it's the updater, OR they're newly assigned (they'll get TASK_ASSIGNED instead)
+			if assigneeID != userID && !newAssigneeMap[assigneeID] {
 				s.notificationSvc.SendTaskUpdatedBy(
-    ctx,
-    assigneeID,
-    userID,  // ✅ Pass the updater ID
-    task.Title,
-    task.ID,
-    task.ProjectID,
-    changes,
-)
+					ctx,
+					assigneeID,
+					userID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+					changes,
+				)
 				notifiedUsers[assigneeID] = true
 			}
 		}
@@ -566,7 +577,8 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 				task.ProjectID,
 				s.taskToMap(task),
 				changes,
-				"",
+								userID,
+
 			)
 		}
 	}
@@ -598,7 +610,8 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 				s.taskToMap(task),
 				oldStatus,
 				*req.Status,
-				"",
+								userID,
+
 			)
 		}
 	}
@@ -609,23 +622,16 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		
 		for _, newAssigneeID := range newAssignees {
 			if newAssigneeID != userID {
+				// Send notification (this also sends WebSocket via sendWebSocketNotification)
 				s.notificationSvc.SendTaskAssignedBy(
-    ctx,
-    newAssigneeID,
-    userID,  // ✅ Pass the assigner ID
-    task.Title,
-    task.ID,
-    task.ProjectID,
-)
-
-				// Broadcast assignment
-				if s.broadcaster != nil {
-					s.broadcaster.BroadcastTaskAssigned(
-						newAssigneeID,
-						s.taskToMap(task),
-						"",
-					)
-				}
+					ctx,
+					newAssigneeID,
+					userID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+				)
+				// NOTE: Removed BroadcastTaskAssigned - notification service already sends WebSocket
 
 				// Auto-add new assignee as watcher
 				if !contains(task.WatcherIDs, newAssigneeID) {
@@ -635,6 +641,7 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 			}
 		}
 	}
+	
 	// ✅ NOTIFICATIONS END
 
 	return task, nil
@@ -689,7 +696,7 @@ func (s *taskService) Delete(ctx context.Context, taskID, userID string) error {
 			task.ProjectID,
 			task.ID,
 			taskKey,
-			"",
+			userID,
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -764,7 +771,7 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 			s.taskToMap(task),
 			oldStatus,
 			status,
-			"",
+			userID,
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -819,7 +826,7 @@ func (s *taskService) AssignTask(ctx context.Context, taskID, assigneeID, actorI
 			s.broadcaster.BroadcastTaskAssigned(
 				assigneeID,
 				s.taskToMap(task),
-				"",
+				actorID,
 			)
 		}
 	}
@@ -919,7 +926,8 @@ func (s *taskService) ConvertToSubtask(ctx context.Context, taskID, parentTaskID
 			task.ProjectID,
 			s.taskToMap(task),
 			[]string{"converted to subtask"},
-			"",
+						userID,
+
 		)
 	}
 
@@ -951,7 +959,8 @@ func (s *taskService) PromoteToTask(ctx context.Context, taskID, userID string) 
 			task.ProjectID,
 			s.taskToMap(task),
 			[]string{"promoted to main task"},
-			"",
+									userID,
+
 		)
 	}
 
@@ -1063,7 +1072,7 @@ func (s *taskService) AddComment(
 				"userId":    comment.UserID,
 				"createdAt": comment.CreatedAt,
 			},
-			"",
+			userID,
 		)
 	}
 	// ✅ NOTIFICATIONS END
@@ -1161,7 +1170,7 @@ func (s *taskService) UpdateComment(
 					"userId":    comment.UserID,
 					"updatedAt": comment.UpdatedAt,
 				},
-				"",
+				userID,
 			)
 		}
 	}
@@ -1218,7 +1227,7 @@ func (s *taskService) DeleteComment(
 				task.ProjectID,
 				comment.TaskID,
 				commentID,
-				"",
+				userID,
 			)
 		}
 	}
@@ -2104,24 +2113,24 @@ func (s *taskService) ReorderTasksInColumn(
 
 
 	// ✅ CRITICAL FIX: Broadcast to ALL users (including the one who moved it!)
-	if s.broadcaster != nil {
-		log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
+	// if s.broadcaster != nil {
+	// 	log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
 		
-		// Fetch the updated task with all relations
-		updatedTask, err := s.taskRepo.FindByID(ctx, movedTaskID)
-		if err != nil {
-			log.Printf("⚠️ Failed to fetch updated task: %v", err)
-		} else {
-			// ✅ Pass empty string "" for excludeUserID to broadcast to EVERYONE
-			s.broadcaster.BroadcastTaskUpdated(
-				projectID,
-				s.taskToMap(updatedTask),
-				[]string{"position", "status"},
-				"", // ❌ CRITICAL: Empty string = broadcast to ALL users!
-			)
-			log.Printf("✅ Broadcasted task update to all users in project")
-		}
-	}
+	// 	// Fetch the updated task with all relations
+	// 	updatedTask, err := s.taskRepo.FindByID(ctx, movedTaskID)
+	// 	if err != nil {
+	// 		log.Printf("⚠️ Failed to fetch updated task: %v", err)
+	// 	} else {
+	// 		// ✅ Pass empty string "" for excludeUserID to broadcast to EVERYONE
+	// 		s.broadcaster.BroadcastTaskUpdated(
+	// 			projectID,
+	// 			s.taskToMap(updatedTask),
+	// 			[]string{"position", "status"},
+	// 			"", // ❌ CRITICAL: Empty string = broadcast to ALL users!
+	// 		)
+	// 		log.Printf("✅ Broadcasted task update to all users in project")
+	// 	}
+	// }
 
 
 	return nil
