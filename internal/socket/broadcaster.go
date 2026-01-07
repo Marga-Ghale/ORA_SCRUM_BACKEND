@@ -76,20 +76,20 @@ func (b *Broadcaster) BroadcastTaskDeleted(projectID, taskID, taskKey string, ex
 func (b *Broadcaster) BroadcastTaskStatusChanged(projectID string, task map[string]interface{}, oldStatus, newStatus string, excludeUserID string) {
 	room := fmt.Sprintf("project:%s", projectID)
 	b.hub.SendToRoom(room, MessageTaskStatusChanged, map[string]interface{}{
-		"task":      task,
-		"oldStatus": oldStatus,
-		"newStatus": newStatus,
+		"task":          task,
+		"oldStatus":     oldStatus,
+		"newStatus":     newStatus,
+		"changedByUser": excludeUserID,
 	}, excludeUserID)
 }
 
 // BroadcastTaskAssigned notifies the assigned user
 func (b *Broadcaster) BroadcastTaskAssigned(assigneeID string, task map[string]interface{}, assignedBy string) {
 	b.hub.SendToUser(assigneeID, MessageTaskAssigned, map[string]interface{}{
-		"task":       task,
-		"assignedBy": assignedBy,
+		"task":         task,
+		"assignedBy":   assignedBy,
 	})
 }
-
 // ============================================
 // Sprint Broadcasting
 // ============================================
