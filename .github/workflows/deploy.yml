@@ -24,14 +24,22 @@ jobs:
 
       - name: Create .env file on server
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
+          envs: JWT_SECRET,SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_PASSWORD,SMTP_FROM
           script: |
             cd /root/ORA_SCRUM
 
-            cat > .env << 'EOF'
+            cat > .env << 'ENVFILE'
             # GitHub Configuration
             GITHUB_REPOSITORY=marga-ghale/ora_scrum_backend
             GITHUB_FRONTEND_REPO=marga-ghale/ora_scrum_frontend
@@ -43,24 +51,27 @@ jobs:
             DB_PORT=5432
 
             # JWT Configuration
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
             JWT_EXPIRY=24
             REFRESH_EXPIRY=168
 
-            # SMTP Configuration
-            SMTP_HOST=${{ secrets.SMTP_HOST }}
-            SMTP_PORT=${{ secrets.SMTP_PORT }}
-            SMTP_USER=${{ secrets.SMTP_USER }}
-            SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
-            SMTP_FROM=${{ secrets.SMTP_FROM }}
-            SMTP_FROM_NAME=ORA Scrum
-            SMTP_USE_TLS=true
-
             # Application
-            ENVIRONMENT=development
+            ENVIRONMENT=production
             API_PORT=8080
             FRONTEND_URL=https://scrum.oratechnologies.io
-            EOF
+            ENVFILE
+
+            # Append secrets separately to handle special characters
+            echo "JWT_SECRET=${JWT_SECRET}" >> .env
+            echo "SMTP_HOST=${SMTP_HOST}" >> .env
+            echo "SMTP_PORT=${SMTP_PORT}" >> .env
+            echo "SMTP_USER=${SMTP_USER}" >> .env
+            echo "SMTP_PASSWORD=${SMTP_PASSWORD}" >> .env
+            echo "SMTP_FROM=${SMTP_FROM}" >> .env
+            echo "SMTP_FROM_NAME=ORA Scrum" >> .env
+            echo "SMTP_USE_TLS=true" >> .env
+
+            echo "✅ .env file created successfully"
+            cat .env | grep -v PASSWORD
 
       - name: Copy migration files to server
         uses: appleboy/scp-action@v0.1.7
@@ -73,7 +84,7 @@ jobs:
           strip_components: 0
           overwrite: true
 
-      - name: Ensure database password is correct
+      - name: Ensure database is ready
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -81,34 +92,67 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
             cd /root/ORA_SCRUM
-            # Wait for DB to be ready
+
+            # Start only db and redis first
             docker compose up -d db redis
-            sleep 5
+
+            # Wait for PostgreSQL to be healthy
+            echo "Waiting for PostgreSQL..."
+            for i in {1..30}; do
+              if docker compose exec -T db pg_isready -U postgres -d ora_scrum > /dev/null 2>&1; then
+                echo "✅ PostgreSQL is ready"
+                break
+              fi
+              echo "Attempt $i/30..."
+              sleep 2
+            done
+
+            # Verify Redis
+            echo "Checking Redis..."
+            docker compose exec -T redis redis-cli ping || echo "Redis not responding"
 
       - name: Deploy application
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
+          envs: GH_TOKEN,GH_ACTOR
           script: |
             cd /root/ORA_SCRUM
 
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Login to GitHub Container Registry
+            echo "${GH_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
+
+            # Pull latest image
             docker pull ghcr.io/marga-ghale/ora_scrum_backend:latest
 
-            # Recreate only the API container
-            docker compose stop api
-            docker compose rm -f api
+            # Stop and remove old container
+            docker compose stop api || true
+            docker compose rm -f api || true
+
+            # Start new container
             docker compose up -d api
 
-            sleep 15
+            # Wait for container to start
+            sleep 10
 
-            # Reset the postgres user password to match .env
-            docker exec ora_scrum_db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" 2>/dev/null || echo "Password already set or DB not ready"
-
+            # Check container status
+            echo "=== Container Status ==="
             docker compose ps api
-            docker logs ora_scrum_api --tail 50
+
+            # Check logs for errors
+            echo "=== Recent Logs ==="
+            docker logs ora_scrum_api --tail 100 2>&1
+
+            # Verify health endpoint from inside container network
+            echo "=== Health Check ==="
+            docker compose exec -T api wget -q -O- http://localhost:8080/health || echo "Health check failed"
+
+            # Cleanup
             docker image prune -f
 
       - name: Verify deployment
@@ -123,5 +167,5 @@ jobs:
             echo "Attempt $i/10: Status $response, retrying..."
             sleep 5
           done
-          echo "❌ Deployment failed"
+          echo "❌ Deployment verification failed - check server logs"
           exit 1
