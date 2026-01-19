@@ -19,7 +19,6 @@ import (
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/email"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
-	"github.com/Marga-Ghale/ora-scrum-backend/internal/seed"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/service"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 	"github.com/gin-contrib/cors"
@@ -140,15 +139,14 @@ func main() {
 	wsHandler := socket.NewHandler(hub, cfg.JWTSecret)
 	log.Println("🔌 WebSocket hub initialized")
 
-	seed.SeedData(repos)
-
+	
 	// ============================================
 	// Seed Data (for development ONLY)
 	// ============================================
-	if cfg.Environment == "development" {
-		log.Println("🌱 Seeding development data...")
-		seed.SeedData(repos)
-	}
+	// if cfg.Environment == "development" {
+	// 	log.Println("🌱 Seeding development data...")
+	// 	seed.SeedData(repos)
+	// }
 
 	// ============================================
 	// Initialize Notification Service
