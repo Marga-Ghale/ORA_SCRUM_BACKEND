@@ -365,3 +365,44 @@ func (h *MemberHandler) GetAccessibleProjects(c *gin.Context) {
 
 	c.JSON(http.StatusOK, projects)
 }
+
+
+// ✅ NEW: GetVisibleSpaces returns spaces user can SEE (includes workspace members)
+func (h *MemberHandler) GetVisibleSpaces(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	spaces, err := h.memberService.GetVisibleSpaces(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch visible spaces"})
+		return
+	}
+
+	c.JSON(http.StatusOK, spaces)
+}
+
+// ✅ NEW: GetAccessInfo returns detailed access information
+func (h *MemberHandler) GetAccessInfo(c *gin.Context) {
+	entityType := c.Param("entityType")
+	entityID := c.Param("entityId")
+	userID := c.Query("userId")
+	
+	if userID == "" {
+		// Check current user
+		var ok bool
+		userID, ok = middleware.RequireUserID(c)
+		if !ok {
+			return
+		}
+	}
+
+	accessInfo, err := h.memberService.GetAccessInfo(c.Request.Context(), entityType, entityID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check access"})
+		return
+	}
+
+	c.JSON(http.StatusOK, accessInfo)
+}

@@ -487,6 +487,10 @@ func main() {
 				members.GET("/my/memberships", h.Member.GetUserMemberships)
 				members.GET("/my/access", h.Member.GetUserAllAccess)
 
+				members.GET("/my/visible/spaces", h.Member.GetVisibleSpaces)          
+    			members.GET("/:entityType/:entityId/access-info", h.Member.GetAccessInfo)
+    
+
 				// Generic routes LAST
 				members.GET("/:entityType/:entityId/direct", h.Member.ListDirectMembers)
 				members.GET("/:entityType/:entityId/effective", h.Member.ListEffectiveMembers)
