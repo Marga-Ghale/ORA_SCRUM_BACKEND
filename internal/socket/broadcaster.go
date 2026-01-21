@@ -44,25 +44,26 @@ func (b *Broadcaster) BroadcastTaskCreated(projectID string, task map[string]int
 
 // BroadcastTaskUpdated broadcasts task updates to project members
 func (b *Broadcaster) BroadcastTaskUpdated(
-	projectID string, 
-	task map[string]interface{}, 
-	changes []string, 
+	projectID string,
+	task map[string]interface{},
+	changes []string,
 	excludeUserID string,
 ) {
 	room := fmt.Sprintf("project:%s", projectID)
-	
+
 	payload := map[string]interface{}{
-		"task":           task,
-		"changedFields":  changes,
-		"changedByUser":  excludeUserID, // ✅ Keep track of who made the change
-		"projectId":      projectID,
+		"task":          task,
+		"changedFields": changes,
+		"changedByUser": excludeUserID,
+		"projectId":     projectID,
 	}
-	
-	log.Printf("📡 BroadcastTaskUpdated: room=%s, taskId=%v, exclude=%s", 
+
+	log.Printf("📡 BroadcastTaskUpdated: room=%s, taskId=%v, exclude=%s",
 		room, task["id"], excludeUserID)
-	
+
 	b.hub.SendToRoom(room, MessageTaskUpdated, payload, excludeUserID)
 }
+
 // BroadcastTaskDeleted broadcasts task deletion to project members
 func (b *Broadcaster) BroadcastTaskDeleted(projectID, taskID, taskKey string, excludeUserID string) {
 	room := fmt.Sprintf("project:%s", projectID)
@@ -86,10 +87,11 @@ func (b *Broadcaster) BroadcastTaskStatusChanged(projectID string, task map[stri
 // BroadcastTaskAssigned notifies the assigned user
 func (b *Broadcaster) BroadcastTaskAssigned(assigneeID string, task map[string]interface{}, assignedBy string) {
 	b.hub.SendToUser(assigneeID, MessageTaskAssigned, map[string]interface{}{
-		"task":         task,
-		"assignedBy":   assignedBy,
+		"task":       task,
+		"assignedBy": assignedBy,
 	})
 }
+
 // ============================================
 // Sprint Broadcasting
 // ============================================
@@ -110,27 +112,34 @@ func (b *Broadcaster) BroadcastSprintCompleted(projectID string, sprint map[stri
 }
 
 // ============================================
-// Project Broadcasting
+// Comment Broadcasting
 // ============================================
 
-// BroadcastProjectUpdated broadcasts project updates to members
-func (b *Broadcaster) BroadcastProjectUpdated(projectID string, project map[string]interface{}, excludeUserID string) {
+// BroadcastCommentAdded broadcasts new comment to task watchers
+func (b *Broadcaster) BroadcastCommentAdded(projectID, taskID string, comment map[string]interface{}, excludeUserID string) {
 	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageProjectUpdated, project, excludeUserID)
+	b.hub.SendToRoom(room, MessageCommentAdded, map[string]interface{}{
+		"taskId":  taskID,
+		"comment": comment,
+	}, excludeUserID)
 }
 
-// BroadcastMemberAdded broadcasts new member addition
-func (b *Broadcaster) BroadcastMemberAdded(projectID string, member map[string]interface{}) {
+// BroadcastCommentUpdated broadcasts comment update
+func (b *Broadcaster) BroadcastCommentUpdated(projectID, taskID string, comment map[string]interface{}, excludeUserID string) {
 	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageMemberAdded, member, "")
+	b.hub.SendToRoom(room, MessageCommentUpdated, map[string]interface{}{
+		"taskId":  taskID,
+		"comment": comment,
+	}, excludeUserID)
 }
 
-// BroadcastMemberRemoved broadcasts member removal
-func (b *Broadcaster) BroadcastMemberRemoved(projectID, userID string) {
+// BroadcastCommentDeleted broadcasts comment deletion
+func (b *Broadcaster) BroadcastCommentDeleted(projectID, taskID, commentID string, excludeUserID string) {
 	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageMemberRemoved, map[string]interface{}{
-		"userId": userID,
-	}, "")
+	b.hub.SendToRoom(room, MessageCommentDeleted, map[string]interface{}{
+		"taskId":    taskID,
+		"commentId": commentID,
+	}, excludeUserID)
 }
 
 // ============================================
@@ -176,44 +185,170 @@ func (b *Broadcaster) BroadcastTeamMemberRemoved(workspaceID, teamID, userID str
 }
 
 // ============================================
-// Comment Broadcasting
+// ✅ NEW: Workspace CRUD Broadcasting
 // ============================================
 
-// BroadcastCommentAdded broadcasts new comment to task watchers
-func (b *Broadcaster) BroadcastCommentAdded(projectID, taskID string, comment map[string]interface{}, excludeUserID string) {
-	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageCommentAdded, map[string]interface{}{
-		"taskId":  taskID,
-		"comment": comment,
-	}, excludeUserID)
+// BroadcastWorkspaceCreated broadcasts workspace creation to the creator
+// Note: New workspaces don't have other members yet, so we send to the creator
+func (b *Broadcaster) BroadcastWorkspaceCreated(creatorID string, workspace map[string]interface{}) {
+	log.Printf("📡 BroadcastWorkspaceCreated: creator=%s, workspace=%v", creatorID, workspace["id"])
+	b.hub.SendToUser(creatorID, MessageWorkspaceCreated, workspace)
 }
 
-// BroadcastCommentUpdated broadcasts comment update
-func (b *Broadcaster) BroadcastCommentUpdated(projectID, taskID string, comment map[string]interface{}, excludeUserID string) {
-	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageCommentUpdated, map[string]interface{}{
-		"taskId":  taskID,
-		"comment": comment,
-	}, excludeUserID)
+// BroadcastWorkspaceUpdated broadcasts workspace update to all workspace members
+func (b *Broadcaster) BroadcastWorkspaceUpdated(workspaceID string, workspace map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastWorkspaceUpdated: room=%s, exclude=%s", room, excludeUserID)
+	b.hub.SendToRoom(room, MessageWorkspaceUpdated, workspace, excludeUserID)
 }
 
-// BroadcastCommentDeleted broadcasts comment deletion
-func (b *Broadcaster) BroadcastCommentDeleted(projectID, taskID, commentID string, excludeUserID string) {
-	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageCommentDeleted, map[string]interface{}{
-		"taskId":    taskID,
-		"commentId": commentID,
+// BroadcastWorkspaceDeleted broadcasts workspace deletion to all workspace members
+func (b *Broadcaster) BroadcastWorkspaceDeleted(workspaceID string, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastWorkspaceDeleted: room=%s, exclude=%s", room, excludeUserID)
+	b.hub.SendToRoom(room, MessageWorkspaceDeleted, map[string]interface{}{
+		"id":          workspaceID,
+		"workspaceId": workspaceID,
 	}, excludeUserID)
 }
 
 // ============================================
-// Workspace Broadcasting
+// ✅ NEW: Space CRUD Broadcasting
+// ============================================
+
+// BroadcastSpaceCreated broadcasts space creation to workspace members
+func (b *Broadcaster) BroadcastSpaceCreated(workspaceID string, space map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastSpaceCreated: room=%s, spaceId=%v, exclude=%s", room, space["id"], excludeUserID)
+	b.hub.SendToRoom(room, MessageSpaceCreated, space, excludeUserID)
+}
+
+// BroadcastSpaceUpdated broadcasts space update to workspace members
+func (b *Broadcaster) BroadcastSpaceUpdated(workspaceID string, space map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastSpaceUpdated: room=%s, spaceId=%v, exclude=%s", room, space["id"], excludeUserID)
+	b.hub.SendToRoom(room, MessageSpaceUpdated, space, excludeUserID)
+}
+
+// BroadcastSpaceDeleted broadcasts space deletion to workspace members
+func (b *Broadcaster) BroadcastSpaceDeleted(workspaceID, spaceID string, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastSpaceDeleted: room=%s, spaceId=%s, exclude=%s", room, spaceID, excludeUserID)
+	b.hub.SendToRoom(room, MessageSpaceDeleted, map[string]interface{}{
+		"id":          spaceID,
+		"spaceId":     spaceID,
+		"workspaceId": workspaceID,
+	}, excludeUserID)
+}
+
+// ============================================
+// ✅ NEW: Folder CRUD Broadcasting
+// ============================================
+
+// BroadcastFolderCreated broadcasts folder creation to workspace members
+func (b *Broadcaster) BroadcastFolderCreated(workspaceID, spaceID string, folder map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastFolderCreated: room=%s, folderId=%v, spaceId=%s, exclude=%s", room, folder["id"], spaceID, excludeUserID)
+
+	// Add spaceId to payload for frontend filtering
+	folder["spaceId"] = spaceID
+	folder["workspaceId"] = workspaceID
+
+	b.hub.SendToRoom(room, MessageFolderCreated, folder, excludeUserID)
+}
+
+// BroadcastFolderUpdated broadcasts folder update to workspace members
+func (b *Broadcaster) BroadcastFolderUpdated(workspaceID, spaceID string, folder map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastFolderUpdated: room=%s, folderId=%v, exclude=%s", room, folder["id"], excludeUserID)
+
+	folder["spaceId"] = spaceID
+	folder["workspaceId"] = workspaceID
+
+	b.hub.SendToRoom(room, MessageFolderUpdated, folder, excludeUserID)
+}
+
+// BroadcastFolderDeleted broadcasts folder deletion to workspace members
+func (b *Broadcaster) BroadcastFolderDeleted(workspaceID, spaceID, folderID string, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastFolderDeleted: room=%s, folderId=%s, exclude=%s", room, folderID, excludeUserID)
+	b.hub.SendToRoom(room, MessageFolderDeleted, map[string]interface{}{
+		"id":          folderID,
+		"folderId":    folderID,
+		"spaceId":     spaceID,
+		"workspaceId": workspaceID,
+	}, excludeUserID)
+}
+
+// ============================================
+// ✅ NEW: Project CRUD Broadcasting
+// ============================================
+
+// BroadcastProjectCreated broadcasts project creation to workspace members
+func (b *Broadcaster) BroadcastProjectCreated(workspaceID, spaceID string, folderID *string, project map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastProjectCreated: room=%s, projectId=%v, spaceId=%s, exclude=%s", room, project["id"], spaceID, excludeUserID)
+
+	// Add hierarchy IDs to payload for frontend filtering
+	project["spaceId"] = spaceID
+	project["workspaceId"] = workspaceID
+	if folderID != nil {
+		project["folderId"] = *folderID
+	}
+
+	b.hub.SendToRoom(room, MessageProjectCreated, project, excludeUserID)
+}
+
+// BroadcastProjectUpdated broadcasts project update to workspace members
+func (b *Broadcaster) BroadcastProjectUpdated(workspaceID string, project map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastProjectUpdated: room=%s, projectId=%v, exclude=%s", room, project["id"], excludeUserID)
+
+	project["workspaceId"] = workspaceID
+
+	b.hub.SendToRoom(room, MessageProjectUpdated, project, excludeUserID)
+}
+
+// BroadcastProjectDeleted broadcasts project deletion to workspace members
+func (b *Broadcaster) BroadcastProjectDeleted(workspaceID, spaceID, projectID string, folderID *string, excludeUserID string) {
+	room := fmt.Sprintf("workspace:%s", workspaceID)
+	log.Printf("📡 BroadcastProjectDeleted: room=%s, projectId=%s, exclude=%s", room, projectID, excludeUserID)
+
+	payload := map[string]interface{}{
+		"id":          projectID,
+		"projectId":   projectID,
+		"spaceId":     spaceID,
+		"workspaceId": workspaceID,
+	}
+	if folderID != nil {
+		payload["folderId"] = *folderID
+	}
+
+	b.hub.SendToRoom(room, MessageProjectDeleted, payload, excludeUserID)
+}
+
+// ============================================
+// Generic Broadcasting Methods
 // ============================================
 
 // BroadcastToWorkspace broadcasts a message to all workspace members
 func (b *Broadcaster) BroadcastToWorkspace(workspaceID string, msgType MessageType, payload map[string]interface{}, excludeUserID string) {
 	room := fmt.Sprintf("workspace:%s", workspaceID)
 	b.hub.SendToRoom(room, msgType, payload, excludeUserID)
+}
+
+// BroadcastMemberAdded broadcasts new member addition
+func (b *Broadcaster) BroadcastMemberAdded(projectID string, member map[string]interface{}) {
+	room := fmt.Sprintf("project:%s", projectID)
+	b.hub.SendToRoom(room, MessageMemberAdded, member, "")
+}
+
+// BroadcastMemberRemoved broadcasts member removal
+func (b *Broadcaster) BroadcastMemberRemoved(projectID, userID string) {
+	room := fmt.Sprintf("project:%s", projectID)
+	b.hub.SendToRoom(room, MessageMemberRemoved, map[string]interface{}{
+		"userId": userID,
+	}, "")
 }
 
 // ============================================

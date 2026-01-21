@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 )
 
 type FolderService interface {
@@ -14,7 +15,7 @@ type FolderService interface {
 	ListByUser(ctx context.Context, userID string) ([]*repository.Folder, error)
 	Update(ctx context.Context, id string, name, description, icon, color, visibility *string, allowedUsers, allowedTeams *[]string) (*repository.Folder, error)
 	Delete(ctx context.Context, id string) error
-	
+
 	// Folder-specific operations (not member management)
 	UpdateVisibility(ctx context.Context, folderID, visibility string, allowedUsers, allowedTeams []string) error
 }
@@ -22,7 +23,8 @@ type FolderService interface {
 type folderService struct {
 	folderRepo    repository.FolderRepository
 	spaceRepo     repository.SpaceRepository
-	memberService MemberService // ✅ Use MemberService for member operations
+	memberService MemberService
+	broadcaster   *socket.Broadcaster // ✅ NEW: Added broadcaster
 }
 
 func NewFolderService(
@@ -35,6 +37,11 @@ func NewFolderService(
 		spaceRepo:     spaceRepo,
 		memberService: memberService,
 	}
+}
+
+// ✅ NEW: SetBroadcaster sets the broadcaster for real-time updates
+func (s *folderService) SetBroadcaster(b *socket.Broadcaster) {
+	s.broadcaster = b
 }
 
 func (s *folderService) Create(ctx context.Context, spaceID, creatorID, name string, description, icon, color *string) (*repository.Folder, error) {
@@ -54,7 +61,7 @@ func (s *folderService) Create(ctx context.Context, spaceID, creatorID, name str
 	defaultVisibility := "private"
 
 	folder := &repository.Folder{
-		SpaceID:     spaceID, // ✅ CRITICAL - Must set parent space
+		SpaceID:     spaceID,
 		Name:        name,
 		Description: description,
 		Icon:        icon,
@@ -72,6 +79,22 @@ func (s *folderService) Create(ctx context.Context, spaceID, creatorID, name str
 		// If member add fails, rollback folder creation
 		s.folderRepo.Delete(ctx, folder.ID)
 		return nil, err
+	}
+
+	// ✅ NEW: Broadcast folder creation to workspace members
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastFolderCreated(space.WorkspaceID, spaceID, map[string]interface{}{
+			"id":          folder.ID,
+			"spaceId":     folder.SpaceID,
+			"name":        folder.Name,
+			"description": folder.Description,
+			"icon":        folder.Icon,
+			"color":       folder.Color,
+			"ownerId":     folder.OwnerID,
+			"visibility":  folder.Visibility,
+			"createdAt":   folder.CreatedAt,
+			"updatedAt":   folder.UpdatedAt,
+		}, creatorID)
 	}
 
 	return folder, nil
@@ -123,11 +146,51 @@ func (s *folderService) Update(ctx context.Context, id string, name, description
 	if err := s.folderRepo.Update(ctx, folder); err != nil {
 		return nil, err
 	}
+
+	// ✅ NEW: Broadcast folder update to workspace members
+	if s.broadcaster != nil {
+		// Get space to find workspace ID
+		space, _ := s.spaceRepo.FindByID(ctx, folder.SpaceID)
+		if space != nil {
+			s.broadcaster.BroadcastFolderUpdated(space.WorkspaceID, folder.SpaceID, map[string]interface{}{
+				"id":          folder.ID,
+				"spaceId":     folder.SpaceID,
+				"name":        folder.Name,
+				"description": folder.Description,
+				"icon":        folder.Icon,
+				"color":       folder.Color,
+				"ownerId":     folder.OwnerID,
+				"visibility":  folder.Visibility,
+				"updatedAt":   folder.UpdatedAt,
+			}, "")
+		}
+	}
+
 	return folder, nil
 }
 
 func (s *folderService) Delete(ctx context.Context, id string) error {
-	return s.folderRepo.Delete(ctx, id)
+	// ✅ Get folder first to know space ID for broadcasting
+	folder, err := s.folderRepo.FindByID(ctx, id)
+	if err != nil || folder == nil {
+		return ErrNotFound
+	}
+
+	spaceID := folder.SpaceID
+
+	// Get space to find workspace ID
+	space, _ := s.spaceRepo.FindByID(ctx, spaceID)
+
+	if err := s.folderRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+
+	// ✅ NEW: Broadcast folder deletion to workspace members
+	if s.broadcaster != nil && space != nil {
+		s.broadcaster.BroadcastFolderDeleted(space.WorkspaceID, spaceID, id, "")
+	}
+
+	return nil
 }
 
 func (s *folderService) UpdateVisibility(ctx context.Context, folderID, visibility string, allowedUsers, allowedTeams []string) error {
@@ -140,5 +203,23 @@ func (s *folderService) UpdateVisibility(ctx context.Context, folderID, visibili
 	folder.AllowedUsers = allowedUsers
 	folder.AllowedTeams = allowedTeams
 
-	return s.folderRepo.Update(ctx, folder)
+	if err := s.folderRepo.Update(ctx, folder); err != nil {
+		return err
+	}
+
+	// ✅ NEW: Broadcast visibility update
+	if s.broadcaster != nil {
+		space, _ := s.spaceRepo.FindByID(ctx, folder.SpaceID)
+		if space != nil {
+			s.broadcaster.BroadcastFolderUpdated(space.WorkspaceID, folder.SpaceID, map[string]interface{}{
+				"id":         folder.ID,
+				"spaceId":    folder.SpaceID,
+				"name":       folder.Name,
+				"visibility": folder.Visibility,
+				"updatedAt":  folder.UpdatedAt,
+			}, "")
+		}
+	}
+
+	return nil
 }

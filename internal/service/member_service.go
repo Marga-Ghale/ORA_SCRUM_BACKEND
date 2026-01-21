@@ -45,6 +45,10 @@ type MemberService interface {
 	
 	// ✅ NEW: Visible entities (METADATA VISIBILITY - what user can see/discover)
 	GetVisibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error)
+
+	// Notification recipients (direct members only)
+	GetNotificationRecipients(ctx context.Context, projectID string) ([]string, error)
+
 }
 
 // EntityType constants
@@ -1130,6 +1134,11 @@ func (s *memberService) sendNotification(ctx context.Context, entityType, entity
 		return
 	}
 
+	// Skip self-notification (when user adds themselves, e.g., creating workspace/project)
+	if userID == inviterID {
+		return
+	}
+
 	inviterName := ""
 	if inviter, _ := s.userRepo.FindByID(ctx, inviterID); inviter != nil {
 		inviterName = inviter.Name
@@ -1159,11 +1168,15 @@ func (s *memberService) sendNotification(ctx context.Context, entityType, entity
 	switch entityType {
 	case EntityTypeWorkspace:
 		s.notifSvc.SendWorkspaceInvitation(ctx, userID, entityName, entityID, inviterName)
+	case EntityTypeSpace:
+		s.notifSvc.SendSpaceInvitation(ctx, userID, entityName, entityID, inviterName)
+	case EntityTypeFolder:
+		s.notifSvc.SendFolderInvitation(ctx, userID, entityName, entityID, inviterName)
 	case EntityTypeProject:
 		s.notifSvc.SendProjectInvitation(ctx, userID, entityName, entityID, inviterName)
-	// Add other notification types as needed
 	}
 }
+
 
 // Converter functions
 func (s *memberService) convertWorkspaceMembers(members []*repository.WorkspaceMember, entityID string, inherited bool) []*UnifiedMember {
@@ -1232,4 +1245,21 @@ func (s *memberService) convertProjectMembers(members []*repository.ProjectMembe
 		}
 	}
 	return result
+}
+
+
+// GetNotificationRecipients returns users who should receive notifications for a project
+// This is ONLY direct project members, NOT inherited space/workspace members
+func (s *memberService) GetNotificationRecipients(ctx context.Context, projectID string) ([]string, error) {
+	members, err := s.projectRepo.FindMembers(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	
+	userIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		userIDs = append(userIDs, m.UserID)
+	}
+	
+	return userIDs, nil
 }

@@ -56,6 +56,25 @@ const (
 	MessagePing MessageType = "ping"
 	MessagePong MessageType = "pong"
 	MessageAck  MessageType = "ack"
+
+	// ✅ NEW: Workspace CRUD messages
+	MessageWorkspaceCreated MessageType = "workspace_created"
+	MessageWorkspaceUpdated MessageType = "workspace_updated"
+	MessageWorkspaceDeleted MessageType = "workspace_deleted"
+
+	// ✅ NEW: Space CRUD messages
+	MessageSpaceCreated MessageType = "space_created"
+	MessageSpaceUpdated MessageType = "space_updated"
+	MessageSpaceDeleted MessageType = "space_deleted"
+
+	// ✅ NEW: Folder CRUD messages
+	MessageFolderCreated MessageType = "folder_created"
+	MessageFolderUpdated MessageType = "folder_updated"
+	MessageFolderDeleted MessageType = "folder_deleted"
+
+	// ✅ NEW: Project CRUD messages
+	MessageProjectCreated MessageType = "project_created"
+	MessageProjectDeleted MessageType = "project_deleted"
 )
 
 // Message represents a WebSocket message
