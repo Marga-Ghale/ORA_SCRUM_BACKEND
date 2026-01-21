@@ -345,15 +345,15 @@ func (s *taskService) Create(ctx context.Context, req *models.CreateTaskRequest)
 		}
 	}
 
-	// 3. Broadcast to project room via WebSocket
-	if s.broadcaster != nil {
-		s.broadcaster.BroadcastTaskCreated(
-			task.ProjectID,
-			s.taskToMap(task),
-						creatorID,
+	// // 3. Broadcast to project room via WebSocket
+	// if s.broadcaster != nil {
+	// 	s.broadcaster.BroadcastTaskCreated(
+	// 		task.ProjectID,
+	// 		s.taskToMap(task),
+	// 					creatorID,
 
-		)
-	}
+	// 	)
+	// }
 	// ✅ NOTIFICATIONS END
 
 	return task, nil

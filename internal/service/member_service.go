@@ -26,6 +26,9 @@ type MemberService interface {
 	HasEffectiveAccess(ctx context.Context, entityType, entityID, userID string) (bool, string, error)
 	GetAccessLevel(ctx context.Context, entityType, entityID, userID string) (string, string, error)
 	
+	// ✅ NEW: Detailed access information
+	GetAccessInfo(ctx context.Context, entityType, entityID, userID string) (*AccessInfo, error)
+	
 	// Invitation
 	InviteMemberByEmail(ctx context.Context, entityType, entityID, email, role, inviterID string) error
 	InviteMemberByID(ctx context.Context, entityType, entityID, userID, role, inviterID string) error
@@ -34,11 +37,14 @@ type MemberService interface {
 	GetUserMemberships(ctx context.Context, userID string) (map[string][]string, error)
 	GetUserAllAccess(ctx context.Context, userID string) (*UserAccessMap, error)
 
-	// NEW: Accessible entities
+	// Accessible entities (CONTENT ACCESS - what user can actually work with)
 	GetAccessibleWorkspaces(ctx context.Context, userID string) ([]*repository.Workspace, error)
 	GetAccessibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error)
 	GetAccessibleFolders(ctx context.Context, userID string) ([]*repository.Folder, error)
 	GetAccessibleProjects(ctx context.Context, userID string) ([]*repository.Project, error)
+	
+	// ✅ NEW: Visible entities (METADATA VISIBILITY - what user can see/discover)
+	GetVisibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error)
 }
 
 // EntityType constants
@@ -47,6 +53,14 @@ const (
 	EntityTypeSpace     = "space"
 	EntityTypeFolder    = "folder"
 	EntityTypeProject   = "project"
+)
+
+// ✅ NEW: Access Type constants - defines level of access
+const (
+	AccessTypeNone       = "none"       // No access at all
+	AccessTypeVisible    = "visible"    // Can see metadata only (e.g., workspace member seeing space names)
+	AccessTypeMember     = "member"     // Direct member with full access
+	AccessTypeInherited  = "inherited"  // Access inherited from parent entity
 )
 
 // UnifiedMember represents a member across any entity type
@@ -62,12 +76,21 @@ type UnifiedMember struct {
 	InheritedFrom string // EntityType where membership originates
 }
 
-
 type UserAccessMap struct {
 	Workspaces []string `json:"workspaces"`
 	Spaces     []string `json:"spaces"`
 	Folders    []string `json:"folders"`
 	Projects   []string `json:"projects"`
+}
+
+// ✅ NEW: AccessInfo provides detailed access information
+type AccessInfo struct {
+	HasAccess      bool   `json:"has_access"`
+	AccessType     string `json:"access_type"`      // none, visible, member, inherited
+	Role           string `json:"role"`             // user's role (if has access)
+	InheritedFrom  string `json:"inherited_from"`   // entity type where access comes from
+	CanReadContent bool   `json:"can_read_content"` // can access actual content vs just metadata
+	CanWrite       bool   `json:"can_write"`        // can modify content
 }
 
 type memberService struct {
@@ -97,8 +120,7 @@ func NewMemberService(
 	}
 }
 
-
-// ✅ FIXED: AddMember with proper permission checks
+// AddMember - UNCHANGED (keeping your existing permission logic)
 func (s *memberService) AddMember(ctx context.Context, entityType, entityID, userID, role, inviterID string) error {
 	// Verify user exists first
 	user, err := s.userRepo.FindByID(ctx, userID)
@@ -280,6 +302,7 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 		return ErrInvalidEntityType
 	}
 }
+
 func getRoleLevel(role string) int {
 	roleMap := map[string]int{
 		"owner":  5,
@@ -722,6 +745,7 @@ func (s *memberService) HasEffectiveAccess(ctx context.Context, entityType, enti
 	}
 }
 
+
 // GetAccessLevel returns user's role and where it comes from
 // Returns: (role, inheritedFrom, error)
 func (s *memberService) GetAccessLevel(ctx context.Context, entityType, entityID, userID string) (string, string, error) {
@@ -803,6 +827,98 @@ func (s *memberService) GetAccessLevel(ctx context.Context, entityType, entityID
 	}
 
 	return "", "", ErrUnauthorized
+}
+
+// ✅ NEW: GetAccessInfo - Detailed access information with content/write permissions
+func (s *memberService) GetAccessInfo(ctx context.Context, entityType, entityID, userID string) (*AccessInfo, error) {
+	info := &AccessInfo{
+		HasAccess:      false,
+		AccessType:     AccessTypeNone,
+		CanReadContent: false,
+		CanWrite:       false,
+	}
+
+	// Check direct membership first
+	member, err := s.GetMember(ctx, entityType, entityID, userID)
+	if err == nil && member != nil {
+		info.HasAccess = true
+		info.AccessType = AccessTypeMember
+		info.Role = member.Role
+		info.CanReadContent = true
+		info.CanWrite = getRoleLevel(member.Role) >= 2 // member and above can write
+		return info, nil
+	}
+
+	// Check inherited access based on entity type
+	switch entityType {
+	case EntityTypeWorkspace:
+		// No inheritance for workspace
+		return info, nil
+
+	case EntityTypeSpace:
+		// ✅ CRITICAL CHANGE: Workspace members can SEE spaces but NOT access content
+		space, _ := s.spaceRepo.FindByID(ctx, entityID)
+		if space != nil {
+			wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, userID)
+			if wsMember != nil {
+				info.HasAccess = true
+				info.AccessType = AccessTypeVisible // ✅ Can see, but NOT access content
+				info.Role = wsMember.Role
+				info.InheritedFrom = EntityTypeWorkspace
+				info.CanReadContent = false // ✅ CANNOT read space content
+				info.CanWrite = false
+				return info, nil
+			}
+		}
+
+	case EntityTypeFolder:
+		// ✅ CHANGE: Only space members get content access (not workspace)
+		folder, _ := s.folderRepo.FindByID(ctx, entityID)
+		if folder != nil {
+			spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, userID)
+			if spaceMember != nil {
+				info.HasAccess = true
+				info.AccessType = AccessTypeInherited
+				info.Role = spaceMember.Role
+				info.InheritedFrom = EntityTypeSpace
+				info.CanReadContent = true
+				info.CanWrite = getRoleLevel(spaceMember.Role) >= 2
+				return info, nil
+			}
+		}
+
+	case EntityTypeProject:
+		project, _ := s.projectRepo.FindByID(ctx, entityID)
+		if project != nil {
+			// Check folder membership first
+			if project.FolderID != nil {
+				folderMember, _ := s.folderRepo.FindMember(ctx, *project.FolderID, userID)
+				if folderMember != nil {
+					info.HasAccess = true
+					info.AccessType = AccessTypeInherited
+					info.Role = folderMember.Role
+					info.InheritedFrom = EntityTypeFolder
+					info.CanReadContent = true
+					info.CanWrite = getRoleLevel(folderMember.Role) >= 2
+					return info, nil
+				}
+			}
+
+			// Check space membership
+			spaceMember, _ := s.spaceRepo.FindMember(ctx, project.SpaceID, userID)
+			if spaceMember != nil {
+				info.HasAccess = true
+				info.AccessType = AccessTypeInherited
+				info.Role = spaceMember.Role
+				info.InheritedFrom = EntityTypeSpace
+				info.CanReadContent = true
+				info.CanWrite = getRoleLevel(spaceMember.Role) >= 2
+				return info, nil
+			}
+		}
+	}
+
+	return info, nil
 }
 
 // ============================================
@@ -889,6 +1005,120 @@ func (s *memberService) GetUserAllAccess(ctx context.Context, userID string) (*U
 	// Better to check access on-demand when needed
 
 	return accessMap, nil
+}
+
+// ============================================
+// ✅ UPDATED: ACCESSIBLE ENTITIES (CONTENT ACCESS)
+// ============================================
+
+// GetAccessibleWorkspaces returns all workspaces user can access (direct members only)
+func (s *memberService) GetAccessibleWorkspaces(ctx context.Context, userID string) ([]*repository.Workspace, error) {
+	return s.workspaceRepo.FindByUserID(ctx, userID)
+}
+
+// ✅ UPDATED: GetAccessibleSpaces returns spaces user can ACCESS CONTENT (direct members only, NOT workspace members)
+func (s *memberService) GetAccessibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error) {
+	// ✅ CRITICAL CHANGE: Only direct space members get content access
+	// Workspace members can SEE spaces (via GetVisibleSpaces) but NOT access content
+	return s.spaceRepo.FindByUserID(ctx, userID)
+}
+
+// ✅ UPDATED: GetAccessibleFolders returns folders user can ACCESS (space members and direct folder members)
+func (s *memberService) GetAccessibleFolders(ctx context.Context, userID string) ([]*repository.Folder, error) {
+	folderMap := make(map[string]*repository.Folder)
+
+	// 1. Direct folder members
+	directFolders, _ := s.folderRepo.FindByUserID(ctx, userID)
+	for _, folder := range directFolders {
+		folderMap[folder.ID] = folder
+	}
+
+	// 2. ✅ CHANGE: Folders from DIRECT space membership (not workspace!)
+	directSpaces, _ := s.spaceRepo.FindByUserID(ctx, userID)
+	for _, space := range directSpaces {
+		spaceFolders, _ := s.folderRepo.FindBySpaceID(ctx, space.ID)
+		for _, folder := range spaceFolders {
+			if _, exists := folderMap[folder.ID]; !exists {
+				folderMap[folder.ID] = folder
+			}
+		}
+	}
+
+	result := make([]*repository.Folder, 0, len(folderMap))
+	for _, folder := range folderMap {
+		result = append(result, folder)
+	}
+
+	return result, nil
+}
+
+// ✅ UPDATED: GetAccessibleProjects returns projects user can ACCESS (direct + inherited from space/folder)
+func (s *memberService) GetAccessibleProjects(ctx context.Context, userID string) ([]*repository.Project, error) {
+	projectMap := make(map[string]*repository.Project)
+
+	// 1. Direct project members
+	directProjects, _ := s.projectRepo.FindByUserID(ctx, userID)
+	for _, proj := range directProjects {
+		projectMap[proj.ID] = proj
+	}
+
+	// 2. Projects from folder membership
+	folders, _ := s.GetAccessibleFolders(ctx, userID)
+	for _, folder := range folders {
+		folderProjects, _ := s.projectRepo.FindByFolderID(ctx, folder.ID)
+		for _, proj := range folderProjects {
+			if _, exists := projectMap[proj.ID]; !exists {
+				projectMap[proj.ID] = proj
+			}
+		}
+	}
+
+	// 3. ✅ CHANGE: Projects from DIRECT space membership (not workspace!)
+	directSpaces, _ := s.spaceRepo.FindByUserID(ctx, userID)
+	for _, space := range directSpaces {
+		spaceProjects, _ := s.projectRepo.FindBySpaceID(ctx, space.ID)
+		for _, proj := range spaceProjects {
+			if _, exists := projectMap[proj.ID]; !exists {
+				projectMap[proj.ID] = proj
+			}
+		}
+	}
+
+	result := make([]*repository.Project, 0, len(projectMap))
+	for _, proj := range projectMap {
+		result = append(result, proj)
+	}
+
+	return result, nil
+}
+
+// ✅ NEW: GetVisibleSpaces returns spaces user can SEE/DISCOVER (includes workspace members)
+func (s *memberService) GetVisibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error) {
+	spaceMap := make(map[string]*repository.Space)
+
+	// 1. Direct space members (full access)
+	directSpaces, _ := s.spaceRepo.FindByUserID(ctx, userID)
+	for _, space := range directSpaces {
+		spaceMap[space.ID] = space
+	}
+
+	// 2. Spaces from workspace membership (visibility only)
+	workspaces, _ := s.workspaceRepo.FindByUserID(ctx, userID)
+	for _, ws := range workspaces {
+		workspaceSpaces, _ := s.spaceRepo.FindByWorkspaceID(ctx, ws.ID)
+		for _, space := range workspaceSpaces {
+			if _, exists := spaceMap[space.ID]; !exists {
+				spaceMap[space.ID] = space
+			}
+		}
+	}
+
+	result := make([]*repository.Space, 0, len(spaceMap))
+	for _, space := range spaceMap {
+		result = append(result, space)
+	}
+
+	return result, nil
 }
 
 // ============================================
@@ -1002,110 +1232,4 @@ func (s *memberService) convertProjectMembers(members []*repository.ProjectMembe
 		}
 	}
 	return result
-}
-
-
-
-// GetAccessibleWorkspaces returns all workspaces user can access (direct members)
-func (s *memberService) GetAccessibleWorkspaces(ctx context.Context, userID string) ([]*repository.Workspace, error) {
-	return s.workspaceRepo.FindByUserID(ctx, userID)
-}
-
-// GetAccessibleSpaces returns all spaces user can access (direct + from workspace)
-func (s *memberService) GetAccessibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error) {
-	spaceMap := make(map[string]*repository.Space)
-	
-	// 1. Get spaces where user is direct member
-	directSpaces, _ := s.spaceRepo.FindByUserID(ctx, userID)
-	for _, space := range directSpaces {
-		spaceMap[space.ID] = space
-	}
-	
-	// 2. Get spaces from workspace membership
-	workspaces, _ := s.workspaceRepo.FindByUserID(ctx, userID)
-	for _, ws := range workspaces {
-		workspaceSpaces, _ := s.spaceRepo.FindByWorkspaceID(ctx, ws.ID)
-		for _, space := range workspaceSpaces {
-			if _, exists := spaceMap[space.ID]; !exists {
-				spaceMap[space.ID] = space
-			}
-		}
-	}
-	
-	// Convert map to slice
-	result := make([]*repository.Space, 0, len(spaceMap))
-	for _, space := range spaceMap {
-		result = append(result, space)
-	}
-	
-	return result, nil
-}
-
-// GetAccessibleFolders returns all folders user can access
-func (s *memberService) GetAccessibleFolders(ctx context.Context, userID string) ([]*repository.Folder, error) {
-	folderMap := make(map[string]*repository.Folder)
-	
-	// 1. Direct folder members
-	directFolders, _ := s.folderRepo.FindByUserID(ctx, userID)
-	for _, folder := range directFolders {
-		folderMap[folder.ID] = folder
-	}
-	
-	// 2. Folders from space membership
-	spaces, _ := s.GetAccessibleSpaces(ctx, userID)
-	for _, space := range spaces {
-		spaceFolders, _ := s.folderRepo.FindBySpaceID(ctx, space.ID)
-		for _, folder := range spaceFolders {
-			if _, exists := folderMap[folder.ID]; !exists {
-				folderMap[folder.ID] = folder
-			}
-		}
-	}
-	
-	result := make([]*repository.Folder, 0, len(folderMap))
-	for _, folder := range folderMap {
-		result = append(result, folder)
-	}
-	
-	return result, nil
-}
-
-// GetAccessibleProjects returns all projects user can access (direct + inherited)
-func (s *memberService) GetAccessibleProjects(ctx context.Context, userID string) ([]*repository.Project, error) {
-	projectMap := make(map[string]*repository.Project)
-	
-	// 1. Direct project members
-	directProjects, _ := s.projectRepo.FindByUserID(ctx, userID)
-	for _, proj := range directProjects {
-		projectMap[proj.ID] = proj
-	}
-	
-	// 2. Projects from folder membership
-	folders, _ := s.GetAccessibleFolders(ctx, userID)
-	for _, folder := range folders {
-		folderProjects, _ := s.projectRepo.FindByFolderID(ctx, folder.ID)
-		for _, proj := range folderProjects {
-			if _, exists := projectMap[proj.ID]; !exists {
-				projectMap[proj.ID] = proj
-			}
-		}
-	}
-	
-	// 3. Projects from space membership
-	spaces, _ := s.GetAccessibleSpaces(ctx, userID)
-	for _, space := range spaces {
-		spaceProjects, _ := s.projectRepo.FindBySpaceID(ctx, space.ID)
-		for _, proj := range spaceProjects {
-			if _, exists := projectMap[proj.ID]; !exists {
-				projectMap[proj.ID] = proj
-			}
-		}
-	}
-	
-	result := make([]*repository.Project, 0, len(projectMap))
-	for _, proj := range projectMap {
-		result = append(result, proj)
-	}
-	
-	return result, nil
 }
