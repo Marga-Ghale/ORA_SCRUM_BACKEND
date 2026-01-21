@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 )
 
 type SpaceService interface {
@@ -14,7 +15,7 @@ type SpaceService interface {
 	ListByUser(ctx context.Context, userID string) ([]*repository.Space, error)
 	Update(ctx context.Context, id string, name, description, icon, color, visibility *string, allowedUsers, allowedTeams *[]string) (*repository.Space, error)
 	Delete(ctx context.Context, id string) error
-	
+
 	// Space-specific operations (not member management)
 	UpdateVisibility(ctx context.Context, spaceID, visibility string, allowedUsers, allowedTeams []string) error
 }
@@ -22,9 +23,9 @@ type SpaceService interface {
 type spaceService struct {
 	spaceRepo     repository.SpaceRepository
 	workspaceRepo repository.WorkspaceRepository
-	memberService MemberService // ✅ Use MemberService for member operations
+	memberService MemberService
+	broadcaster   *socket.Broadcaster // ✅ NEW: Added broadcaster
 }
-
 
 func NewSpaceService(
 	spaceRepo repository.SpaceRepository,
@@ -36,6 +37,11 @@ func NewSpaceService(
 		workspaceRepo: workspaceRepo,
 		memberService: memberService,
 	}
+}
+
+// ✅ NEW: SetBroadcaster sets the broadcaster for real-time updates
+func (s *spaceService) SetBroadcaster(b *socket.Broadcaster) {
+	s.broadcaster = b
 }
 
 func (s *spaceService) Create(ctx context.Context, workspaceID, creatorID, name string, description, icon, color *string) (*repository.Space, error) {
@@ -55,7 +61,7 @@ func (s *spaceService) Create(ctx context.Context, workspaceID, creatorID, name 
 	defaultVisibility := "private"
 
 	space := &repository.Space{
-		WorkspaceID: workspaceID, // ✅ Set parent workspace
+		WorkspaceID: workspaceID,
 		Name:        name,
 		Description: description,
 		Icon:        icon,
@@ -73,6 +79,22 @@ func (s *spaceService) Create(ctx context.Context, workspaceID, creatorID, name 
 		// If member add fails, rollback space creation
 		s.spaceRepo.Delete(ctx, space.ID)
 		return nil, err
+	}
+
+	// ✅ NEW: Broadcast space creation to workspace members
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastSpaceCreated(workspaceID, map[string]interface{}{
+			"id":          space.ID,
+			"workspaceId": space.WorkspaceID,
+			"name":        space.Name,
+			"description": space.Description,
+			"icon":        space.Icon,
+			"color":       space.Color,
+			"ownerId":     space.OwnerID,
+			"visibility":  space.Visibility,
+			"createdAt":   space.CreatedAt,
+			"updatedAt":   space.UpdatedAt,
+		}, creatorID)
 	}
 
 	return space, nil
@@ -124,11 +146,44 @@ func (s *spaceService) Update(ctx context.Context, id string, name, description,
 	if err := s.spaceRepo.Update(ctx, space); err != nil {
 		return nil, err
 	}
+
+	// ✅ NEW: Broadcast space update to workspace members
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastSpaceUpdated(space.WorkspaceID, map[string]interface{}{
+			"id":          space.ID,
+			"workspaceId": space.WorkspaceID,
+			"name":        space.Name,
+			"description": space.Description,
+			"icon":        space.Icon,
+			"color":       space.Color,
+			"ownerId":     space.OwnerID,
+			"visibility":  space.Visibility,
+			"updatedAt":   space.UpdatedAt,
+		}, "") // Don't exclude anyone on updates - everyone should see
+	}
+
 	return space, nil
 }
 
 func (s *spaceService) Delete(ctx context.Context, id string) error {
-	return s.spaceRepo.Delete(ctx, id)
+	// ✅ Get space first to know workspace ID for broadcasting
+	space, err := s.spaceRepo.FindByID(ctx, id)
+	if err != nil || space == nil {
+		return ErrNotFound
+	}
+
+	workspaceID := space.WorkspaceID
+
+	if err := s.spaceRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+
+	// ✅ NEW: Broadcast space deletion to workspace members
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastSpaceDeleted(workspaceID, id, "")
+	}
+
+	return nil
 }
 
 func (s *spaceService) UpdateVisibility(ctx context.Context, spaceID, visibility string, allowedUsers, allowedTeams []string) error {
@@ -141,5 +196,20 @@ func (s *spaceService) UpdateVisibility(ctx context.Context, spaceID, visibility
 	space.AllowedUsers = allowedUsers
 	space.AllowedTeams = allowedTeams
 
-	return s.spaceRepo.Update(ctx, space)
+	if err := s.spaceRepo.Update(ctx, space); err != nil {
+		return err
+	}
+
+	// ✅ NEW: Broadcast visibility update
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastSpaceUpdated(space.WorkspaceID, map[string]interface{}{
+			"id":          space.ID,
+			"workspaceId": space.WorkspaceID,
+			"name":        space.Name,
+			"visibility":  space.Visibility,
+			"updatedAt":   space.UpdatedAt,
+		}, "")
+	}
+
+	return nil
 }

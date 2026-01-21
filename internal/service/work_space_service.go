@@ -5,6 +5,7 @@ import (
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 )
 
 type WorkspaceService interface {
@@ -26,6 +27,7 @@ type workspaceService struct {
 	workspaceRepo repository.WorkspaceRepository
 	userRepo      repository.UserRepository
 	notifSvc      *notification.Service
+	broadcaster   *socket.Broadcaster // ✅ NEW: Added broadcaster
 }
 
 func NewWorkspaceService(workspaceRepo repository.WorkspaceRepository, userRepo repository.UserRepository, notifSvc *notification.Service) WorkspaceService {
@@ -34,6 +36,11 @@ func NewWorkspaceService(workspaceRepo repository.WorkspaceRepository, userRepo 
 		userRepo:      userRepo,
 		notifSvc:      notifSvc,
 	}
+}
+
+// ✅ NEW: SetBroadcaster sets the broadcaster for real-time updates
+func (s *workspaceService) SetBroadcaster(b *socket.Broadcaster) {
+	s.broadcaster = b
 }
 
 func (s *workspaceService) Create(ctx context.Context, userID, name string, description, icon, color, visibility *string, allowedUsers, allowedTeams []string) (*repository.Workspace, error) {
@@ -64,6 +71,22 @@ func (s *workspaceService) Create(ctx context.Context, userID, name string, desc
 	}
 	if err := s.workspaceRepo.AddMember(ctx, member); err != nil {
 		return nil, err
+	}
+
+	// ✅ NEW: Broadcast workspace creation to the creator
+	// Note: New workspaces only have the creator as member, so we send directly to them
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastWorkspaceCreated(userID, map[string]interface{}{
+			"id":          workspace.ID,
+			"name":        workspace.Name,
+			"description": workspace.Description,
+			"icon":        workspace.Icon,
+			"color":       workspace.Color,
+			"ownerId":     workspace.OwnerID,
+			"visibility":  workspace.Visibility,
+			"createdAt":   workspace.CreatedAt,
+			"updatedAt":   workspace.UpdatedAt,
+		})
 	}
 
 	return workspace, nil
@@ -108,10 +131,31 @@ func (s *workspaceService) Update(ctx context.Context, id string, name, descript
 	if err := s.workspaceRepo.Update(ctx, workspace); err != nil {
 		return nil, err
 	}
+
+	// ✅ NEW: Broadcast workspace update to all workspace members
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastWorkspaceUpdated(workspace.ID, map[string]interface{}{
+			"id":          workspace.ID,
+			"name":        workspace.Name,
+			"description": workspace.Description,
+			"icon":        workspace.Icon,
+			"color":       workspace.Color,
+			"ownerId":     workspace.OwnerID,
+			"visibility":  workspace.Visibility,
+			"updatedAt":   workspace.UpdatedAt,
+		}, "")
+	}
+
 	return workspace, nil
 }
 
 func (s *workspaceService) Delete(ctx context.Context, id string) error {
+	// ✅ NEW: Broadcast deletion BEFORE actually deleting
+	// so clients are still in the room
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastWorkspaceDeleted(id, "")
+	}
+
 	return s.workspaceRepo.Delete(ctx, id)
 }
 
@@ -143,6 +187,17 @@ func (s *workspaceService) AddMember(ctx context.Context, workspaceID, email, ro
 			inviterName = inviter.Name
 		}
 		s.notifSvc.SendWorkspaceInvitation(ctx, user.ID, workspace.Name, workspaceID, inviterName)
+	}
+
+	// ✅ NEW: Broadcast member added to workspace
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastToWorkspace(workspaceID, socket.MessageMemberAdded, map[string]interface{}{
+			"workspaceId": workspaceID,
+			"userId":      user.ID,
+			"role":        role,
+			"userName":    user.Name,
+			"userEmail":   user.Email,
+		}, "")
 	}
 
 	return nil
@@ -178,6 +233,17 @@ func (s *workspaceService) AddMemberByID(ctx context.Context, workspaceID, userI
 		s.notifSvc.SendWorkspaceInvitation(ctx, userID, workspace.Name, workspaceID, inviterName)
 	}
 
+	// ✅ NEW: Broadcast member added to workspace
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastToWorkspace(workspaceID, socket.MessageMemberAdded, map[string]interface{}{
+			"workspaceId": workspaceID,
+			"userId":      user.ID,
+			"role":        role,
+			"userName":    user.Name,
+			"userEmail":   user.Email,
+		}, "")
+	}
+
 	return nil
 }
 
@@ -186,11 +252,37 @@ func (s *workspaceService) ListMembers(ctx context.Context, workspaceID string) 
 }
 
 func (s *workspaceService) UpdateMemberRole(ctx context.Context, workspaceID, userID, role string) error {
-	return s.workspaceRepo.UpdateMemberRole(ctx, workspaceID, userID, role)
+	if err := s.workspaceRepo.UpdateMemberRole(ctx, workspaceID, userID, role); err != nil {
+		return err
+	}
+
+	// ✅ NEW: Broadcast role update
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastToWorkspace(workspaceID, socket.MessageMemberAdded, map[string]interface{}{
+			"workspaceId": workspaceID,
+			"userId":      userID,
+			"role":        role,
+			"action":      "role_updated",
+		}, "")
+	}
+
+	return nil
 }
 
 func (s *workspaceService) RemoveMember(ctx context.Context, workspaceID, userID string) error {
-	return s.workspaceRepo.RemoveMember(ctx, workspaceID, userID)
+	if err := s.workspaceRepo.RemoveMember(ctx, workspaceID, userID); err != nil {
+		return err
+	}
+
+	// ✅ NEW: Broadcast member removed
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastToWorkspace(workspaceID, socket.MessageMemberRemoved, map[string]interface{}{
+			"workspaceId": workspaceID,
+			"userId":      userID,
+		}, "")
+	}
+
+	return nil
 }
 
 func (s *workspaceService) IsMember(ctx context.Context, workspaceID, userID string) (bool, error) {

@@ -34,6 +34,8 @@ const (
 	TypeDependencyAdded       = "DEPENDENCY_ADDED"
 	TypeDependencyBlocking    = "DEPENDENCY_BLOCKING"
 	TypeTimeLoggedToTask      = "TIME_LOGGED_TO_TASK"
+	TypeSpaceInvitation       = "SPACE_INVITATION"
+	TypeFolderInvitation = "FOLDER_INVITATION"
 )
 
 // Service handles sending notifications
@@ -875,6 +877,72 @@ func (s *Service) SendBatchNotifications(ctx context.Context, userIDs []string, 
 	if len(errs) > 0 {
 		return fmt.Errorf("errors sending batch notifications: %v", errs)
 	}
+	return nil
+}
+
+
+
+// SendSpaceInvitation sends a notification when invited to a space
+func (s *Service) SendSpaceInvitation(ctx context.Context, userID, spaceName, spaceID, inviterName string) error {
+	if userID == "" {
+		return nil
+	}
+
+	message := fmt.Sprintf("You have been added to space: %s", spaceName)
+	if inviterName != "" {
+		message = fmt.Sprintf("%s added you to space: %s", inviterName, spaceName)
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeSpaceInvitation,
+		Title:   "Space Invitation",
+		Message: message,
+		Read:    false,
+		Data: map[string]interface{}{
+			"spaceId":   spaceID,
+			"spaceName": spaceName,
+			"action":    "view_space",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendFolderInvitation sends a notification when invited to a folder
+func (s *Service) SendFolderInvitation(ctx context.Context, userID, folderName, folderID, inviterName string) error {
+	if userID == "" {
+		return nil
+	}
+
+	message := fmt.Sprintf("You have been added to folder: %s", folderName)
+	if inviterName != "" {
+		message = fmt.Sprintf("%s added you to folder: %s", inviterName, folderName)
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeFolderInvitation,
+		Title:   "Folder Invitation",
+		Message: message,
+		Read:    false,
+		Data: map[string]interface{}{
+			"folderId":   folderID,
+			"folderName": folderName,
+			"action":     "view_folder",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
 	return nil
 }
 

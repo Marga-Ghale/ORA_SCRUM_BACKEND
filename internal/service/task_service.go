@@ -312,8 +312,8 @@ func (s *taskService) Create(ctx context.Context, req *models.CreateTaskRequest)
 		}
 	}
 
-	// 2. Get all project members for notification
-	members, err := s.memberService.ListEffectiveMembers(ctx, EntityTypeProject, req.ProjectID)
+// 2. Get DIRECT project members only for notification (not inherited space/workspace members)
+	members, err := s.memberService.ListDirectMembers(ctx, EntityTypeProject, req.ProjectID)	
 	if err == nil {
 		// Create set of users to exclude (creator + assignees)
 		excludeMap := make(map[string]bool)
@@ -537,11 +537,14 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		}
 	}
 
-	if len(changes) > 0 {
+	// Check if this is ONLY a status change (will be handled separately below)
+	isOnlyStatusChange := len(changes) == 1 && changes[0] == "status"
+
+	if len(changes) > 0 && !isOnlyStatusChange {
 		// 1. Notify assignees (excluding updater AND newly assigned users)
+		// Skip if status change - that gets its own specific notification
 		notifiedUsers := make(map[string]bool)
 		for _, assigneeID := range task.AssigneeIDs {
-			// Skip if: it's the updater, OR they're newly assigned (they'll get TASK_ASSIGNED instead)
 			if assigneeID != userID && !newAssigneeMap[assigneeID] {
 				s.notificationSvc.SendTaskUpdatedBy(
 					ctx,
@@ -560,17 +563,16 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		for _, watcherID := range task.WatcherIDs {
 			if watcherID != userID && !notifiedUsers[watcherID] {
 				s.notificationSvc.SendTaskUpdatedBy(
-    ctx,
-    watcherID,
-    userID,  // ✅ Pass the updater ID
-    task.Title,
-    task.ID,
-    task.ProjectID,
-    changes,
-)
+					ctx,
+					watcherID,
+					userID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+					changes,
+				)
 			}
 		}
-
 		// 3. Broadcast update to project room
 		if s.broadcaster != nil {
 			s.broadcaster.BroadcastTaskUpdated(
