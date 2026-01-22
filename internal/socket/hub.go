@@ -25,6 +25,8 @@ const (
 	MessageTaskDeleted       MessageType = "task_deleted"
 	MessageTaskStatusChanged MessageType = "task_status_changed"
 	MessageTaskAssigned      MessageType = "task_assigned"
+    MessageTaskPositionChanged MessageType = "task_position_changed"
+
 
 	// Sprint messages
 	MessageSprintStarted   MessageType = "sprint_started"

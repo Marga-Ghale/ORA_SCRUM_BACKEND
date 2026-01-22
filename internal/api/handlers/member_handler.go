@@ -147,27 +147,6 @@ func (h *MemberHandler) InviteMemberByEmail(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "Member added successfully"})
 }
 
-// UpdateMemberRole updates a member's role
-// func (h *MemberHandler) UpdateMemberRole(c *gin.Context) {
-// 	entityType := c.Param("entityType")
-// 	entityID := c.Param("entityId")
-// 	userID := c.Param("userId")
-
-// 	var req models.UpdateMemberRoleRequest
-// 	if err := c.ShouldBindJSON(&req); err != nil {
-// 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-// 		return
-// 	}
-
-// 	err := h.memberService.UpdateMemberRole(c.Request.Context(), entityType, entityID, userID, req.Role)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update role"})
-// 		return
-// 	}
-
-// 	c.JSON(http.StatusOK, gin.H{"message": "Role updated successfully"})
-// }
-
 
 func (h *MemberHandler) UpdateMemberRole(c *gin.Context) {
 	entityType := c.Param("entityType")
@@ -209,22 +188,6 @@ func (h *MemberHandler) UpdateMemberRole(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Role updated successfully"})
 }
-
-// RemoveMember removes a member
-// func (h *MemberHandler) RemoveMember(c *gin.Context) {
-// 	entityType := c.Param("entityType")
-// 	entityID := c.Param("entityId")
-// 	userID := c.Param("userId")
-
-// 	err := h.memberService.RemoveMember(c.Request.Context(), entityType, entityID, userID)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove member"})
-// 		return
-// 	}
-
-// 	c.JSON(http.StatusNoContent, nil)
-// }
-
 
 
 func (h *MemberHandler) RemoveMember(c *gin.Context) {

@@ -537,50 +537,51 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		}
 	}
 
-	// Check if this is ONLY a status change (will be handled separately below)
+	// ✅ FIX: Check if this is ONLY a status change OR ONLY assignee change
 	isOnlyStatusChange := len(changes) == 1 && changes[0] == "status"
+	isOnlyAssigneeChange := len(changes) == 1 && changes[0] == "assignees"
 
-	if len(changes) > 0 && !isOnlyStatusChange {
-		// 1. Notify assignees (excluding updater AND newly assigned users)
-		// Skip if status change - that gets its own specific notification
-		notifiedUsers := make(map[string]bool)
-		for _, assigneeID := range task.AssigneeIDs {
-			if assigneeID != userID && !newAssigneeMap[assigneeID] {
-				s.notificationSvc.SendTaskUpdatedBy(
-					ctx,
-					assigneeID,
-					userID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					changes,
-				)
-				notifiedUsers[assigneeID] = true
-			}
+	// ✅ FIX: Don't send TASK_UPDATED if only status or only assignees changed
+// Those get their own specific notifications below
+if len(changes) > 0 && !isOnlyStatusChange && !isOnlyAssigneeChange {
+	// 1. Notify assignees (excluding updater AND newly assigned users)
+	notifiedUsers := make(map[string]bool)
+	for _, assigneeID := range task.AssigneeIDs {
+		if assigneeID != userID && !newAssigneeMap[assigneeID] {
+			s.notificationSvc.SendTaskUpdatedBy(
+				ctx,
+				assigneeID,
+				userID,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+				changes,
+			)
+			notifiedUsers[assigneeID] = true
 		}
+	}
 
-		// 2. Notify watchers (excluding updater and already notified)
-		for _, watcherID := range task.WatcherIDs {
-			if watcherID != userID && !notifiedUsers[watcherID] {
-				s.notificationSvc.SendTaskUpdatedBy(
-					ctx,
-					watcherID,
-					userID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					changes,
-				)
-			}
+	// 2. Notify watchers (excluding updater and already notified)
+	for _, watcherID := range task.WatcherIDs {
+		if watcherID != userID && !notifiedUsers[watcherID] {
+			s.notificationSvc.SendTaskUpdatedBy(
+				ctx,
+				watcherID,
+				userID,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+				changes,
+			)
 		}
+	}
 		// 3. Broadcast update to project room
 		if s.broadcaster != nil {
 			s.broadcaster.BroadcastTaskUpdated(
 				task.ProjectID,
 				s.taskToMap(task),
 				changes,
-								userID,
-
+				userID,
 			)
 		}
 	}
@@ -2114,25 +2115,22 @@ func (s *taskService) ReorderTasksInColumn(
 	log.Printf("✅ Reordering complete")
 
 
-	// ✅ CRITICAL FIX: Broadcast to ALL users (including the one who moved it!)
-	// if s.broadcaster != nil {
-	// 	log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
-		
-	// 	// Fetch the updated task with all relations
-	// 	updatedTask, err := s.taskRepo.FindByID(ctx, movedTaskID)
-	// 	if err != nil {
-	// 		log.Printf("⚠️ Failed to fetch updated task: %v", err)
-	// 	} else {
-	// 		// ✅ Pass empty string "" for excludeUserID to broadcast to EVERYONE
-	// 		s.broadcaster.BroadcastTaskUpdated(
-	// 			projectID,
-	// 			s.taskToMap(updatedTask),
-	// 			[]string{"position", "status"},
-	// 			"", // ❌ CRITICAL: Empty string = broadcast to ALL users!
-	// 		)
-	// 		log.Printf("✅ Broadcasted task update to all users in project")
-	// 	}
-	// }
+	// ✅ Broadcast position change (silent - no notifications)
+if s.broadcaster != nil {
+	log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
+	
+	updatedTask, err := s.taskRepo.FindByID(ctx, movedTaskID)
+	if err != nil {
+		log.Printf("⚠️ Failed to fetch updated task: %v", err)
+	} else {
+		s.broadcaster.BroadcastTaskPositionChanged(
+			projectID,
+			s.taskToMap(updatedTask),
+			userID, // ✅ Exclude the user who moved it
+		)
+		log.Printf("✅ Broadcasted position update to all users in project")
+	}
+}
 
 
 	return nil
