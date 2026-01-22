@@ -438,8 +438,10 @@ func (s *taskService) ListByStatus(ctx context.Context, projectID, status, userI
 }
 
 
+
+
 // ============================================
-// UPDATE - With Notifications
+// UPDATE - With Intelligent Notifications
 // ============================================
 
 func (s *taskService) Update(ctx context.Context, taskID, userID string, req *models.UpdateTaskRequest) (*repository.Task, error) {
@@ -479,10 +481,10 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		task.Priority = *req.Priority
 		changes = append(changes, "priority")
 	}
-		if req.Type != nil {
-			task.Type = req.Type
-			changes = append(changes, "type")
-		}
+	if req.Type != nil {
+		task.Type = req.Type
+		changes = append(changes, "type")
+	}
 	if req.SprintID != nil {
 		task.SprintID = req.SprintID
 		changes = append(changes, "sprint")
@@ -527,22 +529,36 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		return nil, err
 	}
 
-	// ✅ NOTIFICATIONS START
-	// Track newly assigned users so we don't send them TASK_UPDATED (they get TASK_ASSIGNED instead)
+	// ============================================
+	// ✅ INTELLIGENT NOTIFICATION LOGIC
+	// ============================================
+	
+	// Track newly assigned users
 	newAssigneeMap := make(map[string]bool)
+	var newAssignees []string
 	if req.AssigneeIDs != nil {
-		newAssignees := s.findNewAssignees(oldAssignees, *req.AssigneeIDs)
+		newAssignees = s.findNewAssignees(oldAssignees, *req.AssigneeIDs)
 		for _, id := range newAssignees {
 			newAssigneeMap[id] = true
 		}
 	}
 
-	// Check if this is ONLY a status change (will be handled separately below)
+	// Determine what type of notifications to send
 	isOnlyStatusChange := len(changes) == 1 && changes[0] == "status"
+	isOnlyAssigneeChange := len(changes) == 1 && changes[0] == "assignees"
+	hasStatusChange := req.Status != nil && *req.Status != oldStatus
+	hasAssigneeChange := req.AssigneeIDs != nil && len(newAssignees) > 0
 
-	if len(changes) > 0 && !isOnlyStatusChange {
-		// 1. Notify assignees (excluding updater AND newly assigned users)
-		// Skip if status change - that gets its own specific notification
+	// ============================================
+	// 1. HANDLE GENERAL TASK UPDATES
+	// ============================================
+	// Only send TASK_UPDATED if:
+	// - There are changes other than status or assignees
+	// - OR there are multiple types of changes
+	shouldSendGeneralUpdate := len(changes) > 0 && !isOnlyStatusChange && !isOnlyAssigneeChange
+
+	if shouldSendGeneralUpdate {
+		// Notify assignees (excluding updater AND newly assigned users)
 		notifiedUsers := make(map[string]bool)
 		for _, assigneeID := range task.AssigneeIDs {
 			if assigneeID != userID && !newAssigneeMap[assigneeID] {
@@ -559,9 +575,9 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 			}
 		}
 
-		// 2. Notify watchers (excluding updater and already notified)
+		// Notify watchers (excluding updater and already notified)
 		for _, watcherID := range task.WatcherIDs {
-			if watcherID != userID && !notifiedUsers[watcherID] {
+			if watcherID != userID && !notifiedUsers[watcherID] && !newAssigneeMap[watcherID] {
 				s.notificationSvc.SendTaskUpdatedBy(
 					ctx,
 					watcherID,
@@ -573,35 +589,35 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 				)
 			}
 		}
-		// 3. Broadcast update to project room
+
+		// Broadcast general update to project room
 		if s.broadcaster != nil {
 			s.broadcaster.BroadcastTaskUpdated(
 				task.ProjectID,
 				s.taskToMap(task),
 				changes,
-								userID,
-
+				userID,
 			)
 		}
 	}
 
-	
-
-	// 4. Handle STATUS CHANGE specifically
-	if req.Status != nil && *req.Status != oldStatus {
-		// Notify assignees
+	// ============================================
+	// 2. HANDLE STATUS CHANGE (if changed)
+	// ============================================
+	if hasStatusChange {
+		// Notify assignees about status change
 		for _, assigneeID := range task.AssigneeIDs {
 			if assigneeID != userID {
 				s.notificationSvc.SendTaskStatusChangedBy(
-    ctx,
-    assigneeID,
-    userID,  // ✅ Pass the changer ID
-    task.Title,
-    task.ID,
-    task.ProjectID,
-    oldStatus,
-    *req.Status,
-)
+					ctx,
+					assigneeID,
+					userID,
+					task.Title,
+					task.ID,
+					task.ProjectID,
+					oldStatus,
+					*req.Status,
+				)
 			}
 		}
 
@@ -612,19 +628,18 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 				s.taskToMap(task),
 				oldStatus,
 				*req.Status,
-								userID,
-
+				userID,
 			)
 		}
 	}
 
-	// 5. Handle NEW ASSIGNEES
-	if req.AssigneeIDs != nil {
-		newAssignees := s.findNewAssignees(oldAssignees, *req.AssigneeIDs)
-		
+	// ============================================
+	// 3. HANDLE NEW ASSIGNEES (if any)
+	// ============================================
+	if hasAssigneeChange {
 		for _, newAssigneeID := range newAssignees {
 			if newAssigneeID != userID {
-				// Send notification (this also sends WebSocket via sendWebSocketNotification)
+				// Send assignment notification
 				s.notificationSvc.SendTaskAssignedBy(
 					ctx,
 					newAssigneeID,
@@ -633,7 +648,6 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 					task.ID,
 					task.ProjectID,
 				)
-				// NOTE: Removed BroadcastTaskAssigned - notification service already sends WebSocket
 
 				// Auto-add new assignee as watcher
 				if !contains(task.WatcherIDs, newAssigneeID) {
@@ -642,13 +656,22 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 				}
 			}
 		}
+
+		// ✅ Only broadcast task update if assignees changed
+		// (Don't use BroadcastTaskAssigned - that's for individual notifications)
+		if s.broadcaster != nil && !shouldSendGeneralUpdate {
+			// Only broadcast if we didn't already broadcast a general update
+			s.broadcaster.BroadcastTaskUpdated(
+				task.ProjectID,
+				s.taskToMap(task),
+				[]string{"assignees"},
+				userID,
+			)
+		}
 	}
-	
-	// ✅ NOTIFICATIONS END
 
 	return task, nil
 }
-
 
 
 // ============================================
@@ -706,9 +729,6 @@ func (s *taskService) Delete(ctx context.Context, taskID, userID string) error {
 	return s.taskRepo.Delete(ctx, taskID)
 }
 
-// ============================================
-// TASK OPERATIONS
-// ============================================
 
 // ============================================
 // UPDATE STATUS - With Notifications
@@ -726,26 +746,30 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 
 	oldStatus := task.Status
 
+	// ✅ Don't send notification if status hasn't actually changed
+	if oldStatus == status {
+		return nil
+	}
+
 	if err := s.taskRepo.UpdateStatus(ctx, taskID, status); err != nil {
 		return err
 	}
 
-	// ✅ NOTIFICATIONS START
-	// Notify assignees and watchers (excluding updater)
+	// ✅ NOTIFICATIONS - Only send status change notifications
 	notifiedUsers := make(map[string]bool)
 	
 	for _, assigneeID := range task.AssigneeIDs {
 		if assigneeID != userID {
 			s.notificationSvc.SendTaskStatusChangedBy(
-    ctx,
-    assigneeID,
-    userID,  // ✅ Pass the changer ID
-    task.Title,
-    task.ID,
-    task.ProjectID,
-    oldStatus,
-    status,
-)
+				ctx,
+				assigneeID,
+				userID,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+				oldStatus,
+				status,
+			)
 			notifiedUsers[assigneeID] = true
 		}
 	}
@@ -753,15 +777,15 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 	for _, watcherID := range task.WatcherIDs {
 		if watcherID != userID && !notifiedUsers[watcherID] {
 			s.notificationSvc.SendTaskStatusChangedBy(
-    ctx,
-    watcherID,
-    userID,  // ✅ Pass the changer ID
-    task.Title,
-    task.ID,
-    task.ProjectID,
-    oldStatus,
-    status,
-)
+				ctx,
+				watcherID,
+				userID,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+				oldStatus,
+				status,
+			)
 		}
 	}
 
@@ -776,17 +800,16 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 			userID,
 		)
 	}
-	// ✅ NOTIFICATIONS END
 
 	return nil
 }
+
 func (s *taskService) UpdatePriority(ctx context.Context, taskID, priority, userID string) error {
 	if !s.permService.CanEditTask(ctx, userID, taskID) {
 		return ErrUnauthorized
 	}
 	return s.taskRepo.UpdatePriority(ctx, taskID, priority)
 }
-
 
 // ============================================
 // ASSIGN TASK - With Notifications
@@ -807,27 +830,37 @@ func (s *taskService) AssignTask(ctx context.Context, taskID, assigneeID, actorI
 		return ErrUnauthorized
 	}
 
+	// ✅ Check if user is already assigned
+	if contains(task.AssigneeIDs, assigneeID) {
+		log.Printf("User %s already assigned to task %s", assigneeID, taskID)
+		return nil // Not an error, just skip
+	}
+
 	if err := s.taskRepo.AddAssignee(ctx, taskID, assigneeID); err != nil {
 		return err
 	}
 
-	// ✅ NOTIFICATIONS START
-	// Only notify if not self-assigning
+	// ✅ NOTIFICATIONS - Only send assignment notification
 	if assigneeID != actorID {
 		s.notificationSvc.SendTaskAssignedBy(
-    ctx,
-    assigneeID,
-    actorID,  // ✅ Pass the actor ID
-    task.Title,
-    task.ID,
-    task.ProjectID,
-)
+			ctx,
+			assigneeID,
+			actorID,
+			task.Title,
+			task.ID,
+			task.ProjectID,
+		)
+	}
 
-		// Broadcast assignment
-		if s.broadcaster != nil {
-			s.broadcaster.BroadcastTaskAssigned(
-				assigneeID,
-				s.taskToMap(task),
+	// ✅ Broadcast task update (UI needs to know assignees changed)
+	if s.broadcaster != nil {
+		// Refresh task to get updated assignees list
+		updatedTask, _ := s.taskRepo.FindByID(ctx, taskID)
+		if updatedTask != nil {
+			s.broadcaster.BroadcastTaskUpdated(
+				updatedTask.ProjectID,
+				s.taskToMap(updatedTask),
+				[]string{"assignees"},
 				actorID,
 			)
 		}
@@ -837,11 +870,9 @@ func (s *taskService) AssignTask(ctx context.Context, taskID, assigneeID, actorI
 	if !contains(task.WatcherIDs, assigneeID) {
 		s.taskRepo.AddWatcher(ctx, taskID, assigneeID)
 	}
-	// ✅ NOTIFICATIONS END
 
 	return nil
 }
-
 
 func (s *taskService) UnassignTask(ctx context.Context, taskID, assigneeID, actorID string) error {
 	if !s.permService.CanEditTask(ctx, actorID, taskID) {
@@ -2114,25 +2145,22 @@ func (s *taskService) ReorderTasksInColumn(
 	log.Printf("✅ Reordering complete")
 
 
-	// ✅ CRITICAL FIX: Broadcast to ALL users (including the one who moved it!)
-	// if s.broadcaster != nil {
-	// 	log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
-		
-	// 	// Fetch the updated task with all relations
-	// 	updatedTask, err := s.taskRepo.FindByID(ctx, movedTaskID)
-	// 	if err != nil {
-	// 		log.Printf("⚠️ Failed to fetch updated task: %v", err)
-	// 	} else {
-	// 		// ✅ Pass empty string "" for excludeUserID to broadcast to EVERYONE
-	// 		s.broadcaster.BroadcastTaskUpdated(
-	// 			projectID,
-	// 			s.taskToMap(updatedTask),
-	// 			[]string{"position", "status"},
-	// 			"", // ❌ CRITICAL: Empty string = broadcast to ALL users!
-	// 		)
-	// 		log.Printf("✅ Broadcasted task update to all users in project")
-	// 	}
-	// }
+	// ✅ Broadcast position change (silent - no notifications)
+if s.broadcaster != nil {
+	log.Printf("📡 Broadcasting position update: project=%s, task=%s", projectID, movedTaskID)
+	
+	updatedTask, err := s.taskRepo.FindByID(ctx, movedTaskID)
+	if err != nil {
+		log.Printf("⚠️ Failed to fetch updated task: %v", err)
+	} else {
+		s.broadcaster.BroadcastTaskPositionChanged(
+			projectID,
+			s.taskToMap(updatedTask),
+			userID, // ✅ Exclude the user who moved it
+		)
+		log.Printf("✅ Broadcasted position update to all users in project")
+	}
+}
 
 
 	return nil

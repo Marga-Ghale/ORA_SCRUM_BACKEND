@@ -25,6 +25,8 @@ const (
 	MessageTaskDeleted       MessageType = "task_deleted"
 	MessageTaskStatusChanged MessageType = "task_status_changed"
 	MessageTaskAssigned      MessageType = "task_assigned"
+    MessageTaskPositionChanged MessageType = "task_position_changed"
+
 
 	// Sprint messages
 	MessageSprintStarted   MessageType = "sprint_started"
@@ -32,8 +34,11 @@ const (
 
 	// Project messages
 	MessageProjectUpdated MessageType = "project_updated"
-	MessageMemberAdded    MessageType = "member_added"
-	MessageMemberRemoved  MessageType = "member_removed"
+	
+
+	MessageMemberAdded       MessageType = "member_added"
+	MessageMemberRemoved     MessageType = "member_removed"
+	MessageMemberRoleUpdated MessageType = "member_role_updated"
 
 	// Team messages
 	MessageTeamCreated       MessageType = "team_created"

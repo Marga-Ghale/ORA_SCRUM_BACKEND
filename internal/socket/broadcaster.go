@@ -84,6 +84,21 @@ func (b *Broadcaster) BroadcastTaskStatusChanged(projectID string, task map[stri
 	}, excludeUserID)
 }
 
+// BroadcastTaskPositionChanged broadcasts task position/status change WITHOUT notifications
+func (b *Broadcaster) BroadcastTaskPositionChanged(projectID string, task map[string]interface{}, excludeUserID string) {
+	room := fmt.Sprintf("project:%s", projectID)
+
+	payload := map[string]interface{}{
+		"task":      task,
+		"projectId": projectID,
+	}
+
+	log.Printf("📡 BroadcastTaskPositionChanged: room=%s, taskId=%v, exclude=%s",
+		room, task["id"], excludeUserID)
+
+	b.hub.SendToRoom(room, MessageTaskPositionChanged, payload, excludeUserID)
+}
+
 // BroadcastTaskAssigned notifies the assigned user
 func (b *Broadcaster) BroadcastTaskAssigned(assigneeID string, task map[string]interface{}, assignedBy string) {
 	b.hub.SendToUser(assigneeID, MessageTaskAssigned, map[string]interface{}{
@@ -337,19 +352,7 @@ func (b *Broadcaster) BroadcastToWorkspace(workspaceID string, msgType MessageTy
 	b.hub.SendToRoom(room, msgType, payload, excludeUserID)
 }
 
-// BroadcastMemberAdded broadcasts new member addition
-func (b *Broadcaster) BroadcastMemberAdded(projectID string, member map[string]interface{}) {
-	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageMemberAdded, member, "")
-}
 
-// BroadcastMemberRemoved broadcasts member removal
-func (b *Broadcaster) BroadcastMemberRemoved(projectID, userID string) {
-	room := fmt.Sprintf("project:%s", projectID)
-	b.hub.SendToRoom(room, MessageMemberRemoved, map[string]interface{}{
-		"userId": userID,
-	}, "")
-}
 
 // ============================================
 // Direct User Messaging
@@ -360,4 +363,93 @@ func (b *Broadcaster) SendToUsers(userIDs []string, msgType MessageType, payload
 	for _, userID := range userIDs {
 		b.hub.SendToUser(userID, msgType, payload)
 	}
+}
+
+
+
+// ============================================
+// Member Broadcasting 
+// ============================================
+
+// BroadcastMemberAdded broadcasts member addition to the appropriate entity room
+func (b *Broadcaster) BroadcastMemberAdded(entityType, entityID string, member map[string]interface{}, excludeUserID string) {
+	var room string
+	
+	switch entityType {
+	case "workspace":
+		room = fmt.Sprintf("workspace:%s", entityID)
+	case "space":
+		room = fmt.Sprintf("workspace:%s", member["workspaceId"]) // Broadcast to workspace room
+	case "folder":
+		room = fmt.Sprintf("workspace:%s", member["workspaceId"]) // Broadcast to workspace room
+	case "project":
+		room = fmt.Sprintf("workspace:%s", member["workspaceId"]) // Broadcast to workspace room
+	default:
+		log.Printf("⚠️ Unknown entity type for member addition: %s", entityType)
+		return
+	}
+
+	payload := map[string]interface{}{
+		"entityType": entityType,
+		"entityId":   entityID,
+		"member":     member,
+	}
+
+	log.Printf("📡 BroadcastMemberAdded: entityType=%s, entityId=%s, room=%s, exclude=%s",
+		entityType, entityID, room, excludeUserID)
+
+	b.hub.SendToRoom(room, MessageMemberAdded, payload, excludeUserID)
+}
+
+// BroadcastMemberRemoved broadcasts member removal to the appropriate entity room
+func (b *Broadcaster) BroadcastMemberRemoved(entityType, entityID, userID string, workspaceID string, excludeUserID string) {
+	var room string
+	
+	switch entityType {
+	case "workspace":
+		room = fmt.Sprintf("workspace:%s", entityID)
+	case "space", "folder", "project":
+		room = fmt.Sprintf("workspace:%s", workspaceID) // Broadcast to workspace room
+	default:
+		log.Printf("⚠️ Unknown entity type for member removal: %s", entityType)
+		return
+	}
+
+	payload := map[string]interface{}{
+		"entityType": entityType,
+		"entityId":   entityID,
+		"userId":     userID,
+	}
+
+	log.Printf("📡 BroadcastMemberRemoved: entityType=%s, entityId=%s, userId=%s, room=%s, exclude=%s",
+		entityType, entityID, userID, room, excludeUserID)
+
+	b.hub.SendToRoom(room, MessageMemberRemoved, payload, excludeUserID)
+}
+
+// BroadcastMemberRoleUpdated broadcasts member role update to the appropriate entity room
+func (b *Broadcaster) BroadcastMemberRoleUpdated(entityType, entityID, userID, newRole string, workspaceID string, excludeUserID string) {
+	var room string
+	
+	switch entityType {
+	case "workspace":
+		room = fmt.Sprintf("workspace:%s", entityID)
+	case "space", "folder", "project":
+		room = fmt.Sprintf("workspace:%s", workspaceID) // Broadcast to workspace room
+	default:
+		log.Printf("⚠️ Unknown entity type for member role update: %s", entityType)
+		return
+	}
+
+	payload := map[string]interface{}{
+		"entityType": entityType,
+		"entityId":   entityID,
+		"userId":     userID,
+		"newRole":    newRole,
+	}
+
+	log.Printf("📡 BroadcastMemberRoleUpdated: entityType=%s, entityId=%s, userId=%s, newRole=%s, room=%s, exclude=%s",
+		entityType, entityID, userID, newRole, room, excludeUserID)
+
+	b.hub.SendToRoom(room, MessageMemberRoleUpdated, payload, excludeUserID)
 }

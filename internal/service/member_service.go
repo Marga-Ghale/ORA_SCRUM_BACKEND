@@ -7,6 +7,7 @@ import (
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
+	"github.com/Marga-Ghale/ora-scrum-backend/internal/socket"
 )
 
 // MemberService handles member operations across all entity types
@@ -108,6 +109,7 @@ type memberService struct {
 	projectRepo   repository.ProjectRepository
 	userRepo      repository.UserRepository
 	notifSvc      *notification.Service
+	broadcaster   *socket.Broadcaster 
 }
 
 func NewMemberService(
@@ -117,6 +119,7 @@ func NewMemberService(
 	projectRepo repository.ProjectRepository,
 	userRepo repository.UserRepository,
 	notifSvc *notification.Service,
+	broadcaster *socket.Broadcaster,
 ) MemberService {
 	return &memberService{
 		workspaceRepo: workspaceRepo,
@@ -125,6 +128,7 @@ func NewMemberService(
 		projectRepo:   projectRepo,
 		userRepo:      userRepo,
 		notifSvc:      notifSvc,
+		broadcaster:   broadcaster,
 	}
 }
 
@@ -268,7 +272,20 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 			return err
 		}
 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
-		return nil
+
+		
+	// ✅ BROADCAST: Send to workspace room
+	memberData := map[string]interface{}{
+		"userId":      userID,
+		"role":        role,
+		"entityType":  entityType,
+		"entityId":    entityID,
+		"workspaceId": entityID, // workspace broadcasts to itself
+	}
+	s.broadcaster.BroadcastMemberAdded(entityType, entityID, memberData, inviterID)
+	return nil
+
+
 
 	case EntityTypeSpace:
 		member := &repository.SpaceMember{
@@ -280,7 +297,19 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 			return err
 		}
 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
-		return nil
+
+		// ✅ BROADCAST: Get workspace ID and send
+	workspaceID := s.getWorkspaceID(ctx, entityType, entityID)
+	memberData := map[string]interface{}{
+		"userId":      userID,
+		"role":        role,
+		"entityType":  entityType,
+		"entityId":    entityID,
+		"spaceId":     entityID,
+		"workspaceId": workspaceID,
+	}
+	s.broadcaster.BroadcastMemberAdded(entityType, entityID, memberData, inviterID)
+	return nil
 
 	case EntityTypeFolder:
 		member := &repository.FolderMember{
@@ -292,7 +321,20 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 			return err
 		}
 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
-		return nil
+
+
+			// ✅ BROADCAST: Get workspace ID and send
+	workspaceID := s.getWorkspaceID(ctx, entityType, entityID)
+	memberData := map[string]interface{}{
+		"userId":      userID,
+		"role":        role,
+		"entityType":  entityType,
+		"entityId":    entityID,
+		"folderId":    entityID,
+		"workspaceId": workspaceID,
+	}
+	s.broadcaster.BroadcastMemberAdded(entityType, entityID, memberData, inviterID)
+	return nil
 
 	case EntityTypeProject:
 		member := &repository.ProjectMember{
@@ -304,7 +346,20 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 			return err
 		}
 		s.sendNotification(ctx, entityType, entityID, userID, inviterID)
-		return nil
+		
+		// ✅ BROADCAST: Get workspace ID and send
+	workspaceID := s.getWorkspaceID(ctx, entityType, entityID)
+	memberData := map[string]interface{}{
+		"userId":      userID,
+		"role":        role,
+		"entityType":  entityType,
+		"entityId":    entityID,
+		"projectId":   entityID,
+		"workspaceId": workspaceID,
+	}
+	s.broadcaster.BroadcastMemberAdded(entityType, entityID, memberData, inviterID)
+	return nil
+
 
 	default:
 		return ErrInvalidEntityType
@@ -325,20 +380,6 @@ func getRoleLevel(role string) int {
 	return 0
 }
 
-// func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, userID string) error {
-// 	switch entityType {
-// 	case EntityTypeWorkspace:
-// 		return s.workspaceRepo.RemoveMember(ctx, entityID, userID)
-// 	case EntityTypeSpace:
-// 		return s.spaceRepo.RemoveMember(ctx, entityID, userID)
-// 	case EntityTypeFolder:
-// 		return s.folderRepo.RemoveMember(ctx, entityID, userID)
-// 	case EntityTypeProject:
-// 		return s.projectRepo.RemoveMember(ctx, entityID, userID)
-// 	default:
-// 		return ErrInvalidEntityType
-// 	}
-// }
 
 func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, userID, requesterID string) error {
 	// ✅ Get requester's role
@@ -385,36 +426,40 @@ func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, 
 		}
 	}
 
+	// ✅ Get workspace ID BEFORE removing (needed for broadcast)
+	workspaceID := s.getWorkspaceID(ctx, entityType, entityID)
+
 	// ✅ Proceed with removal
+	var removeErr error
 	switch entityType {
 	case EntityTypeWorkspace:
-		return s.workspaceRepo.RemoveMember(ctx, entityID, userID)
+		removeErr = s.workspaceRepo.RemoveMember(ctx, entityID, userID)
 	case EntityTypeSpace:
-		return s.spaceRepo.RemoveMember(ctx, entityID, userID)
+		removeErr = s.spaceRepo.RemoveMember(ctx, entityID, userID)
 	case EntityTypeFolder:
-		return s.folderRepo.RemoveMember(ctx, entityID, userID)
+		removeErr = s.folderRepo.RemoveMember(ctx, entityID, userID)
 	case EntityTypeProject:
-		return s.projectRepo.RemoveMember(ctx, entityID, userID)
+		removeErr = s.projectRepo.RemoveMember(ctx, entityID, userID)
 	default:
 		return ErrInvalidEntityType
 	}
+
+	if removeErr != nil {
+		return removeErr
+	}
+
+	// ✅ NEW: Send notification to the removed user (unless they removed themselves)
+	if userID != requesterID {
+		s.sendRemovalNotification(ctx, entityType, entityID, userID, requesterID)
+	}
+
+	// ✅ BROADCAST MEMBER REMOVED (after successful removal)
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastMemberRemoved(entityType, entityID, userID, workspaceID, requesterID)
+	}
+
+	return nil
 }
-
-// func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entityID, userID, role string) error {
-// 	switch entityType {
-// 	case EntityTypeWorkspace:
-// 		return s.workspaceRepo.UpdateMemberRole(ctx, entityID, userID, role)
-// 	case EntityTypeSpace:
-// 		return s.spaceRepo.UpdateMemberRole(ctx, entityID, userID, role)
-// 	case EntityTypeFolder:
-// 		return s.folderRepo.UpdateMemberRole(ctx, entityID, userID, role)
-// 	case EntityTypeProject:
-// 		return s.projectRepo.UpdateMemberRole(ctx, entityID, userID, role)
-// 	default:
-// 		return ErrInvalidEntityType
-// 	}
-// }
-
 
 
 func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entityID, userID, newRole, requesterID string) error {
@@ -466,19 +511,34 @@ func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entity
 		}
 	}
 
+	// ✅ Get workspace ID (needed for broadcast)
+	workspaceID := s.getWorkspaceID(ctx, entityType, entityID)
+
 	// ✅ Proceed with update
+	var updateErr error
 	switch entityType {
 	case EntityTypeWorkspace:
-		return s.workspaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+		updateErr = s.workspaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	case EntityTypeSpace:
-		return s.spaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+		updateErr = s.spaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	case EntityTypeFolder:
-		return s.folderRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+		updateErr = s.folderRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	case EntityTypeProject:
-		return s.projectRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+		updateErr = s.projectRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	default:
 		return ErrInvalidEntityType
 	}
+
+	if updateErr != nil {
+		return updateErr
+	}
+
+	// ✅ BROADCAST ROLE UPDATE (after successful update)
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastMemberRoleUpdated(entityType, entityID, userID, newRole, workspaceID, requesterID)
+	}
+
+	return nil
 }
 
 func (s *memberService) GetMember(ctx context.Context, entityType, entityID, userID string) (*UnifiedMember, error) {
@@ -1395,6 +1455,88 @@ func (s *memberService) GetNotificationRecipients(ctx context.Context, projectID
 }
 
 
+// Add at the end of member_service.go, BEFORE countOwners
+
+// getWorkspaceID retrieves the workspace ID for any entity type
+func (s *memberService) getWorkspaceID(ctx context.Context, entityType, entityID string) string {
+	switch entityType {
+	case EntityTypeWorkspace:
+		return entityID
+	
+	case EntityTypeSpace:
+		space, _ := s.spaceRepo.FindByID(ctx, entityID)
+		if space != nil {
+			return space.WorkspaceID
+		}
+	
+	case EntityTypeFolder:
+		folder, _ := s.folderRepo.FindByID(ctx, entityID)
+		if folder != nil {
+			space, _ := s.spaceRepo.FindByID(ctx, folder.SpaceID)
+			if space != nil {
+				return space.WorkspaceID
+			}
+		}
+	
+	case EntityTypeProject:
+		project, _ := s.projectRepo.FindByID(ctx, entityID)
+		if project != nil {
+			space, _ := s.spaceRepo.FindByID(ctx, project.SpaceID)
+			if space != nil {
+				return space.WorkspaceID
+			}
+		}
+	}
+	return ""
+}
+
+
+// sendRemovalNotification sends notification when user is removed from entity
+func (s *memberService) sendRemovalNotification(ctx context.Context, entityType, entityID, userID, removerID string) {
+	if s.notifSvc == nil {
+		return
+	}
+
+	// Get remover's name
+	removerName := ""
+	if remover, _ := s.userRepo.FindByID(ctx, removerID); remover != nil {
+		removerName = remover.Name
+	}
+
+	// Get entity name
+	var entityName string
+	switch entityType {
+	case EntityTypeWorkspace:
+		if ws, _ := s.workspaceRepo.FindByID(ctx, entityID); ws != nil {
+			entityName = ws.Name
+		}
+	case EntityTypeSpace:
+		if sp, _ := s.spaceRepo.FindByID(ctx, entityID); sp != nil {
+			entityName = sp.Name
+		}
+	case EntityTypeFolder:
+		if f, _ := s.folderRepo.FindByID(ctx, entityID); f != nil {
+			entityName = f.Name
+		}
+	case EntityTypeProject:
+		if p, _ := s.projectRepo.FindByID(ctx, entityID); p != nil {
+			entityName = p.Name
+		}
+	}
+
+	// ✅ Send removal notification based on entity type
+	switch entityType {
+	case EntityTypeWorkspace:
+		s.notifSvc.SendWorkspaceRemoval(ctx, userID, entityName, entityID, removerName)
+	case EntityTypeSpace:
+		s.notifSvc.SendSpaceRemoval(ctx, userID, entityName, entityID, removerName)
+	case EntityTypeFolder:
+		s.notifSvc.SendFolderRemoval(ctx, userID, entityName, entityID, removerName)
+	case EntityTypeProject:
+		s.notifSvc.SendProjectRemoval(ctx, userID, entityName, entityID, removerName)
+	}
+}
+
 
 func (s *memberService) countOwners(ctx context.Context, entityType, entityID string) (int, error) {
 	members, err := s.ListDirectMembers(ctx, entityType, entityID)
@@ -1410,3 +1552,4 @@ func (s *memberService) countOwners(ctx context.Context, entityType, entityID st
 	}
 	return count, nil
 }
+

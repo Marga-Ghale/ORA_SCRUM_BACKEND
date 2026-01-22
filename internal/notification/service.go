@@ -991,3 +991,132 @@ func (s *Service) GetProjectMemberIDs(ctx context.Context, projectID string) ([]
 
 	return userIDs, nil
 }
+
+
+// ============================================
+// Removal Notifications
+// ============================================
+
+// SendWorkspaceRemoval notifies user they were removed from workspace
+func (s *Service) SendWorkspaceRemoval(
+	ctx context.Context,
+	userID, workspaceName, workspaceID, removerName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    "WORKSPACE_REMOVAL",
+		Title:   "Removed from Workspace",
+		Message: fmt.Sprintf("%s removed you from workspace '%s'", removerName, workspaceName),
+		Read:    false,
+		Data: map[string]interface{}{
+			"workspaceId":   workspaceID,
+			"workspaceName": workspaceName,
+			"removerName":   removerName,
+			"action":        "view_workspace",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendSpaceRemoval notifies user they were removed from space
+func (s *Service) SendSpaceRemoval(
+	ctx context.Context,
+	userID, spaceName, spaceID, removerName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    "SPACE_REMOVAL",
+		Title:   "Removed from Space",
+		Message: fmt.Sprintf("%s removed you from space '%s'", removerName, spaceName),
+		Read:    false,
+		Data: map[string]interface{}{
+			"spaceId":     spaceID,
+			"spaceName":   spaceName,
+			"removerName": removerName,
+			"action":      "view_space",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendFolderRemoval notifies user they were removed from folder
+func (s *Service) SendFolderRemoval(
+	ctx context.Context,
+	userID, folderName, folderID, removerName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    "FOLDER_REMOVAL",
+		Title:   "Removed from Folder",
+		Message: fmt.Sprintf("%s removed you from folder '%s'", removerName, folderName),
+		Read:    false,
+		Data: map[string]interface{}{
+			"folderId":    folderID,
+			"folderName":  folderName,
+			"removerName": removerName,
+			"action":      "view_folder",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendProjectRemoval notifies user they were removed from project
+func (s *Service) SendProjectRemoval(
+	ctx context.Context,
+	userID, projectName, projectID, removerName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    "PROJECT_REMOVAL",
+		Title:   "Removed from Project",
+		Message: fmt.Sprintf("%s removed you from project '%s'", removerName, projectName),
+		Read:    false,
+		Data: map[string]interface{}{
+			"projectId":   projectID,
+			"projectName": projectName,
+			"removerName": removerName,
+			"action":      "view_project",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
