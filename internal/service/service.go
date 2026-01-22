@@ -68,6 +68,7 @@ func NewServices(deps *ServiceDeps) *Services {
 		deps.Repos.ProjectRepo,
 		deps.Repos.UserRepo,
 		deps.NotifSvc,
+		deps.Broadcaster,
 	)
 
 	// ✅ Create PermissionService (needed by TaskService)
@@ -84,7 +85,7 @@ func NewServices(deps *ServiceDeps) *Services {
 	return &Services{
 		Auth:      NewAuthService(deps.Config, deps.Repos.UserRepo),
 		User:      NewUserService(deps.Repos.UserRepo),
-		Workspace: NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc,					deps.Broadcaster,
+		Workspace: NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc,deps.Broadcaster,
 ),
 		Space: NewSpaceService(
 			deps.Repos.SpaceRepo,
