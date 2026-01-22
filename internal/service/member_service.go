@@ -176,13 +176,22 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 					hasPermission = wsMember != nil // Any workspace member can create space
 				}
 			} else {
-				// Adding other users: need admin/owner
+				// Adding other users: need admin/owner at space OR workspace level
 				space, _ := s.spaceRepo.FindByID(ctx, entityID)
 				if space != nil {
-					wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
-					if wsMember != nil {
-						roleVal := getRoleLevel(wsMember.Role)
-						hasPermission = roleVal >= 4
+					// ✅ FIX: Check direct space membership FIRST
+					spaceMember, _ := s.spaceRepo.FindMember(ctx, entityID, inviterID)
+					if spaceMember != nil {
+						roleVal := getRoleLevel(spaceMember.Role)
+						hasPermission = roleVal >= 4 // space admin/owner can add members
+					}
+					// If not space admin/owner, check workspace level
+					if !hasPermission {
+						wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+						if wsMember != nil {
+							roleVal := getRoleLevel(wsMember.Role)
+							hasPermission = roleVal >= 4
+						}
 					}
 				}
 			}
@@ -206,13 +215,33 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 					}
 				}
 			} else {
-				// Adding other users
+				// ✅ FIX: Adding other users - check folder, space, AND workspace levels
 				folder, _ := s.folderRepo.FindByID(ctx, entityID)
 				if folder != nil {
-					spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
-					if spaceMember != nil {
-						roleVal := getRoleLevel(spaceMember.Role)
-						hasPermission = roleVal >= 4
+					// Check direct folder membership FIRST
+					folderMember, _ := s.folderRepo.FindMember(ctx, entityID, inviterID)
+					if folderMember != nil {
+						roleVal := getRoleLevel(folderMember.Role)
+						hasPermission = roleVal >= 4 // folder admin/owner can add members
+					}
+					// If not folder admin/owner, check space level
+					if !hasPermission {
+						spaceMember, _ := s.spaceRepo.FindMember(ctx, folder.SpaceID, inviterID)
+						if spaceMember != nil {
+							roleVal := getRoleLevel(spaceMember.Role)
+							hasPermission = roleVal >= 4
+						}
+					}
+					// If not space admin/owner, check workspace level
+					if !hasPermission {
+						space, _ := s.spaceRepo.FindByID(ctx, folder.SpaceID)
+						if space != nil {
+							wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+							if wsMember != nil {
+								roleVal := getRoleLevel(wsMember.Role)
+								hasPermission = roleVal >= 4
+							}
+						}
 					}
 				}
 			}
@@ -244,11 +273,42 @@ func (s *memberService) AddMember(ctx context.Context, entityType, entityID, use
 					}
 				}
 			} else {
-				// Adding other users: need lead/admin/owner
-				projMember, _ := s.projectRepo.FindMember(ctx, entityID, inviterID)
-				if projMember != nil {
-					roleVal := getRoleLevel(projMember.Role)
-					hasPermission = roleVal >= 3 // lead, admin, or owner
+				// ✅ FIX: Adding other users - check project, folder, space, AND workspace levels
+				project, _ := s.projectRepo.FindByID(ctx, entityID)
+				if project != nil {
+					// Check direct project membership FIRST
+					projMember, _ := s.projectRepo.FindMember(ctx, entityID, inviterID)
+					if projMember != nil {
+						roleVal := getRoleLevel(projMember.Role)
+						hasPermission = roleVal >= 3 // lead, admin, or owner
+					}
+					// If not project lead/admin/owner, check folder level
+					if !hasPermission && project.FolderID != nil {
+						folderMember, _ := s.folderRepo.FindMember(ctx, *project.FolderID, inviterID)
+						if folderMember != nil {
+							roleVal := getRoleLevel(folderMember.Role)
+							hasPermission = roleVal >= 4
+						}
+					}
+					// If not folder admin/owner, check space level
+					if !hasPermission {
+						spaceMember, _ := s.spaceRepo.FindMember(ctx, project.SpaceID, inviterID)
+						if spaceMember != nil {
+							roleVal := getRoleLevel(spaceMember.Role)
+							hasPermission = roleVal >= 4
+						}
+					}
+					// If not space admin/owner, check workspace level
+					if !hasPermission {
+						space, _ := s.spaceRepo.FindByID(ctx, project.SpaceID)
+						if space != nil {
+							wsMember, _ := s.workspaceRepo.FindMember(ctx, space.WorkspaceID, inviterID)
+							if wsMember != nil {
+								roleVal := getRoleLevel(wsMember.Role)
+								hasPermission = roleVal >= 4
+							}
+						}
+					}
 				}
 			}
 		}
