@@ -31,11 +31,14 @@ func NewSpaceService(
 	spaceRepo repository.SpaceRepository,
 	workspaceRepo repository.WorkspaceRepository,
 	memberService MemberService,
+		broadcaster *socket.Broadcaster, // ✅ ADD
+
 ) SpaceService {
 	return &spaceService{
 		spaceRepo:     spaceRepo,
 		workspaceRepo: workspaceRepo,
 		memberService: memberService,
+		broadcaster:   broadcaster,
 	}
 }
 

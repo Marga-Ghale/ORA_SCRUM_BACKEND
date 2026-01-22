@@ -40,12 +40,15 @@ func NewProjectService(
 	spaceRepo repository.SpaceRepository,
 	folderRepo repository.FolderRepository,
 	memberService MemberService,
+		broadcaster   *socket.Broadcaster, // ✅ NEW: Added broadcaster
+
 ) ProjectService {
 	return &projectService{
 		projectRepo:   projectRepo,
 		spaceRepo:     spaceRepo,
 		folderRepo:    folderRepo,
 		memberService: memberService,
+			broadcaster:   broadcaster,
 	}
 }
 

@@ -13,8 +13,12 @@ import (
 type MemberService interface {
 	// Direct member operations
 	AddMember(ctx context.Context, entityType, entityID, userID, role, inviterID string) error
-	RemoveMember(ctx context.Context, entityType, entityID, userID string) error
-	UpdateMemberRole(ctx context.Context, entityType, entityID, userID, role string) error
+	// RemoveMember(ctx context.Context, entityType, entityID, userID string) error
+	// UpdateMemberRole(ctx context.Context, entityType, entityID, userID, role string) error
+
+	RemoveMember(ctx context.Context, entityType, entityID, userID, requesterID string) error
+	UpdateMemberRole(ctx context.Context, entityType, entityID, userID, role, requesterID string) error
+	
 	GetMember(ctx context.Context, entityType, entityID, userID string) (*UnifiedMember, error)
 	
 	// Listing members
@@ -321,7 +325,67 @@ func getRoleLevel(role string) int {
 	return 0
 }
 
-func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, userID string) error {
+// func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, userID string) error {
+// 	switch entityType {
+// 	case EntityTypeWorkspace:
+// 		return s.workspaceRepo.RemoveMember(ctx, entityID, userID)
+// 	case EntityTypeSpace:
+// 		return s.spaceRepo.RemoveMember(ctx, entityID, userID)
+// 	case EntityTypeFolder:
+// 		return s.folderRepo.RemoveMember(ctx, entityID, userID)
+// 	case EntityTypeProject:
+// 		return s.projectRepo.RemoveMember(ctx, entityID, userID)
+// 	default:
+// 		return ErrInvalidEntityType
+// 	}
+// }
+
+func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, userID, requesterID string) error {
+	// ✅ Get requester's role
+	requesterRole, _, err := s.GetAccessLevel(ctx, entityType, entityID, requesterID)
+	if err != nil {
+		log.Printf("[RemoveMember] DENIED: requester has no access. entityType=%s entityID=%s requesterID=%s",
+			entityType, entityID, requesterID)
+		return ErrUnauthorized
+	}
+
+	requesterLevel := getRoleLevel(requesterRole)
+
+	// ✅ Only admin (4) or owner (5) can remove members
+	if requesterLevel < 4 {
+		log.Printf("[RemoveMember] DENIED: insufficient role. requesterRole=%s requesterLevel=%d",
+			requesterRole, requesterLevel)
+		return ErrUnauthorized
+	}
+
+	// ✅ Get target member's role
+	targetMember, err := s.GetMember(ctx, entityType, entityID, userID)
+	if err != nil || targetMember == nil {
+		return ErrUserNotFound
+	}
+
+	targetLevel := getRoleLevel(targetMember.Role)
+
+	// ✅ Cannot remove someone with equal or higher role (except self-removal)
+	if requesterID != userID && targetLevel >= requesterLevel {
+		log.Printf("[RemoveMember] DENIED: cannot remove equal/higher role. requester=%s(%d) target=%s(%d)",
+			requesterRole, requesterLevel, targetMember.Role, targetLevel)
+		return ErrUnauthorized
+	}
+
+	// ✅ Prevent removing the last owner
+	if targetMember.Role == "owner" {
+		owners, err := s.countOwners(ctx, entityType, entityID)
+		if err != nil {
+			return err
+		}
+		if owners <= 1 {
+			log.Printf("[RemoveMember] DENIED: cannot remove last owner")
+			return ErrLastOwner
+		}
+	}
+
+	// ✅ Proceed with removal
 	switch entityType {
 	case EntityTypeWorkspace:
 		return s.workspaceRepo.RemoveMember(ctx, entityID, userID)
@@ -336,16 +400,82 @@ func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, 
 	}
 }
 
-func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entityID, userID, role string) error {
+// func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entityID, userID, role string) error {
+// 	switch entityType {
+// 	case EntityTypeWorkspace:
+// 		return s.workspaceRepo.UpdateMemberRole(ctx, entityID, userID, role)
+// 	case EntityTypeSpace:
+// 		return s.spaceRepo.UpdateMemberRole(ctx, entityID, userID, role)
+// 	case EntityTypeFolder:
+// 		return s.folderRepo.UpdateMemberRole(ctx, entityID, userID, role)
+// 	case EntityTypeProject:
+// 		return s.projectRepo.UpdateMemberRole(ctx, entityID, userID, role)
+// 	default:
+// 		return ErrInvalidEntityType
+// 	}
+// }
+
+
+
+func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entityID, userID, newRole, requesterID string) error {
+	// ✅ Get requester's role
+	requesterRole, _, err := s.GetAccessLevel(ctx, entityType, entityID, requesterID)
+	if err != nil {
+		log.Printf("[UpdateMemberRole] DENIED: requester has no access")
+		return ErrUnauthorized
+	}
+
+	requesterLevel := getRoleLevel(requesterRole)
+
+	// ✅ Only admin (4) or owner (5) can update roles
+	if requesterLevel < 4 {
+		log.Printf("[UpdateMemberRole] DENIED: insufficient role. requesterRole=%s", requesterRole)
+		return ErrUnauthorized
+	}
+
+	// ✅ Get target member's current role
+	targetMember, err := s.GetMember(ctx, entityType, entityID, userID)
+	if err != nil || targetMember == nil {
+		return ErrUserNotFound
+	}
+
+	targetLevel := getRoleLevel(targetMember.Role)
+	newLevel := getRoleLevel(newRole)
+
+	// ✅ Cannot modify someone with equal or higher role (except self)
+	if requesterID != userID && targetLevel >= requesterLevel {
+		log.Printf("[UpdateMemberRole] DENIED: cannot modify equal/higher role")
+		return ErrUnauthorized
+	}
+
+	// ✅ Cannot assign a role higher than or equal to your own (except owner can assign owner)
+	if newLevel >= requesterLevel && requesterLevel < 5 {
+		log.Printf("[UpdateMemberRole] DENIED: cannot assign role >= own role")
+		return ErrUnauthorized
+	}
+
+	// ✅ Prevent demoting the last owner
+	if targetMember.Role == "owner" && newRole != "owner" {
+		owners, err := s.countOwners(ctx, entityType, entityID)
+		if err != nil {
+			return err
+		}
+		if owners <= 1 {
+			log.Printf("[UpdateMemberRole] DENIED: cannot demote last owner")
+			return ErrLastOwner
+		}
+	}
+
+	// ✅ Proceed with update
 	switch entityType {
 	case EntityTypeWorkspace:
-		return s.workspaceRepo.UpdateMemberRole(ctx, entityID, userID, role)
+		return s.workspaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	case EntityTypeSpace:
-		return s.spaceRepo.UpdateMemberRole(ctx, entityID, userID, role)
+		return s.spaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	case EntityTypeFolder:
-		return s.folderRepo.UpdateMemberRole(ctx, entityID, userID, role)
+		return s.folderRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	case EntityTypeProject:
-		return s.projectRepo.UpdateMemberRole(ctx, entityID, userID, role)
+		return s.projectRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
 	default:
 		return ErrInvalidEntityType
 	}
@@ -1262,4 +1392,21 @@ func (s *memberService) GetNotificationRecipients(ctx context.Context, projectID
 	}
 	
 	return userIDs, nil
+}
+
+
+
+func (s *memberService) countOwners(ctx context.Context, entityType, entityID string) (int, error) {
+	members, err := s.ListDirectMembers(ctx, entityType, entityID)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, m := range members {
+		if m.Role == "owner" {
+			count++
+		}
+	}
+	return count, nil
 }

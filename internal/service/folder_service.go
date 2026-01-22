@@ -31,11 +31,14 @@ func NewFolderService(
 	folderRepo repository.FolderRepository,
 	spaceRepo repository.SpaceRepository,
 	memberService MemberService,
+		broadcaster   *socket.Broadcaster, // ✅ NEW: Added broadcaster
+
 ) FolderService {
 	return &folderService{
 		folderRepo:    folderRepo,
 		spaceRepo:     spaceRepo,
 		memberService: memberService,
+		broadcaster: broadcaster,
 	}
 }
 
