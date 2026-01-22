@@ -148,10 +148,37 @@ func (h *MemberHandler) InviteMemberByEmail(c *gin.Context) {
 }
 
 // UpdateMemberRole updates a member's role
+// func (h *MemberHandler) UpdateMemberRole(c *gin.Context) {
+// 	entityType := c.Param("entityType")
+// 	entityID := c.Param("entityId")
+// 	userID := c.Param("userId")
+
+// 	var req models.UpdateMemberRoleRequest
+// 	if err := c.ShouldBindJSON(&req); err != nil {
+// 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+// 		return
+// 	}
+
+// 	err := h.memberService.UpdateMemberRole(c.Request.Context(), entityType, entityID, userID, req.Role)
+// 	if err != nil {
+// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update role"})
+// 		return
+// 	}
+
+// 	c.JSON(http.StatusOK, gin.H{"message": "Role updated successfully"})
+// }
+
+
 func (h *MemberHandler) UpdateMemberRole(c *gin.Context) {
 	entityType := c.Param("entityType")
 	entityID := c.Param("entityId")
 	userID := c.Param("userId")
+	
+	// ✅ Get requester ID
+	requesterID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req models.UpdateMemberRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -159,8 +186,23 @@ func (h *MemberHandler) UpdateMemberRole(c *gin.Context) {
 		return
 	}
 
-	err := h.memberService.UpdateMemberRole(c.Request.Context(), entityType, entityID, userID, req.Role)
+	// ✅ Pass requesterID to service
+	err := h.memberService.UpdateMemberRole(c.Request.Context(), entityType, entityID, userID, req.Role, requesterID)
 	if err != nil {
+		log.Printf("[MemberHandler][UpdateMemberRole] error=%v", err)
+		
+		if err == service.ErrUnauthorized {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to update this member's role"})
+			return
+		}
+		if err == service.ErrUserNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Member not found"})
+			return
+		}
+		if err == service.ErrLastOwner {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot demote the last owner"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update role"})
 		return
 	}
@@ -169,13 +211,50 @@ func (h *MemberHandler) UpdateMemberRole(c *gin.Context) {
 }
 
 // RemoveMember removes a member
+// func (h *MemberHandler) RemoveMember(c *gin.Context) {
+// 	entityType := c.Param("entityType")
+// 	entityID := c.Param("entityId")
+// 	userID := c.Param("userId")
+
+// 	err := h.memberService.RemoveMember(c.Request.Context(), entityType, entityID, userID)
+// 	if err != nil {
+// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove member"})
+// 		return
+// 	}
+
+// 	c.JSON(http.StatusNoContent, nil)
+// }
+
+
+
 func (h *MemberHandler) RemoveMember(c *gin.Context) {
 	entityType := c.Param("entityType")
 	entityID := c.Param("entityId")
 	userID := c.Param("userId")
+	
+	// ✅ Get requester ID
+	requesterID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
 
-	err := h.memberService.RemoveMember(c.Request.Context(), entityType, entityID, userID)
+	// ✅ Pass requesterID to service
+	err := h.memberService.RemoveMember(c.Request.Context(), entityType, entityID, userID, requesterID)
 	if err != nil {
+		log.Printf("[MemberHandler][RemoveMember] error=%v", err)
+		
+		if err == service.ErrUnauthorized {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to remove this member"})
+			return
+		}
+		if err == service.ErrUserNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Member not found"})
+			return
+		}
+		if err == service.ErrLastOwner {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot remove the last owner"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove member"})
 		return
 	}

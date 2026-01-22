@@ -30,11 +30,14 @@ type workspaceService struct {
 	broadcaster   *socket.Broadcaster // ✅ NEW: Added broadcaster
 }
 
-func NewWorkspaceService(workspaceRepo repository.WorkspaceRepository, userRepo repository.UserRepository, notifSvc *notification.Service) WorkspaceService {
+func NewWorkspaceService(workspaceRepo repository.WorkspaceRepository, userRepo repository.UserRepository, notifSvc *notification.Service,
+		broadcaster *socket.Broadcaster, // ✅ ADD
+	) WorkspaceService {
 	return &workspaceService{
 		workspaceRepo: workspaceRepo,
 		userRepo:      userRepo,
 		notifSvc:      notifSvc,
+		broadcaster:  broadcaster,
 	}
 }
 

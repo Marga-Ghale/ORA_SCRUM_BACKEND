@@ -23,6 +23,7 @@ var (
 	ErrInvalidInput       = errors.New("invalid input")
 	ErrHasSubtasks        = errors.New("task has subtasks and cannot be deleted")
 	ErrBadRequest         = errors.New("comment content is required")
+	 ErrLastOwner = errors.New("cannot remove or demote the last owner")
 )
 
 // ============================================
@@ -83,22 +84,29 @@ func NewServices(deps *ServiceDeps) *Services {
 	return &Services{
 		Auth:      NewAuthService(deps.Config, deps.Repos.UserRepo),
 		User:      NewUserService(deps.Repos.UserRepo),
-		Workspace: NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc),
+		Workspace: NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc,					deps.Broadcaster,
+),
 		Space: NewSpaceService(
 			deps.Repos.SpaceRepo,
 			deps.Repos.WorkspaceRepo,
 			memberService,
+								deps.Broadcaster,
+
 		),
 		Folder: NewFolderService(
 			deps.Repos.FolderRepo,
 			deps.Repos.SpaceRepo,
 			memberService,
+								deps.Broadcaster,
+
 		),
 		Project: NewProjectService(
 			deps.Repos.ProjectRepo,
 			deps.Repos.SpaceRepo,
 			deps.Repos.FolderRepo,
 			memberService,
+								deps.Broadcaster,
+
 		),
 		// ✅ CORRECTED TaskService with ALL required repos and services
 		Task: NewTaskService(
