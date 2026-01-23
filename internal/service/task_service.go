@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -439,9 +441,11 @@ func (s *taskService) ListByStatus(ctx context.Context, projectID, status, userI
 
 
 
-
 // ============================================
-// UPDATE - With Intelligent Notifications
+// UPDATE - Smart Single Notification
+// ============================================
+// ============================================
+// UPDATE - Smart Single Notification
 // ============================================
 
 func (s *taskService) Update(ctx context.Context, taskID, userID string, req *models.UpdateTaskRequest) (*repository.Task, error) {
@@ -454,24 +458,36 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		return nil, ErrUnauthorized
 	}
 
-	// Track changes for notification
-	var changes []string
+	// Track old values
 	oldStatus := task.Status
+	oldPriority := task.Priority
+	oldTitle := task.Title
+	oldDueDate := task.DueDate
+	oldStartDate := task.StartDate
+	oldEstimatedHours := task.EstimatedHours
+	oldStoryPoints := task.StoryPoints
 	oldAssignees := make([]string, len(task.AssigneeIDs))
 	copy(oldAssignees, task.AssigneeIDs)
+
+	// Track changes with detailed info
+	var changes []string
+	var changeDetails []string // For notification message
 
 	// Update fields if provided
 	if req.Title != nil && *req.Title != task.Title {
 		task.Title = *req.Title
 		changes = append(changes, "title")
+		changeDetails = append(changeDetails, fmt.Sprintf("title: '%s' → '%s'", oldTitle, *req.Title))
 	}
 	if req.Description != nil {
 		task.Description = req.Description
 		changes = append(changes, "description")
+		changeDetails = append(changeDetails, "updated description")
 	}
 	if req.Status != nil && *req.Status != task.Status {
 		task.Status = *req.Status
 		changes = append(changes, "status")
+		changeDetails = append(changeDetails, fmt.Sprintf("status: %s → %s", formatStatus(oldStatus), formatStatus(*req.Status)))
 		if *req.Status == "done" && task.CompletedAt == nil {
 			now := time.Now()
 			task.CompletedAt = &now
@@ -480,6 +496,7 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 	if req.Priority != nil && *req.Priority != task.Priority {
 		task.Priority = *req.Priority
 		changes = append(changes, "priority")
+		changeDetails = append(changeDetails, fmt.Sprintf("priority: %s → %s", oldPriority, *req.Priority))
 	}
 	if req.Type != nil {
 		task.Type = req.Type
@@ -488,25 +505,89 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 	if req.SprintID != nil {
 		task.SprintID = req.SprintID
 		changes = append(changes, "sprint")
+		changeDetails = append(changeDetails, "moved to different sprint")
 	}
 	if req.AssigneeIDs != nil {
-		// Verify all assignees have project access
 		for _, assigneeID := range *req.AssigneeIDs {
 			hasAccess, _, err := s.memberService.HasEffectiveAccess(ctx, EntityTypeProject, task.ProjectID, assigneeID)
 			if err != nil || !hasAccess {
 				return nil, ErrUnauthorized
 			}
 		}
-		task.AssigneeIDs = *req.AssigneeIDs
-		changes = append(changes, "assignees")
+		
+		// Check if assignees actually changed
+		oldSet := make(map[string]bool)
+		for _, id := range oldAssignees {
+			oldSet[id] = true
+		}
+		newSet := make(map[string]bool)
+		for _, id := range *req.AssigneeIDs {
+			newSet[id] = true
+		}
+		
+		assigneesChanged := false
+		if len(oldAssignees) != len(*req.AssigneeIDs) {
+			assigneesChanged = true
+		} else {
+			for _, id := range *req.AssigneeIDs {
+				if !oldSet[id] {
+					assigneesChanged = true
+					break
+				}
+			}
+		}
+		
+		if assigneesChanged {
+			task.AssigneeIDs = *req.AssigneeIDs
+			changes = append(changes, "assignees")
+			
+			// Build detailed assignee change message
+			added := []string{}
+			removed := []string{}
+			for _, id := range *req.AssigneeIDs {
+				if !oldSet[id] {
+					user, _ := s.userRepo.FindByID(ctx, id)
+					if user != nil {
+						added = append(added, user.Name)
+					}
+				}
+			}
+			for _, id := range oldAssignees {
+				if !newSet[id] {
+					user, _ := s.userRepo.FindByID(ctx, id)
+					if user != nil {
+						removed = append(removed, user.Name)
+					}
+				}
+			}
+			
+			if len(added) > 0 && len(removed) > 0 {
+				changeDetails = append(changeDetails, fmt.Sprintf("assignees: added %s, removed %s", 
+					strings.Join(added, ", "), strings.Join(removed, ", ")))
+			} else if len(added) > 0 {
+				changeDetails = append(changeDetails, fmt.Sprintf("added assignee(s): %s", strings.Join(added, ", ")))
+			} else if len(removed) > 0 {
+				changeDetails = append(changeDetails, fmt.Sprintf("removed assignee(s): %s", strings.Join(removed, ", ")))
+			}
+		}
 	}
 	if req.LabelIDs != nil {
 		task.LabelIDs = *req.LabelIDs
 		changes = append(changes, "labels")
+		changeDetails = append(changeDetails, "updated labels")
 	}
 	if req.EstimatedHours != nil {
 		task.EstimatedHours = req.EstimatedHours
 		changes = append(changes, "estimated hours")
+		oldEst := "none"
+		newEst := "none"
+		if oldEstimatedHours != nil {
+			oldEst = fmt.Sprintf("%.1fh", *oldEstimatedHours)
+		}
+		if req.EstimatedHours != nil {
+			newEst = fmt.Sprintf("%.1fh", *req.EstimatedHours)
+		}
+		changeDetails = append(changeDetails, fmt.Sprintf("estimated hours: %s → %s", oldEst, newEst))
 	}
 	if req.ActualHours != nil {
 		task.ActualHours = req.ActualHours
@@ -515,25 +596,57 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 	if req.StoryPoints != nil {
 		task.StoryPoints = req.StoryPoints
 		changes = append(changes, "story points")
+		oldPoints := "none"
+		newPoints := "none"
+		if oldStoryPoints != nil {
+			oldPoints = fmt.Sprintf("%d", *oldStoryPoints)
+		}
+		if req.StoryPoints != nil {
+			newPoints = fmt.Sprintf("%d", *req.StoryPoints)
+		}
+		changeDetails = append(changeDetails, fmt.Sprintf("story points: %s → %s", oldPoints, newPoints))
 	}
 	if req.StartDate != nil {
 		task.StartDate = req.StartDate
 		changes = append(changes, "start date")
+		oldStart := "none"
+		newStart := "none"
+		if oldStartDate != nil {
+			oldStart = oldStartDate.Format("Jan 02")
+		}
+		if req.StartDate != nil {
+			newStart = req.StartDate.Format("Jan 02")
+		}
+		changeDetails = append(changeDetails, fmt.Sprintf("start date: %s → %s", oldStart, newStart))
 	}
 	if req.DueDate != nil {
 		task.DueDate = req.DueDate
 		changes = append(changes, "due date")
+		oldDue := "none"
+		newDue := "none"
+		if oldDueDate != nil {
+			oldDue = oldDueDate.Format("Jan 02")
+		}
+		if req.DueDate != nil {
+			newDue = req.DueDate.Format("Jan 02")
+		}
+		changeDetails = append(changeDetails, fmt.Sprintf("due date: %s → %s", oldDue, newDue))
 	}
 
 	if err := s.taskRepo.Update(ctx, task); err != nil {
 		return nil, err
 	}
 
-	// ============================================
-	// ✅ INTELLIGENT NOTIFICATION LOGIC
-	// ============================================
+	// ✅ SMART NOTIFICATIONS
+	updater, _ := s.userRepo.FindByID(ctx, userID)
+	updaterName := "Someone"
+	if updater != nil {
+		updaterName = updater.Name
+	}
+
+	notifiedUsers := make(map[string]bool)
 	
-	// Track newly assigned users
+	// Track new assignees
 	newAssigneeMap := make(map[string]bool)
 	var newAssignees []string
 	if req.AssigneeIDs != nil {
@@ -543,103 +656,10 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		}
 	}
 
-	// Determine what type of notifications to send
-	isOnlyStatusChange := len(changes) == 1 && changes[0] == "status"
-	isOnlyAssigneeChange := len(changes) == 1 && changes[0] == "assignees"
-	hasStatusChange := req.Status != nil && *req.Status != oldStatus
-	hasAssigneeChange := req.AssigneeIDs != nil && len(newAssignees) > 0
-
-	// ============================================
-	// 1. HANDLE GENERAL TASK UPDATES
-	// ============================================
-	// Only send TASK_UPDATED if:
-	// - There are changes other than status or assignees
-	// - OR there are multiple types of changes
-	shouldSendGeneralUpdate := len(changes) > 0 && !isOnlyStatusChange && !isOnlyAssigneeChange
-
-	if shouldSendGeneralUpdate {
-		// Notify assignees (excluding updater AND newly assigned users)
-		notifiedUsers := make(map[string]bool)
-		for _, assigneeID := range task.AssigneeIDs {
-			if assigneeID != userID && !newAssigneeMap[assigneeID] {
-				s.notificationSvc.SendTaskUpdatedBy(
-					ctx,
-					assigneeID,
-					userID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					changes,
-				)
-				notifiedUsers[assigneeID] = true
-			}
-		}
-
-		// Notify watchers (excluding updater and already notified)
-		for _, watcherID := range task.WatcherIDs {
-			if watcherID != userID && !notifiedUsers[watcherID] && !newAssigneeMap[watcherID] {
-				s.notificationSvc.SendTaskUpdatedBy(
-					ctx,
-					watcherID,
-					userID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					changes,
-				)
-			}
-		}
-
-		// Broadcast general update to project room
-		if s.broadcaster != nil {
-			s.broadcaster.BroadcastTaskUpdated(
-				task.ProjectID,
-				s.taskToMap(task),
-				changes,
-				userID,
-			)
-		}
-	}
-
-	// ============================================
-	// 2. HANDLE STATUS CHANGE (if changed)
-	// ============================================
-	if hasStatusChange {
-		// Notify assignees about status change
-		for _, assigneeID := range task.AssigneeIDs {
-			if assigneeID != userID {
-				s.notificationSvc.SendTaskStatusChangedBy(
-					ctx,
-					assigneeID,
-					userID,
-					task.Title,
-					task.ID,
-					task.ProjectID,
-					oldStatus,
-					*req.Status,
-				)
-			}
-		}
-
-		// Broadcast status change
-		if s.broadcaster != nil {
-			s.broadcaster.BroadcastTaskStatusChanged(
-				task.ProjectID,
-				s.taskToMap(task),
-				oldStatus,
-				*req.Status,
-				userID,
-			)
-		}
-	}
-
-	// ============================================
-	// 3. HANDLE NEW ASSIGNEES (if any)
-	// ============================================
-	if hasAssigneeChange {
+	// ✅ 1. HANDLE NEW ASSIGNEES (separate notification)
+	if len(newAssignees) > 0 {
 		for _, newAssigneeID := range newAssignees {
 			if newAssigneeID != userID {
-				// Send assignment notification
 				s.notificationSvc.SendTaskAssignedBy(
 					ctx,
 					newAssigneeID,
@@ -648,31 +668,174 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 					task.ID,
 					task.ProjectID,
 				)
-
-				// Auto-add new assignee as watcher
+				notifiedUsers[newAssigneeID] = true
+				
 				if !contains(task.WatcherIDs, newAssigneeID) {
 					task.WatcherIDs = append(task.WatcherIDs, newAssigneeID)
 					s.taskRepo.Update(ctx, task)
 				}
 			}
 		}
+	}
 
-		// ✅ Only broadcast task update if assignees changed
-		// (Don't use BroadcastTaskAssigned - that's for individual notifications)
-		if s.broadcaster != nil && !shouldSendGeneralUpdate {
-			// Only broadcast if we didn't already broadcast a general update
-			s.broadcaster.BroadcastTaskUpdated(
-				task.ProjectID,
-				s.taskToMap(task),
-				[]string{"assignees"},
-				userID,
-			)
+	// ✅ 2. SEND SINGLE DETAILED UPDATE NOTIFICATION
+	if len(changeDetails) > 0 {
+		// Build single comprehensive message with ALL changes listed
+		var message string
+		if len(changeDetails) == 1 {
+			message = fmt.Sprintf("%s updated '%s': %s", updaterName, task.Title, changeDetails[0])
+		} else if len(changeDetails) == 2 {
+			message = fmt.Sprintf("%s updated '%s': %s and %s", updaterName, task.Title, changeDetails[0], changeDetails[1])
+		} else if len(changeDetails) == 3 {
+			message = fmt.Sprintf("%s updated '%s': %s, %s, and %s", 
+				updaterName, task.Title, changeDetails[0], changeDetails[1], changeDetails[2])
+		} else {
+			// For 4+ changes, list all of them separated by commas
+			allChanges := strings.Join(changeDetails[:len(changeDetails)-1], ", ")
+			message = fmt.Sprintf("%s updated '%s': %s, and %s", 
+				updaterName, task.Title, allChanges, changeDetails[len(changeDetails)-1])
 		}
+
+		// Notify assignees (excluding updater and newly assigned)
+		for _, assigneeID := range task.AssigneeIDs {
+			if assigneeID != userID && !notifiedUsers[assigneeID] {
+				s.notificationSvc.SendBatchNotifications(
+					ctx,
+					[]string{assigneeID},
+					userID,
+					notification.TypeTaskUpdated,
+					"Task Updated",
+					message,
+					map[string]interface{}{
+						"taskId":        task.ID,
+						"taskTitle":     task.Title,
+						"projectId":     task.ProjectID,
+						"changes":       changes,
+						"changeDetails": changeDetails,
+						"updaterName":   updaterName,
+						"action":        "view_task",
+					},
+				)
+				notifiedUsers[assigneeID] = true
+			}
+		}
+
+		// Notify watchers (excluding already notified)
+		for _, watcherID := range task.WatcherIDs {
+			if watcherID != userID && !notifiedUsers[watcherID] {
+				s.notificationSvc.SendBatchNotifications(
+					ctx,
+					[]string{watcherID},
+					userID,
+					notification.TypeTaskUpdated,
+					"Task Updated",
+					message,
+					map[string]interface{}{
+						"taskId":        task.ID,
+						"taskTitle":     task.Title,
+						"projectId":     task.ProjectID,
+						"changes":       changes,
+						"changeDetails": changeDetails,
+						"updaterName":   updaterName,
+						"action":        "view_task",
+					},
+				)
+			}
+		}
+	}
+
+	// ✅ 3. HANDLE REMOVED ASSIGNEES (notify them separately)
+	if req.AssigneeIDs != nil {
+		removedAssignees := s.findRemovedAssignees(oldAssignees, *req.AssigneeIDs)
+		for _, removedID := range removedAssignees {
+			if removedID != userID {
+				s.notificationSvc.SendBatchNotifications(
+					ctx,
+					[]string{removedID},
+					userID,
+					notification.TypeTaskUpdated,
+					"Removed from Task",
+					fmt.Sprintf("%s removed you from task '%s'", updaterName, task.Title),
+					map[string]interface{}{
+						"taskId":      task.ID,
+						"taskTitle":   task.Title,
+						"projectId":   task.ProjectID,
+						"updaterName": updaterName,
+						"action":      "view_project",
+					},
+				)
+			}
+		}
+	}
+
+	// ✅ 3. Broadcast update
+	if len(changes) > 0 && s.broadcaster != nil {
+		s.broadcaster.BroadcastTaskUpdated(
+			task.ProjectID,
+			s.taskToMap(task),
+			changes,
+			userID,
+		)
 	}
 
 	return task, nil
 }
 
+// Helper: Find removed assignees
+func (s *taskService) findRemovedAssignees(oldAssignees, newAssignees []string) []string {
+	newMap := make(map[string]bool)
+	for _, id := range newAssignees {
+		newMap[id] = true
+	}
+
+	var result []string
+	for _, id := range oldAssignees {
+		if !newMap[id] {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
+// Helper: Format status for display
+func formatStatus(status string) string {
+	statusMap := map[string]string{
+		"backlog":     "Backlog",
+		"todo":        "To Do",
+		"in_progress": "In Progress",
+		"in_review":   "In Review",
+		"done":        "Done",
+		"cancelled":   "Cancelled",
+	}
+	if formatted, ok := statusMap[status]; ok {
+		return formatted
+	}
+	return strings.Title(strings.ReplaceAll(status, "_", " "))
+}
+
+// sendSpecificUpdateNotification sends notification for specific field update
+func (s *taskService) sendSpecificUpdateNotification(ctx context.Context, userID, updaterName, taskTitle, taskID, projectID, fieldName, oldValue, newValue string) {
+	message := fmt.Sprintf("%s updated %s in task '%s': %s → %s", updaterName, fieldName, taskTitle, oldValue, newValue)
+	
+	s.notificationSvc.SendBatchNotifications(
+		ctx,
+		[]string{userID},
+		"",
+		notification.TypeTaskUpdated,
+		fmt.Sprintf("Task %s Updated", strings.Title(fieldName)),
+		message,
+		map[string]interface{}{
+			"taskId":     taskID,
+			"taskTitle":  taskTitle,
+			"projectId":  projectID,
+			"fieldName":  fieldName,
+			"oldValue":   oldValue,
+			"newValue":   newValue,
+			"updaterName": updaterName,
+			"action":     "view_task",
+		},
+	)
+}
 
 // ============================================
 // DELETE - With Notifications
@@ -1000,8 +1163,132 @@ func (s *taskService) PromoteToTask(ctx context.Context, taskID, userID string) 
 	return nil
 }
 
+// // ============================================
+// // ADD COMMENT - With Notifications
+// // ============================================
+
+// func (s *taskService) AddComment(
+// 	ctx context.Context,
+// 	taskID, userID, content string,
+// 	mentionedUsers []string,
+// ) (*repository.TaskComment, error) {
+
+// 	if !s.permService.CanAccessTask(ctx, userID, taskID) {
+// 		log.Printf("[AddComment] unauthorized access userID=%s taskID=%s", userID, taskID)
+// 		return nil, ErrUnauthorized
+// 	}
+
+// 	content = strings.TrimSpace(content)
+// 	if content == "" {
+// 		log.Printf("[AddComment] empty content userID=%s taskID=%s", userID, taskID)
+// 		return nil, ErrBadRequest
+// 	}
+
+// 	// Get task info for notifications
+// 	task, err := s.taskRepo.FindByID(ctx, taskID)
+// 	if err != nil || task == nil {
+// 		return nil, ErrNotFound
+// 	}
+
+// 	comment := &repository.TaskComment{
+// 		TaskID:         taskID,
+// 		UserID:         userID,
+// 		Content:        content,
+// 		MentionedUsers: mentionedUsers,
+// 	}
+
+// 	if err := s.commentRepo.Create(ctx, comment); err != nil {
+// 		log.Printf("[AddComment] failed to create comment userID=%s taskID=%s err=%v",
+// 			userID, taskID, err)
+// 		return nil, err
+// 	}
+
+// 	// ✅ NOTIFICATIONS START
+// 	// Get commenter info
+// 	commenter, _ := s.userRepo.FindByID(ctx, userID)
+// 	commenterName := "Someone"
+// 	if commenter != nil {
+// 		commenterName = commenter.Name
+// 	}
+
+// 	// Collect users to notify (excluding commenter)
+// 	notifiedUsers := make(map[string]bool)
+
+// 	// 1. Notify assignees
+// 	for _, assigneeID := range task.AssigneeIDs {
+// 		if assigneeID != userID {
+// 			s.notificationSvc.SendTaskCommented(
+// 				ctx,
+// 				assigneeID,
+// 				commenterName,
+// 				task.Title,
+// 				task.ID,
+// 				task.ProjectID,
+// 			)
+// 			notifiedUsers[assigneeID] = true
+// 		}
+// 	}
+
+// 	// 2. Notify watchers (excluding already notified)
+// 	for _, watcherID := range task.WatcherIDs {
+// 		if watcherID != userID && !notifiedUsers[watcherID] {
+// 			s.notificationSvc.SendTaskCommented(
+// 				ctx,
+// 				watcherID,
+// 				commenterName,
+// 				task.Title,
+// 				task.ID,
+// 				task.ProjectID,
+// 			)
+// 			notifiedUsers[watcherID] = true
+// 		}
+// 	}
+
+// 	// 3. Parse and send mention notifications
+// 	if s.notificationSvc != nil {
+// 		s.notificationSvc.ParseAndSendMentions(
+// 			ctx,
+// 			content,
+// 			commenterName,
+// 			task.Title,
+// 			task.ID,
+// 			task.ProjectID,
+// 			userID,
+// 		)
+// 	}
+
+// 	// 4. Broadcast comment
+// 	if s.broadcaster != nil {
+// 		s.broadcaster.BroadcastCommentAdded(
+// 			task.ProjectID,
+// 			task.ID,
+// 			map[string]interface{}{
+// 				"id":        comment.ID,
+// 				"content":   comment.Content,
+// 				"userId":    comment.UserID,
+// 				"createdAt": comment.CreatedAt,
+// 			},
+// 			userID,
+// 		)
+// 	}
+// 	// ✅ NOTIFICATIONS END
+
+// 	// Activity logging
+// 	if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
+// 		TaskID: taskID,
+// 		UserID: &userID,
+// 		Action: "commented",
+// 	}); err != nil {
+// 		log.Printf("[AddComment] activity log failed commentID=%s taskID=%s err=%v",
+// 			comment.ID, taskID, err)
+// 	}
+
+// 	return comment, nil
+// }
+
+
 // ============================================
-// ADD COMMENT - With Notifications
+// ADD COMMENT - With Smart Notifications (NO DUPLICATES)
 // ============================================
 
 func (s *taskService) AddComment(
@@ -1040,20 +1327,41 @@ func (s *taskService) AddComment(
 		return nil, err
 	}
 
-	// ✅ NOTIFICATIONS START
-	// Get commenter info
+	// ✅ SMART NOTIFICATIONS - NO DUPLICATES
 	commenter, _ := s.userRepo.FindByID(ctx, userID)
 	commenterName := "Someone"
 	if commenter != nil {
 		commenterName = commenter.Name
 	}
 
-	// Collect users to notify (excluding commenter)
+	// ✅ Parse mentions FIRST to get mentioned user IDs
+	mentionedUserIDs := make(map[string]bool)
+	if s.notificationSvc != nil {
+		// Extract mentioned user IDs from content
+		mentionedUserIDs = s.extractMentionedUserIDs(ctx, content, userID)
+	}
+
+	// ✅ Track who gets notified
 	notifiedUsers := make(map[string]bool)
 
-	// 1. Notify assignees
+	// 1. Send MENTION notifications (highest priority)
+	for mentionedUserID := range mentionedUserIDs {
+		if mentionedUserID != userID {
+			s.notificationSvc.SendMention(
+				ctx,
+				mentionedUserID,
+				commenterName,
+				task.Title,
+				task.ID,
+				task.ProjectID,
+			)
+			notifiedUsers[mentionedUserID] = true
+		}
+	}
+
+	// 2. Send COMMENT notifications to assignees (only if NOT mentioned)
 	for _, assigneeID := range task.AssigneeIDs {
-		if assigneeID != userID {
+		if assigneeID != userID && !notifiedUsers[assigneeID] {
 			s.notificationSvc.SendTaskCommented(
 				ctx,
 				assigneeID,
@@ -1066,7 +1374,7 @@ func (s *taskService) AddComment(
 		}
 	}
 
-	// 2. Notify watchers (excluding already notified)
+	// 3. Send COMMENT notifications to watchers (only if NOT already notified)
 	for _, watcherID := range task.WatcherIDs {
 		if watcherID != userID && !notifiedUsers[watcherID] {
 			s.notificationSvc.SendTaskCommented(
@@ -1079,19 +1387,6 @@ func (s *taskService) AddComment(
 			)
 			notifiedUsers[watcherID] = true
 		}
-	}
-
-	// 3. Parse and send mention notifications
-	if s.notificationSvc != nil {
-		s.notificationSvc.ParseAndSendMentions(
-			ctx,
-			content,
-			commenterName,
-			task.Title,
-			task.ID,
-			task.ProjectID,
-			userID,
-		)
 	}
 
 	// 4. Broadcast comment
@@ -1108,7 +1403,6 @@ func (s *taskService) AddComment(
 			userID,
 		)
 	}
-	// ✅ NOTIFICATIONS END
 
 	// Activity logging
 	if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
@@ -1123,6 +1417,43 @@ func (s *taskService) AddComment(
 	return comment, nil
 }
 
+// ✅ Helper: Extract mentioned user IDs from comment content
+func (s *taskService) extractMentionedUserIDs(ctx context.Context, content, authorID string) map[string]bool {
+	if s.userRepo == nil {
+		return make(map[string]bool)
+	}
+
+	mentionRegex := regexp.MustCompile(`@([a-zA-Z0-9._]+(?:@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})?)`)
+	matches := mentionRegex.FindAllStringSubmatch(content, -1)
+
+	mentionedUserIDs := make(map[string]bool)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+
+		mention := match[1]
+		var user *repository.User
+		var err error
+
+		if strings.Contains(mention, "@") {
+			user, err = s.userRepo.FindByEmail(ctx, mention)
+		} else {
+			user, err = s.userRepo.FindByName(ctx, mention)
+		}
+
+		if err != nil || user == nil {
+			continue
+		}
+
+		if user.ID != authorID {
+			mentionedUserIDs[user.ID] = true
+		}
+	}
+
+	return mentionedUserIDs
+}
 
 
 func (s *taskService) ListComments(

@@ -522,6 +522,86 @@ func (s *memberService) RemoveMember(ctx context.Context, entityType, entityID, 
 }
 
 
+// func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entityID, userID, newRole, requesterID string) error {
+// 	// ✅ Get requester's role
+// 	requesterRole, _, err := s.GetAccessLevel(ctx, entityType, entityID, requesterID)
+// 	if err != nil {
+// 		log.Printf("[UpdateMemberRole] DENIED: requester has no access")
+// 		return ErrUnauthorized
+// 	}
+
+// 	requesterLevel := getRoleLevel(requesterRole)
+
+// 	// ✅ Only admin (4) or owner (5) can update roles
+// 	if requesterLevel < 4 {
+// 		log.Printf("[UpdateMemberRole] DENIED: insufficient role. requesterRole=%s", requesterRole)
+// 		return ErrUnauthorized
+// 	}
+
+// 	// ✅ Get target member's current role
+// 	targetMember, err := s.GetMember(ctx, entityType, entityID, userID)
+// 	if err != nil || targetMember == nil {
+// 		return ErrUserNotFound
+// 	}
+
+// 	targetLevel := getRoleLevel(targetMember.Role)
+// 	newLevel := getRoleLevel(newRole)
+
+// 	// ✅ Cannot modify someone with equal or higher role (except self)
+// 	if requesterID != userID && targetLevel >= requesterLevel {
+// 		log.Printf("[UpdateMemberRole] DENIED: cannot modify equal/higher role")
+// 		return ErrUnauthorized
+// 	}
+
+// 	// ✅ Cannot assign a role higher than or equal to your own (except owner can assign owner)
+// 	if newLevel >= requesterLevel && requesterLevel < 5 {
+// 		log.Printf("[UpdateMemberRole] DENIED: cannot assign role >= own role")
+// 		return ErrUnauthorized
+// 	}
+
+// 	// ✅ Prevent demoting the last owner
+// 	if targetMember.Role == "owner" && newRole != "owner" {
+// 		owners, err := s.countOwners(ctx, entityType, entityID)
+// 		if err != nil {
+// 			return err
+// 		}
+// 		if owners <= 1 {
+// 			log.Printf("[UpdateMemberRole] DENIED: cannot demote last owner")
+// 			return ErrLastOwner
+// 		}
+// 	}
+
+// 	// ✅ Get workspace ID (needed for broadcast)
+// 	workspaceID := s.getWorkspaceID(ctx, entityType, entityID)
+
+// 	// ✅ Proceed with update
+// 	var updateErr error
+// 	switch entityType {
+// 	case EntityTypeWorkspace:
+// 		updateErr = s.workspaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+// 	case EntityTypeSpace:
+// 		updateErr = s.spaceRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+// 	case EntityTypeFolder:
+// 		updateErr = s.folderRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+// 	case EntityTypeProject:
+// 		updateErr = s.projectRepo.UpdateMemberRole(ctx, entityID, userID, newRole)
+// 	default:
+// 		return ErrInvalidEntityType
+// 	}
+
+// 	if updateErr != nil {
+// 		return updateErr
+// 	}
+
+// 	// ✅ BROADCAST ROLE UPDATE (after successful update)
+// 	if s.broadcaster != nil {
+// 		s.broadcaster.BroadcastMemberRoleUpdated(entityType, entityID, userID, newRole, workspaceID, requesterID)
+// 	}
+
+// 	return nil
+// }
+
+
 func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entityID, userID, newRole, requesterID string) error {
 	// ✅ Get requester's role
 	requesterRole, _, err := s.GetAccessLevel(ctx, entityType, entityID, requesterID)
@@ -544,6 +624,7 @@ func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entity
 		return ErrUserNotFound
 	}
 
+	oldRole := targetMember.Role
 	targetLevel := getRoleLevel(targetMember.Role)
 	newLevel := getRoleLevel(newRole)
 
@@ -593,6 +674,11 @@ func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entity
 		return updateErr
 	}
 
+	// ✅ NEW: Send notification to updated user (unless they updated themselves)
+	if userID != requesterID {
+		s.sendRoleUpdateNotification(ctx, entityType, entityID, userID, oldRole, newRole, requesterID)
+	}
+
 	// ✅ BROADCAST ROLE UPDATE (after successful update)
 	if s.broadcaster != nil {
 		s.broadcaster.BroadcastMemberRoleUpdated(entityType, entityID, userID, newRole, workspaceID, requesterID)
@@ -600,6 +686,53 @@ func (s *memberService) UpdateMemberRole(ctx context.Context, entityType, entity
 
 	return nil
 }
+
+// sendRoleUpdateNotification sends notification when user's role is updated
+func (s *memberService) sendRoleUpdateNotification(ctx context.Context, entityType, entityID, userID, oldRole, newRole, updaterID string) {
+	if s.notifSvc == nil {
+		return
+	}
+
+	// Get updater's name
+	updaterName := ""
+	if updater, _ := s.userRepo.FindByID(ctx, updaterID); updater != nil {
+		updaterName = updater.Name
+	}
+
+	// Get entity name
+	var entityName string
+	switch entityType {
+	case EntityTypeWorkspace:
+		if ws, _ := s.workspaceRepo.FindByID(ctx, entityID); ws != nil {
+			entityName = ws.Name
+		}
+	case EntityTypeSpace:
+		if sp, _ := s.spaceRepo.FindByID(ctx, entityID); sp != nil {
+			entityName = sp.Name
+		}
+	case EntityTypeFolder:
+		if f, _ := s.folderRepo.FindByID(ctx, entityID); f != nil {
+			entityName = f.Name
+		}
+	case EntityTypeProject:
+		if p, _ := s.projectRepo.FindByID(ctx, entityID); p != nil {
+			entityName = p.Name
+		}
+	}
+
+	// ✅ Send role update notification based on entity type
+	switch entityType {
+	case EntityTypeWorkspace:
+		s.notifSvc.SendWorkspaceRoleUpdate(ctx, userID, entityName, entityID, oldRole, newRole, updaterName)
+	case EntityTypeSpace:
+		s.notifSvc.SendSpaceRoleUpdate(ctx, userID, entityName, entityID, oldRole, newRole, updaterName)
+	case EntityTypeFolder:
+		s.notifSvc.SendFolderRoleUpdate(ctx, userID, entityName, entityID, oldRole, newRole, updaterName)
+	case EntityTypeProject:
+		s.notifSvc.SendProjectRoleUpdate(ctx, userID, entityName, entityID, oldRole, newRole, updaterName)
+	}
+}
+
 
 func (s *memberService) GetMember(ctx context.Context, entityType, entityID, userID string) (*UnifiedMember, error) {
 	switch entityType {

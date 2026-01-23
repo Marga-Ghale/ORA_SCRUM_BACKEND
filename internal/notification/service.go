@@ -36,7 +36,14 @@ const (
 	TypeTimeLoggedToTask      = "TIME_LOGGED_TO_TASK"
 	TypeSpaceInvitation       = "SPACE_INVITATION"
 	TypeFolderInvitation = "FOLDER_INVITATION"
+
+	TypeWorkspaceRoleUpdated = "WORKSPACE_ROLE_UPDATED"
+	TypeSpaceRoleUpdated     = "SPACE_ROLE_UPDATED"
+	TypeFolderRoleUpdated    = "FOLDER_ROLE_UPDATED"
+	TypeProjectRoleUpdated   = "PROJECT_ROLE_UPDATED"
 )
+
+
 
 // Service handles sending notifications
 type Service struct {
@@ -1109,6 +1116,141 @@ func (s *Service) SendProjectRemoval(
 			"projectId":   projectID,
 			"projectName": projectName,
 			"removerName": removerName,
+			"action":      "view_project",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+
+
+
+// SendWorkspaceRoleUpdate notifies user their role was updated
+func (s *Service) SendWorkspaceRoleUpdate(
+	ctx context.Context,
+	userID, workspaceName, workspaceID, oldRole, newRole, updaterName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeWorkspaceRoleUpdated,
+		Title:   "Role Updated",
+		Message: fmt.Sprintf("%s changed your role in workspace '%s' from %s to %s", updaterName, workspaceName, oldRole, newRole),
+		Read:    false,
+		Data: map[string]interface{}{
+			"workspaceId":   workspaceID,
+			"workspaceName": workspaceName,
+			"oldRole":       oldRole,
+			"newRole":       newRole,
+			"updaterName":   updaterName,
+			"action":        "view_workspace",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendSpaceRoleUpdate notifies user their role was updated
+func (s *Service) SendSpaceRoleUpdate(
+	ctx context.Context,
+	userID, spaceName, spaceID, oldRole, newRole, updaterName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeSpaceRoleUpdated,
+		Title:   "Role Updated",
+		Message: fmt.Sprintf("%s changed your role in space '%s' from %s to %s", updaterName, spaceName, oldRole, newRole),
+		Read:    false,
+		Data: map[string]interface{}{
+			"spaceId":     spaceID,
+			"spaceName":   spaceName,
+			"oldRole":     oldRole,
+			"newRole":     newRole,
+			"updaterName": updaterName,
+			"action":      "view_space",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendFolderRoleUpdate notifies user their role was updated
+func (s *Service) SendFolderRoleUpdate(
+	ctx context.Context,
+	userID, folderName, folderID, oldRole, newRole, updaterName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeFolderRoleUpdated,
+		Title:   "Role Updated",
+		Message: fmt.Sprintf("%s changed your role in folder '%s' from %s to %s", updaterName, folderName, oldRole, newRole),
+		Read:    false,
+		Data: map[string]interface{}{
+			"folderId":    folderID,
+			"folderName":  folderName,
+			"oldRole":     oldRole,
+			"newRole":     newRole,
+			"updaterName": updaterName,
+			"action":      "view_folder",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendProjectRoleUpdate notifies user their role was updated
+func (s *Service) SendProjectRoleUpdate(
+	ctx context.Context,
+	userID, projectName, projectID, oldRole, newRole, updaterName string,
+) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeProjectRoleUpdated,
+		Title:   "Role Updated",
+		Message: fmt.Sprintf("%s changed your role in project '%s' from %s to %s", updaterName, projectName, oldRole, newRole),
+		Read:    false,
+		Data: map[string]interface{}{
+			"projectId":   projectID,
+			"projectName": projectName,
+			"oldRole":     oldRole,
+			"newRole":     newRole,
+			"updaterName": updaterName,
 			"action":      "view_project",
 		},
 	}
