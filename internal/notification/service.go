@@ -1298,13 +1298,13 @@ func (s *Service) SendChatAddedToChannel(ctx context.Context, userID, channelID,
 		Message: message,
 		Read:    false,
 		Data: map[string]interface{}{
-			"channelId":   channelID,
-			"channelName": channelName,
-			"addedBy":     addedByName,
-			"isDirect":    isDirect,
-			"workspaceId": workspaceID,
-			"action":      "view_chat",
-		},
+    "channelId":   channelID,
+    "channelName": channelName,
+    "addedBy":     addedByName,  
+    "isDirect":    isDirect,
+    "workspaceId": workspaceID,
+    "action":      "view_chat",
+},
 	}
 
 	if err := s.notificationRepo.Create(ctx, notification); err != nil {
@@ -1328,9 +1328,9 @@ func (s *Service) SendChatRemovedFromChannel(ctx context.Context, userID, channe
 		Message: fmt.Sprintf("%s removed you from #%s", removedByName, channelName),
 		Read:    false,
 		Data: map[string]interface{}{
-			"channelName": channelName,
-			"removedBy":   removedByName,
-		},
+    "channelName": channelName,
+    "removerName": removedByName,  // ✅ Make sure it's "removerName"
+},
 	}
 
 	if err := s.notificationRepo.Create(ctx, notification); err != nil {
