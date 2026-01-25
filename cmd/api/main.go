@@ -441,12 +441,16 @@ func main() {
 				chat.POST("/channels", chatHandler.CreateChannel)
 				chat.GET("/channels/find", chatHandler.GetChannelByTarget)
 				chat.GET("/channels/:id", chatHandler.GetChannel)
+				    chat.PUT("/channels/:id", chatHandler.UpdateChannel)           // ✅ ADD THIS
+
 				chat.DELETE("/channels/:id", chatHandler.DeleteChannel)
 
 				chat.POST("/channels/:id/join", chatHandler.JoinChannel)
 				chat.POST("/channels/:id/leave", chatHandler.LeaveChannel)
 				chat.GET("/channels/:id/members", chatHandler.GetChannelMembers)
 				chat.POST("/channels/:id/members/add", chatHandler.AddMember)
+				    chat.POST("/channels/:id/members/remove", chatHandler.RemoveMember)  // ✅ ADD THIS
+
 				chat.POST("/channels/:id/read", chatHandler.MarkAsRead)
 				chat.GET("/channels/:id/unread", chatHandler.GetUnreadCount)
 

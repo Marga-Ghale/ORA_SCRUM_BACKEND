@@ -179,8 +179,6 @@ func (s *chatService) CreateChannel(ctx context.Context, name, channelType, targ
 		UserID:    creatorID,
 	}
 	s.chatRepo.AddMember(ctx, member)
-
-	// Populate member count
 	channel.MemberCount = 1
 
 	// Broadcast channel creation
@@ -189,6 +187,44 @@ func (s *chatService) CreateChannel(ctx context.Context, name, channelType, targ
 			"channel": channel,
 		}, "")
 	}
+
+	return channel, nil
+}
+
+
+// ✅ NEW: CreateChannelWithMembers creates a channel and adds initial members
+func (s *chatService) CreateChannelWithMembers(ctx context.Context, name, channelType, targetID, workspaceID, creatorID string, isPrivate bool, memberIDs []string) (*repository.ChatChannel, error) {
+	channel, err := s.CreateChannel(ctx, name, channelType, targetID, workspaceID, creatorID, isPrivate)
+	if err != nil {
+		return nil, err
+	}
+
+	creator, _ := s.userRepo.FindByID(ctx, creatorID)
+	creatorName := getNameOrUnknown(creator)
+
+	// Add additional members
+	for _, memberID := range memberIDs {
+		if memberID == creatorID {
+			continue
+		}
+
+		member := &repository.ChatChannelMember{
+			ChannelID: channel.ID,
+			UserID:    memberID,
+		}
+		if err := s.chatRepo.AddMember(ctx, member); err != nil {
+			continue
+		}
+
+		// Notify added member
+		if s.notifSvc != nil {
+			s.notifSvc.SendChatAddedToChannel(ctx, memberID, channel.ID, name, creatorName, workspaceID, false)
+		}
+	}
+
+	// Update member count
+	count, _ := s.chatRepo.GetMemberCount(ctx, channel.ID)
+	channel.MemberCount = count
 
 	return channel, nil
 }
@@ -306,6 +342,11 @@ func (s *chatService) DeleteChannel(ctx context.Context, id, userID string) erro
 		return ErrForbidden
 	}
 
+	// Don't allow deleting direct messages
+	if channel.Type == "direct" {
+		return fmt.Errorf("cannot delete direct message channels")
+	}
+
 	// Broadcast before deletion
 	if s.broadcaster != nil {
 		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_channel_deleted"), map[string]interface{}{
@@ -324,13 +365,12 @@ func (s *chatService) CreateDirectChannel(ctx context.Context, user1ID, user2ID,
 	// Check if direct channel already exists
 	existing, err := s.GetDirectChannel(ctx, user1ID, user2ID)
 	if err == nil && existing != nil {
-		// Populate OtherUser before returning
 		s.populateDirectChannelUser(ctx, existing, user1ID)
 		s.populateMemberCount(ctx, existing)
 		return existing, nil
 	}
 
-	// Get user names for channel name
+	// Get user names
 	user1, _ := s.userRepo.FindByID(ctx, user1ID)
 	user2, _ := s.userRepo.FindByID(ctx, user2ID)
 
@@ -339,7 +379,6 @@ func (s *chatService) CreateDirectChannel(ctx context.Context, user1ID, user2ID,
 		name = fmt.Sprintf("%s & %s", user1.Name, user2.Name)
 	}
 
-	// Create unique target ID for direct messages (sorted to ensure consistency)
 	targetID := user1ID + "_" + user2ID
 	if user1ID > user2ID {
 		targetID = user2ID + "_" + user1ID
@@ -362,9 +401,14 @@ func (s *chatService) CreateDirectChannel(ctx context.Context, user1ID, user2ID,
 	s.chatRepo.AddMember(ctx, &repository.ChatChannelMember{ChannelID: channel.ID, UserID: user1ID})
 	s.chatRepo.AddMember(ctx, &repository.ChatChannelMember{ChannelID: channel.ID, UserID: user2ID})
 
-	// Populate OtherUser (user2) for the response
+	// Populate OtherUser for response
 	channel.OtherUser = user2
 	channel.MemberCount = 2
+
+	// ✅ NEW: Notify the other user about the new DM
+	if s.notifSvc != nil && user1 != nil {
+		s.notifSvc.SendChatAddedToChannel(ctx, user2ID, channel.ID, name, user1.Name, workspaceID, true)
+	}
 
 	return channel, nil
 }
@@ -408,27 +452,22 @@ func (s *chatService) JoinChannel(ctx context.Context, channelID, userID string)
 	return s.chatRepo.AddMember(ctx, member)
 }
 
-// AddMemberToChannel adds a member to a channel (with permission check)
 func (s *chatService) AddMemberToChannel(ctx context.Context, channelID, userID, addedByID string) error {
-	// Check if channel exists
 	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
 	if err != nil {
 		return ErrNotFound
 	}
 
-	// Check if the adder is a member
 	isMember, _ := s.chatRepo.IsMember(ctx, channelID, addedByID)
 	if !isMember {
 		return ErrForbidden
 	}
 
-	// Check if already a member
 	alreadyMember, _ := s.chatRepo.IsMember(ctx, channelID, userID)
 	if alreadyMember {
-		return nil // Already a member, no error
+		return nil
 	}
 
-	// Add the member
 	member := &repository.ChatChannelMember{
 		ChannelID: channelID,
 		UserID:    userID,
@@ -437,13 +476,11 @@ func (s *chatService) AddMemberToChannel(ctx context.Context, channelID, userID,
 		return err
 	}
 
-	// If this was a DM with 2 members and now has 3+, convert to group
 	memberCount, _ := s.chatRepo.GetMemberCount(ctx, channelID)
 	if channel.Type == "direct" && memberCount > 2 {
 		s.convertDMToGroup(ctx, channel)
 	}
 
-	// Get added user info for notification
 	addedUser, _ := s.userRepo.FindByID(ctx, userID)
 	adderUser, _ := s.userRepo.FindByID(ctx, addedByID)
 
@@ -458,12 +495,24 @@ func (s *chatService) AddMemberToChannel(ctx context.Context, channelID, userID,
 		}, "")
 	}
 
-	// Send system message
+	// System message
 	systemMessage := fmt.Sprintf("%s added %s to the conversation",
 		getNameOrUnknown(adderUser),
 		getNameOrUnknown(addedUser))
-
 	s.sendSystemMessage(ctx, channelID, systemMessage)
+
+	// ✅ NEW: Send notification to the added user
+	if s.notifSvc != nil {
+    s.notifSvc.SendChatAddedToChannel(
+        ctx,
+        userID,
+        channelID,
+        channel.Name,
+        getNameOrUnknown(adderUser),  // ✅ This passes name correctly
+        channel.WorkspaceID,
+        channel.Type == "direct",
+    )
+}
 
 	return nil
 }
@@ -472,25 +521,34 @@ func (s *chatService) LeaveChannel(ctx context.Context, channelID, userID string
 	return s.chatRepo.RemoveMember(ctx, channelID, userID)
 }
 
-// RemoveMemberFromChannel removes a member from a channel (with permission check)
 func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, userID, removedByID string) error {
-	// Check if channel exists
 	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
 	if err != nil {
 		return ErrNotFound
 	}
 
-	// Only channel creator can remove others
-	if channel.CreatedBy != removedByID && userID != removedByID {
+	// Direct messages: don't allow removal
+	if channel.Type == "direct" {
+		return fmt.Errorf("cannot remove members from direct messages")
+	}
+
+	// Check permissions: only creator can remove others, anyone can remove themselves
+	if userID != removedByID && channel.CreatedBy != removedByID {
 		return ErrForbidden
 	}
 
-	// Remove the member
+	// Don't allow creator to remove themselves if others exist
+	if userID == channel.CreatedBy {
+		count, _ := s.chatRepo.GetMemberCount(ctx, channelID)
+		if count > 1 {
+			return fmt.Errorf("channel creator cannot leave while other members exist")
+		}
+	}
+
 	if err := s.chatRepo.RemoveMember(ctx, channelID, userID); err != nil {
 		return err
 	}
 
-	// Get removed user info
 	removedUser, _ := s.userRepo.FindByID(ctx, userID)
 	removerUser, _ := s.userRepo.FindByID(ctx, removedByID)
 
@@ -503,7 +561,7 @@ func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, us
 		}, "")
 	}
 
-	// Send system message
+	// System message
 	var systemMessage string
 	if userID == removedByID {
 		systemMessage = fmt.Sprintf("%s left the conversation", getNameOrUnknown(removedUser))
@@ -511,11 +569,21 @@ func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, us
 		systemMessage = fmt.Sprintf("%s removed %s from the conversation",
 			getNameOrUnknown(removerUser),
 			getNameOrUnknown(removedUser))
+
+		if s.notifSvc != nil {
+    s.notifSvc.SendChatRemovedFromChannel(
+        ctx,
+        userID,
+        channel.Name,
+        getNameOrUnknown(removerUser),  // ✅ This passes name correctly
+    )
+}
 	}
 	s.sendSystemMessage(ctx, channelID, systemMessage)
 
 	return nil
 }
+
 
 func (s *chatService) GetChannelMembers(ctx context.Context, channelID string) ([]*repository.ChatChannelMember, error) {
 	return s.chatRepo.GetMembers(ctx, channelID)
@@ -546,53 +614,29 @@ func (s *chatService) SendMessage(ctx context.Context, channelID, userID, conten
 		return nil, err
 	}
 
-	// Get user for response
 	message.User, _ = s.userRepo.FindByID(ctx, userID)
-
-	// Get channel for broadcasting
 	channel, _ := s.chatRepo.GetChannelByID(ctx, channelID)
 
-	// Broadcast message to workspace
+	// Broadcast message
 	if s.broadcaster != nil && channel != nil {
 		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_message"), map[string]interface{}{
 			"channelId": channelID,
+			"messageId": message.ID,
 			"message":   message,
-		}, userID)
+		}, "")
 	}
 
-	// Send notifications to other channel members
-	if s.notifSvc != nil {
-		members, _ := s.chatRepo.GetMembers(ctx, channelID)
-		var memberIDs []string
-		for _, m := range members {
-			if m.UserID != userID {
-				memberIDs = append(memberIDs, m.UserID)
-			}
-		}
-
-		if len(memberIDs) > 0 {
-			userName := "Someone"
-			if message.User != nil {
-				userName = message.User.Name
-			}
-
-			channelName := "chat"
-			if channel != nil {
-				if channel.Type == "direct" {
-					channelName = "Direct Message"
-				} else {
-					channelName = channel.Name
-				}
-			}
-
-			s.notifSvc.SendBatchNotifications(ctx, memberIDs, userID, "CHAT_MESSAGE", "New Message",
-				fmt.Sprintf("%s sent a message in %s", userName, channelName),
-				map[string]interface{}{
-					"channelId": channelID,
-					"messageId": message.ID,
-					"action":    "view_chat",
-				})
-		}
+	// ✅ NEW: Parse and send @mention notifications
+	if s.notifSvc != nil && channel != nil && message.User != nil {
+		s.notifSvc.ParseChatMentions(
+			ctx,
+			content,
+			userID,
+			message.User.Name,
+			channelID,
+			channel.Name,
+			channel.Type == "direct",
+		)
 	}
 
 	return message, nil

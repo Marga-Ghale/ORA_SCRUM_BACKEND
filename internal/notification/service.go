@@ -41,6 +41,13 @@ const (
 	TypeSpaceRoleUpdated     = "SPACE_ROLE_UPDATED"
 	TypeFolderRoleUpdated    = "FOLDER_ROLE_UPDATED"
 	TypeProjectRoleUpdated   = "PROJECT_ROLE_UPDATED"
+
+
+	// ✅ NEW: Chat-related notification types
+	TypeChatAddedToChannel   = "CHAT_ADDED_TO_CHANNEL"
+	TypeChatRemovedFromChannel = "CHAT_REMOVED_FROM_CHANNEL"
+	TypeChatDirectMessage    = "CHAT_DIRECT_MESSAGE"
+	TypeChatMention          = "CHAT_MENTION"
 )
 
 
@@ -1260,5 +1267,170 @@ func (s *Service) SendProjectRoleUpdate(
 	}
 
 	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+
+
+// ============================================
+// Chat Notifications (Slack-like)
+// ============================================
+
+// SendChatAddedToChannel notifies user they were added to a channel
+func (s *Service) SendChatAddedToChannel(ctx context.Context, userID, channelID, channelName, addedByName, workspaceID string, isDirect bool) error {
+	if userID == "" {
+		return nil
+	}
+
+	var title, message string
+	if isDirect {
+		title = "New Conversation"
+		message = fmt.Sprintf("%s started a conversation with you", addedByName)
+	} else {
+		title = "Added to Channel"
+		message = fmt.Sprintf("%s added you to #%s", addedByName, channelName)
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeChatAddedToChannel,
+		Title:   title,
+		Message: message,
+		Read:    false,
+		Data: map[string]interface{}{
+			"channelId":   channelID,
+			"channelName": channelName,
+			"addedBy":     addedByName,
+			"isDirect":    isDirect,
+			"workspaceId": workspaceID,
+			"action":      "view_chat",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendChatRemovedFromChannel notifies user they were removed from a channel
+func (s *Service) SendChatRemovedFromChannel(ctx context.Context, userID, channelName, removedByName string) error {
+	if userID == "" {
+		return nil
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeChatRemovedFromChannel,
+		Title:   "Removed from Channel",
+		Message: fmt.Sprintf("%s removed you from #%s", removedByName, channelName),
+		Read:    false,
+		Data: map[string]interface{}{
+			"channelName": channelName,
+			"removedBy":   removedByName,
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// SendChatMention notifies user they were mentioned in chat
+func (s *Service) SendChatMention(ctx context.Context, userID, mentionedByName, channelID, channelName, messagePreview string, isDirect bool) error {
+	if userID == "" {
+		return nil
+	}
+
+	var title string
+	if isDirect {
+		title = "Mentioned in DM"
+	} else {
+		title = fmt.Sprintf("Mentioned in #%s", channelName)
+	}
+
+	// Truncate message preview
+	if len(messagePreview) > 100 {
+		messagePreview = messagePreview[:97] + "..."
+	}
+
+	notification := &repository.Notification{
+		UserID:  userID,
+		Type:    TypeChatMention,
+		Title:   title,
+		Message: fmt.Sprintf("%s: %s", mentionedByName, messagePreview),
+		Read:    false,
+		Data: map[string]interface{}{
+			"channelId":   channelID,
+			"channelName": channelName,
+			"mentionedBy": mentionedByName,
+			"isDirect":    isDirect,
+			"action":      "view_chat",
+		},
+	}
+
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	s.sendWebSocketNotification(notification)
+	return nil
+}
+
+// ParseChatMentions parses message for @mentions and sends notifications
+func (s *Service) ParseChatMentions(ctx context.Context, content, authorID, authorName, channelID, channelName string, isDirect bool) error {
+	if s.userRepo == nil {
+		return nil
+	}
+
+	mentionRegex := regexp.MustCompile(`@([a-zA-Z0-9._]+(?:@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})?)`)
+	matches := mentionRegex.FindAllStringSubmatch(content, -1)
+
+	mentionedUsers := make(map[string]bool)
+	var errs []error
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+
+		mention := match[1]
+		var user *repository.User
+		var err error
+
+		if strings.Contains(mention, "@") {
+			user, err = s.userRepo.FindByEmail(ctx, mention)
+		} else {
+			user, err = s.userRepo.FindByName(ctx, mention)
+		}
+
+		if err != nil || user == nil {
+			continue
+		}
+
+		// Don't notify yourself
+		if user.ID == authorID {
+			continue
+		}
+
+		// Don't notify same user twice
+		if mentionedUsers[user.ID] {
+			continue
+		}
+		mentionedUsers[user.ID] = true
+
+		if err := s.SendChatMention(ctx, user.ID, authorName, channelID, channelName, content, isDirect); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("errors sending chat mentions: %v", errs)
+	}
 	return nil
 }
