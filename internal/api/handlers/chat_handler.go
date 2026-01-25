@@ -431,3 +431,63 @@ func (h *ChatHandler) AddMember(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+// RemoveMemberRequest for removing a member from a channel
+type RemoveMemberRequest struct {
+	UserID string `json:"userId" binding:"required"`
+}
+
+
+// RemoveMember removes a member from a channel
+func (h *ChatHandler) RemoveMember(c *gin.Context) {
+	channelID := c.Param("id")
+
+	var req RemoveMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	currentUserID := c.GetString("userID")
+
+	if err := h.chatSvc.RemoveMemberFromChannel(c.Request.Context(), channelID, req.UserID, currentUserID); err != nil {
+		if err == service.ErrForbidden {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to remove members"})
+			return
+		}
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// UpdateChannel updates a channel's name and privacy settings
+func (h *ChatHandler) UpdateChannel(c *gin.Context) {
+	channelID := c.Param("id")
+
+	var req struct {
+		Name      string `json:"name"`
+		IsPrivate bool   `json:"isPrivate"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	channel, err := h.chatSvc.UpdateChannel(c.Request.Context(), channelID, req.Name, req.IsPrivate)
+	if err != nil {
+		if err == service.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, channel)
+}
