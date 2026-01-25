@@ -331,20 +331,21 @@ func (s *chatService) UpdateChannel(ctx context.Context, id, name string, isPriv
 	return channel, nil
 }
 
+// DeleteChannel - Only allow deleting non-DM channels by creator
 func (s *chatService) DeleteChannel(ctx context.Context, id, userID string) error {
 	channel, err := s.chatRepo.GetChannelByID(ctx, id)
 	if err != nil {
 		return ErrNotFound
 	}
 
+	// ❌ Cannot delete direct messages or group DMs
+	if channel.Type == "direct" || channel.Type == "group" {
+		return fmt.Errorf("cannot delete direct message conversations")
+	}
+
 	// Only creator can delete
 	if channel.CreatedBy != userID {
 		return ErrForbidden
-	}
-
-	// Don't allow deleting direct messages
-	if channel.Type == "direct" {
-		return fmt.Errorf("cannot delete direct message channels")
 	}
 
 	// Broadcast before deletion
@@ -356,6 +357,7 @@ func (s *chatService) DeleteChannel(ctx context.Context, id, userID string) erro
 
 	return s.chatRepo.DeleteChannel(ctx, id)
 }
+
 
 // ============================================
 // Direct Messages
@@ -618,13 +620,14 @@ func (s *chatService) SendMessage(ctx context.Context, channelID, userID, conten
 	channel, _ := s.chatRepo.GetChannelByID(ctx, channelID)
 
 	// Broadcast message
-	if s.broadcaster != nil && channel != nil {
-		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_message"), map[string]interface{}{
-			"channelId": channelID,
-			"messageId": message.ID,
-			"message":   message,
-		}, "")
-	}
+	// Broadcast message - EXCLUDE the sender
+if s.broadcaster != nil && channel != nil {
+    s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_message"), map[string]interface{}{
+        "channelId": channelID,
+        "messageId": message.ID,
+        "message":   message,
+    }, userID) // ✅ CHANGE: was "" now userID - excludes sender
+}
 
 	// ✅ NEW: Parse and send @mention notifications
 	if s.notifSvc != nil && channel != nil && message.User != nil {
