@@ -309,13 +309,18 @@ func (r *chatRepository) IsMember(ctx context.Context, channelID, userID string)
 	return count > 0, err
 }
 
+// In repository/chat.go - Update UpdateLastRead
 func (r *chatRepository) UpdateLastRead(ctx context.Context, channelID, userID string) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE chat_channel_members SET last_read = NOW() WHERE channel_id = $1 AND user_id = $2
+		UPDATE chat_channel_members 
+		SET last_read = COALESCE(
+			(SELECT MAX(created_at) FROM chat_messages WHERE channel_id = $1),
+			NOW()
+		)
+		WHERE channel_id = $1 AND user_id = $2
 	`, channelID, userID)
 	return err
 }
-
 // ============================================
 // Message Operations
 // ============================================

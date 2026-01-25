@@ -523,27 +523,97 @@ func (s *chatService) LeaveChannel(ctx context.Context, channelID, userID string
 	return s.chatRepo.RemoveMember(ctx, channelID, userID)
 }
 
+
+
+// func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, userID, removedByID string) error {
+// 	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
+// 	if err != nil {
+// 		return ErrNotFound
+// 	}
+
+// 	// Direct messages: don't allow removal
+// 	if channel.Type == "direct" {
+// 		return fmt.Errorf("cannot remove members from direct messages")
+// 	}
+
+// 	// Check permissions: only creator can remove others, anyone can remove themselves
+// 	if userID != removedByID && channel.CreatedBy != removedByID {
+// 		return ErrForbidden
+// 	}
+
+// 	// Don't allow creator to remove themselves if others exist
+// 	if userID == channel.CreatedBy {
+// 		count, _ := s.chatRepo.GetMemberCount(ctx, channelID)
+// 		if count > 1 {
+// 			return fmt.Errorf("channel creator cannot leave while other members exist")
+// 		}
+// 	}
+
+// 	if err := s.chatRepo.RemoveMember(ctx, channelID, userID); err != nil {
+// 		return err
+// 	}
+
+// 	removedUser, _ := s.userRepo.FindByID(ctx, userID)
+// 	removerUser, _ := s.userRepo.FindByID(ctx, removedByID)
+
+// 	// Broadcast member removed
+// 	if s.broadcaster != nil {
+// 		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_member_removed"), map[string]interface{}{
+// 			"channelId": channelID,
+// 			"userId":    userID,
+// 			"removedBy": removedByID,
+// 		}, "")
+// 	}
+
+// 	// System message
+// 	var systemMessage string
+// 	if userID == removedByID {
+// 		systemMessage = fmt.Sprintf("%s left the conversation", getNameOrUnknown(removedUser))
+// 	} else {
+// 		systemMessage = fmt.Sprintf("%s removed %s from the conversation",
+// 			getNameOrUnknown(removerUser),
+// 			getNameOrUnknown(removedUser))
+
+// 		if s.notifSvc != nil {
+//     s.notifSvc.SendChatRemovedFromChannel(
+//         ctx,
+//         userID,
+//         channel.Name,
+//         getNameOrUnknown(removerUser),  // ✅ This passes name correctly
+//     )
+// }
+// 	}
+// 	s.sendSystemMessage(ctx, channelID, systemMessage)
+
+// 	return nil
+// }
+
 func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, userID, removedByID string) error {
 	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
 	if err != nil {
 		return ErrNotFound
 	}
 
-	// Direct messages: don't allow removal
-	if channel.Type == "direct" {
-		return fmt.Errorf("cannot remove members from direct messages")
+	// Get member count
+	memberCount, _ := s.chatRepo.GetMemberCount(ctx, channelID)
+
+	// 1:1 Direct Message - Cannot leave or remove
+	if channel.Type == "direct" && memberCount <= 2 {
+		return fmt.Errorf("cannot leave a direct message conversation")
 	}
 
-	// Check permissions: only creator can remove others, anyone can remove themselves
-	if userID != removedByID && channel.CreatedBy != removedByID {
-		return ErrForbidden
-	}
-
-	// Don't allow creator to remove themselves if others exist
-	if userID == channel.CreatedBy {
-		count, _ := s.chatRepo.GetMemberCount(ctx, channelID)
-		if count > 1 {
-			return fmt.Errorf("channel creator cannot leave while other members exist")
+	// Group DM or Channel - Can leave/be removed
+	// For channels: only creator can remove others
+	// For group DMs: anyone can leave themselves, but cannot remove others
+	if channel.Type != "direct" && channel.Type != "group" {
+		// Regular channel - only creator can remove others
+		if userID != removedByID && channel.CreatedBy != removedByID {
+			return ErrForbidden
+		}
+	} else if channel.Type == "group" {
+		// Group DM - can only leave yourself, cannot remove others
+		if userID != removedByID {
+			return fmt.Errorf("cannot remove others from group conversations")
 		}
 	}
 
@@ -572,20 +642,20 @@ func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, us
 			getNameOrUnknown(removerUser),
 			getNameOrUnknown(removedUser))
 
+		// Notify removed user
 		if s.notifSvc != nil {
-    s.notifSvc.SendChatRemovedFromChannel(
-        ctx,
-        userID,
-        channel.Name,
-        getNameOrUnknown(removerUser),  // ✅ This passes name correctly
-    )
-}
+			s.notifSvc.SendChatRemovedFromChannel(
+				ctx,
+				userID,
+				channel.Name,
+				getNameOrUnknown(removerUser),
+			)
+		}
 	}
 	s.sendSystemMessage(ctx, channelID, systemMessage)
 
 	return nil
 }
-
 
 func (s *chatService) GetChannelMembers(ctx context.Context, channelID string) ([]*repository.ChatChannelMember, error) {
 	return s.chatRepo.GetMembers(ctx, channelID)
