@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/notification"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
@@ -45,6 +46,9 @@ type ChatService interface {
 	EditMessage(ctx context.Context, messageID, userID, content string) (*repository.ChatMessage, error)
 	DeleteMessage(ctx context.Context, messageID, userID string) error
 
+	// Add to ChatService interface:
+	ArchiveChannel(ctx context.Context, channelID, userID string) error
+
 	// Reactions
 	AddReaction(ctx context.Context, messageID, userID, emoji string) error
 	RemoveReaction(ctx context.Context, messageID, userID, emoji string) error
@@ -76,6 +80,14 @@ func NewChatService(
 		broadcaster: broadcaster,
 	}
 }
+
+// Channel types (Slack-like)
+const (
+	ChannelTypePublic  = "public"  // Anyone can browse and join
+	ChannelTypePrivate = "private" // Must be invited
+	ChannelTypeDM      = "dm"      // 1:1 direct message (cannot leave)
+	ChannelTypeGroupDM = "group_dm" // 3+ people (can leave, cannot remove others)
+)
 
 // ============================================
 // Helper Methods
@@ -119,12 +131,11 @@ func (s *chatService) populateMemberCount(ctx context.Context, channel *reposito
 }
 
 // convertDMToGroup converts a direct message to a group chat when adding a third person
-func (s *chatService) convertDMToGroup(ctx context.Context, channel *repository.ChatChannel) error {
-	if channel.Type != "direct" {
+func (s *chatService) convertDMToGroupDM(ctx context.Context, channel *repository.ChatChannel) error {
+	if channel.Type != ChannelTypeDM && channel.Type != "direct" {
 		return nil
 	}
 
-	// Get current members to build new name
 	members, err := s.chatRepo.GetMembers(ctx, channel.ID)
 	if err != nil {
 		return err
@@ -138,20 +149,17 @@ func (s *chatService) convertDMToGroup(ctx context.Context, channel *repository.
 		}
 	}
 
-	newName := "Group Chat"
+	newName := "Group Conversation"
 	if len(names) > 0 {
-		newName = fmt.Sprintf("%s", names[0])
-		for i := 1; i < len(names) && i < 3; i++ {
-			newName += fmt.Sprintf(", %s", names[i])
-		}
-		if len(names) > 3 {
-			newName += fmt.Sprintf(" +%d", len(names)-3)
+		if len(names) <= 3 {
+			newName = strings.Join(names, ", ")
+		} else {
+			newName = fmt.Sprintf("%s, %s, %s +%d", names[0], names[1], names[2], len(names)-3)
 		}
 	}
 
-	// Update channel type to "group"
 	channel.Name = newName
-	channel.Type = "group"
+	channel.Type = ChannelTypeGroupDM
 	return s.chatRepo.UpdateChannel(ctx, channel)
 }
 
@@ -160,13 +168,22 @@ func (s *chatService) convertDMToGroup(ctx context.Context, channel *repository.
 // ============================================
 
 func (s *chatService) CreateChannel(ctx context.Context, name, channelType, targetID, workspaceID, creatorID string, isPrivate bool) (*repository.ChatChannel, error) {
+	// Normalize channel type
+	if channelType == "" {
+		if isPrivate {
+			channelType = ChannelTypePrivate
+		} else {
+			channelType = ChannelTypePublic
+		}
+	}
+
 	channel := &repository.ChatChannel{
 		Name:        name,
 		Type:        channelType,
 		TargetID:    targetID,
 		WorkspaceID: workspaceID,
 		CreatedBy:   creatorID,
-		IsPrivate:   isPrivate,
+		IsPrivate:   isPrivate || channelType == ChannelTypePrivate,
 	}
 
 	if err := s.chatRepo.CreateChannel(ctx, channel); err != nil {
@@ -181,7 +198,7 @@ func (s *chatService) CreateChannel(ctx context.Context, name, channelType, targ
 	s.chatRepo.AddMember(ctx, member)
 	channel.MemberCount = 1
 
-	// Broadcast channel creation
+	// Broadcast
 	if s.broadcaster != nil {
 		s.broadcaster.BroadcastToWorkspace(workspaceID, socket.MessageType("chat_channel_created"), map[string]interface{}{
 			"channel": channel,
@@ -190,7 +207,6 @@ func (s *chatService) CreateChannel(ctx context.Context, name, channelType, targ
 
 	return channel, nil
 }
-
 
 // ✅ NEW: CreateChannelWithMembers creates a channel and adds initial members
 func (s *chatService) CreateChannelWithMembers(ctx context.Context, name, channelType, targetID, workspaceID, creatorID string, isPrivate bool, memberIDs []string) (*repository.ChatChannel, error) {
@@ -338,14 +354,17 @@ func (s *chatService) DeleteChannel(ctx context.Context, id, userID string) erro
 		return ErrNotFound
 	}
 
-	// ❌ Cannot delete direct messages or group DMs
-	if channel.Type == "direct" || channel.Type == "group" {
-		return fmt.Errorf("cannot delete direct message conversations")
-	}
+	switch channel.Type {
+	case ChannelTypeDM, "direct", ChannelTypeGroupDM, "group":
+		// Cannot delete DMs or group DMs - they persist forever
+		return fmt.Errorf("conversations cannot be deleted")
 
-	// Only creator can delete
-	if channel.CreatedBy != userID {
-		return ErrForbidden
+	case ChannelTypePrivate, ChannelTypePublic:
+		// Only creator can delete channels
+		// TODO: Also allow workspace admins
+		if channel.CreatedBy != userID {
+			return ErrForbidden
+		}
 	}
 
 	// Broadcast before deletion
@@ -358,6 +377,46 @@ func (s *chatService) DeleteChannel(ctx context.Context, id, userID string) erro
 	return s.chatRepo.DeleteChannel(ctx, id)
 }
 
+
+
+// ArchiveChannel archives a channel (Slack-like soft delete)
+func (s *chatService) ArchiveChannel(ctx context.Context, channelID, userID string) error {
+	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
+	if err != nil {
+		return ErrNotFound
+	}
+
+	switch channel.Type {
+	case ChannelTypeDM, "direct", ChannelTypeGroupDM, "group":
+		// Cannot archive DMs
+		return fmt.Errorf("conversations cannot be archived")
+
+	case ChannelTypePrivate, ChannelTypePublic:
+		// Any member can archive (Slack default)
+		isMember, _ := s.chatRepo.IsMember(ctx, channelID, userID)
+		if !isMember {
+			return ErrForbidden
+		}
+	}
+
+	channel.IsArchived = true
+	if err := s.chatRepo.UpdateChannel(ctx, channel); err != nil {
+		return err
+	}
+
+	// System message
+	user, _ := s.userRepo.FindByID(ctx, userID)
+	s.sendSystemMessage(ctx, channelID, fmt.Sprintf("%s archived this channel", getNameOrUnknown(user)))
+
+	// Broadcast
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_channel_archived"), map[string]interface{}{
+			"channelId": channelID,
+		}, "")
+	}
+
+	return nil
+}
 
 // ============================================
 // Direct Messages
@@ -388,7 +447,7 @@ func (s *chatService) CreateDirectChannel(ctx context.Context, user1ID, user2ID,
 
 	channel := &repository.ChatChannel{
 		Name:        name,
-		Type:        "direct",
+		Type:        ChannelTypeDM,
 		TargetID:    targetID,
 		WorkspaceID: workspaceID,
 		CreatedBy:   user1ID,
@@ -433,25 +492,34 @@ func (s *chatService) GetDirectChannel(ctx context.Context, user1ID, user2ID str
 // ============================================
 
 func (s *chatService) JoinChannel(ctx context.Context, channelID, userID string) error {
-	// Check if channel exists
 	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
 	if err != nil {
 		return ErrNotFound
 	}
 
-	// Don't allow joining private channels without invitation
-	if channel.IsPrivate {
+	switch channel.Type {
+	case ChannelTypeDM, "direct", ChannelTypeGroupDM, "group":
+		// Cannot self-join DMs or group DMs - must be added
+		return fmt.Errorf("you must be added to this conversation")
+
+	case ChannelTypePrivate:
+		// Cannot self-join private channels - must be added
 		isMember, _ := s.chatRepo.IsMember(ctx, channelID, userID)
 		if !isMember {
-			return ErrForbidden
+			return fmt.Errorf("you must be invited to join this private channel")
 		}
+		return nil // Already a member
+
+	case ChannelTypePublic:
+		// Public channels - anyone can join
+		member := &repository.ChatChannelMember{
+			ChannelID: channelID,
+			UserID:    userID,
+		}
+		return s.chatRepo.AddMember(ctx, member)
 	}
 
-	member := &repository.ChatChannelMember{
-		ChannelID: channelID,
-		UserID:    userID,
-	}
-	return s.chatRepo.AddMember(ctx, member)
+	return fmt.Errorf("unknown channel type")
 }
 
 func (s *chatService) AddMemberToChannel(ctx context.Context, channelID, userID, addedByID string) error {
@@ -460,11 +528,34 @@ func (s *chatService) AddMemberToChannel(ctx context.Context, channelID, userID,
 		return ErrNotFound
 	}
 
+	// Check if adder is a member (required for all types except public)
 	isMember, _ := s.chatRepo.IsMember(ctx, channelID, addedByID)
-	if !isMember {
-		return ErrForbidden
+	
+	switch channel.Type {
+	case ChannelTypeDM, "direct":
+		// Adding to 1:1 DM converts it to group DM
+		if !isMember {
+			return ErrForbidden
+		}
+		
+	case ChannelTypeGroupDM, "group":
+		// Anyone in group DM can add members
+		if !isMember {
+			return ErrForbidden
+		}
+
+	case ChannelTypePrivate:
+		// Private channel - only members can add
+		if !isMember {
+			return ErrForbidden
+		}
+
+	case ChannelTypePublic:
+		// Public channel - anyone in workspace can add (or user joins themselves)
+		// No membership check needed
 	}
 
+	// Check if already a member
 	alreadyMember, _ := s.chatRepo.IsMember(ctx, channelID, userID)
 	if alreadyMember {
 		return nil
@@ -478,15 +569,16 @@ func (s *chatService) AddMemberToChannel(ctx context.Context, channelID, userID,
 		return err
 	}
 
+	// Convert 1:1 DM to Group DM when adding third person
 	memberCount, _ := s.chatRepo.GetMemberCount(ctx, channelID)
-	if channel.Type == "direct" && memberCount > 2 {
-		s.convertDMToGroup(ctx, channel)
+	if (channel.Type == ChannelTypeDM || channel.Type == "direct") && memberCount > 2 {
+		s.convertDMToGroupDM(ctx, channel)
 	}
 
 	addedUser, _ := s.userRepo.FindByID(ctx, userID)
 	adderUser, _ := s.userRepo.FindByID(ctx, addedByID)
 
-	// Broadcast member added
+	// Broadcast
 	if s.broadcaster != nil {
 		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_member_added"), map[string]interface{}{
 			"channelId":   channelID,
@@ -503,90 +595,40 @@ func (s *chatService) AddMemberToChannel(ctx context.Context, channelID, userID,
 		getNameOrUnknown(addedUser))
 	s.sendSystemMessage(ctx, channelID, systemMessage)
 
-	// ✅ NEW: Send notification to the added user
+	// Notification
 	if s.notifSvc != nil {
-    s.notifSvc.SendChatAddedToChannel(
-        ctx,
-        userID,
-        channelID,
-        channel.Name,
-        getNameOrUnknown(adderUser),  // ✅ This passes name correctly
-        channel.WorkspaceID,
-        channel.Type == "direct",
-    )
-}
+		s.notifSvc.SendChatAddedToChannel(
+			ctx, userID, channelID, channel.Name,
+			getNameOrUnknown(adderUser), channel.WorkspaceID,
+			channel.Type == ChannelTypeDM || channel.Type == "direct",
+		)
+	}
 
 	return nil
 }
 
 func (s *chatService) LeaveChannel(ctx context.Context, channelID, userID string) error {
-	return s.chatRepo.RemoveMember(ctx, channelID, userID)
+	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
+	if err != nil {
+		return ErrNotFound
+	}
+
+	switch channel.Type {
+	case ChannelTypeDM, "direct":
+		// Cannot leave 1:1 DM
+		return fmt.Errorf("cannot leave a direct message conversation")
+
+	case ChannelTypeGroupDM, "group":
+		// Can leave group DMs
+		break
+
+	case ChannelTypePublic, ChannelTypePrivate:
+		// Can leave channels
+		break
+	}
+
+	return s.RemoveMemberFromChannel(ctx, channelID, userID, userID)
 }
-
-
-
-// func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, userID, removedByID string) error {
-// 	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
-// 	if err != nil {
-// 		return ErrNotFound
-// 	}
-
-// 	// Direct messages: don't allow removal
-// 	if channel.Type == "direct" {
-// 		return fmt.Errorf("cannot remove members from direct messages")
-// 	}
-
-// 	// Check permissions: only creator can remove others, anyone can remove themselves
-// 	if userID != removedByID && channel.CreatedBy != removedByID {
-// 		return ErrForbidden
-// 	}
-
-// 	// Don't allow creator to remove themselves if others exist
-// 	if userID == channel.CreatedBy {
-// 		count, _ := s.chatRepo.GetMemberCount(ctx, channelID)
-// 		if count > 1 {
-// 			return fmt.Errorf("channel creator cannot leave while other members exist")
-// 		}
-// 	}
-
-// 	if err := s.chatRepo.RemoveMember(ctx, channelID, userID); err != nil {
-// 		return err
-// 	}
-
-// 	removedUser, _ := s.userRepo.FindByID(ctx, userID)
-// 	removerUser, _ := s.userRepo.FindByID(ctx, removedByID)
-
-// 	// Broadcast member removed
-// 	if s.broadcaster != nil {
-// 		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_member_removed"), map[string]interface{}{
-// 			"channelId": channelID,
-// 			"userId":    userID,
-// 			"removedBy": removedByID,
-// 		}, "")
-// 	}
-
-// 	// System message
-// 	var systemMessage string
-// 	if userID == removedByID {
-// 		systemMessage = fmt.Sprintf("%s left the conversation", getNameOrUnknown(removedUser))
-// 	} else {
-// 		systemMessage = fmt.Sprintf("%s removed %s from the conversation",
-// 			getNameOrUnknown(removerUser),
-// 			getNameOrUnknown(removedUser))
-
-// 		if s.notifSvc != nil {
-//     s.notifSvc.SendChatRemovedFromChannel(
-//         ctx,
-//         userID,
-//         channel.Name,
-//         getNameOrUnknown(removerUser),  // ✅ This passes name correctly
-//     )
-// }
-// 	}
-// 	s.sendSystemMessage(ctx, channelID, systemMessage)
-
-// 	return nil
-// }
 
 func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, userID, removedByID string) error {
 	channel, err := s.chatRepo.GetChannelByID(ctx, channelID)
@@ -594,27 +636,37 @@ func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, us
 		return ErrNotFound
 	}
 
-	// Get member count
 	memberCount, _ := s.chatRepo.GetMemberCount(ctx, channelID)
 
-	// 1:1 Direct Message - Cannot leave or remove
-	if channel.Type == "direct" && memberCount <= 2 {
+	switch channel.Type {
+	case ChannelTypeDM, "direct":
+		// 1:1 DM - CANNOT leave or remove
 		return fmt.Errorf("cannot leave a direct message conversation")
-	}
 
-	// Group DM or Channel - Can leave/be removed
-	// For channels: only creator can remove others
-	// For group DMs: anyone can leave themselves, but cannot remove others
-	if channel.Type != "direct" && channel.Type != "group" {
-		// Regular channel - only creator can remove others
-		if userID != removedByID && channel.CreatedBy != removedByID {
-			return ErrForbidden
-		}
-	} else if channel.Type == "group" {
+	case ChannelTypeGroupDM, "group":
 		// Group DM - can only leave yourself, cannot remove others
 		if userID != removedByID {
-			return fmt.Errorf("cannot remove others from group conversations")
+			return fmt.Errorf("you can only leave group conversations yourself, not remove others")
 		}
+
+	case ChannelTypePrivate:
+		// Private channel - any member can remove others
+		isMember, _ := s.chatRepo.IsMember(ctx, channelID, removedByID)
+		if !isMember {
+			return ErrForbidden
+		}
+
+	case ChannelTypePublic:
+		// Public channel - only creator/admin can remove others (self-leave always allowed)
+		if userID != removedByID && channel.CreatedBy != removedByID {
+			// TODO: Check workspace admin role here
+			return ErrForbidden
+		}
+	}
+
+	// Prevent last member from leaving (except group DMs which can become empty)
+	if memberCount <= 1 && channel.Type != ChannelTypeGroupDM && channel.Type != "group" {
+		return fmt.Errorf("cannot leave: you are the last member")
 	}
 
 	if err := s.chatRepo.RemoveMember(ctx, channelID, userID); err != nil {
@@ -624,7 +676,7 @@ func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, us
 	removedUser, _ := s.userRepo.FindByID(ctx, userID)
 	removerUser, _ := s.userRepo.FindByID(ctx, removedByID)
 
-	// Broadcast member removed
+	// Broadcast
 	if s.broadcaster != nil {
 		s.broadcaster.BroadcastToWorkspace(channel.WorkspaceID, socket.MessageType("chat_member_removed"), map[string]interface{}{
 			"channelId": channelID,
@@ -642,14 +694,8 @@ func (s *chatService) RemoveMemberFromChannel(ctx context.Context, channelID, us
 			getNameOrUnknown(removerUser),
 			getNameOrUnknown(removedUser))
 
-		// Notify removed user
 		if s.notifSvc != nil {
-			s.notifSvc.SendChatRemovedFromChannel(
-				ctx,
-				userID,
-				channel.Name,
-				getNameOrUnknown(removerUser),
-			)
+			s.notifSvc.SendChatRemovedFromChannel(ctx, userID, channel.Name, getNameOrUnknown(removerUser))
 		}
 	}
 	s.sendSystemMessage(ctx, channelID, systemMessage)
