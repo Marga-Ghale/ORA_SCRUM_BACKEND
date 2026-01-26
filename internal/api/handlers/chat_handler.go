@@ -24,8 +24,8 @@ func NewChatHandler(chatSvc service.ChatService) *ChatHandler {
 
 type CreateChannelRequest struct {
 	Name        string `json:"name" binding:"required"`
-	Type        string `json:"type" binding:"required,oneof=project space team direct"`
-	TargetID    string `json:"targetId" binding:"required"`
+	Type        string `json:"type"` // "public", "private" - removed binding requirement
+	TargetID    string `json:"targetId"`
 	WorkspaceID string `json:"workspaceId" binding:"required"`
 	IsPrivate   bool   `json:"isPrivate"`
 }
@@ -490,4 +490,23 @@ func (h *ChatHandler) UpdateChannel(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, channel)
+}
+
+
+
+// ArchiveChannel archives a channel
+func (h *ChatHandler) ArchiveChannel(c *gin.Context) {
+	channelID := c.Param("id")
+	userID := c.GetString("userID")
+
+	if err := h.chatSvc.ArchiveChannel(c.Request.Context(), channelID, userID); err != nil {
+		if err == service.ErrForbidden {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to archive this channel"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

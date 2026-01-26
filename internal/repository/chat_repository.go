@@ -24,9 +24,11 @@ type ChatChannel struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
 	LastMessage *time.Time `json:"lastMessage,omitempty"`
+	IsArchived  bool       `json:"isArchived"`
 	// Computed fields (not stored in DB)
 	OtherUser   *User `json:"otherUser,omitempty"`   // For direct messages
 	MemberCount int   `json:"memberCount,omitempty"` // Number of members
+
 }
 
 // ChatMessage represents a message in a channel
@@ -213,9 +215,9 @@ func (r *chatRepository) ListChannelsByUser(ctx context.Context, userID string) 
 func (r *chatRepository) UpdateChannel(ctx context.Context, channel *ChatChannel) error {
 	channel.UpdatedAt = time.Now()
 	_, err := r.pool.Exec(ctx, `
-		UPDATE chat_channels SET name = $2, type = $3, is_private = $4, updated_at = $5
+		UPDATE chat_channels SET name = $2, type = $3, is_private = $4, is_archived = $5, updated_at = $6
 		WHERE id = $1
-	`, channel.ID, channel.Name, channel.Type, channel.IsPrivate, channel.UpdatedAt)
+	`, channel.ID, channel.Name, channel.Type, channel.IsPrivate, channel.IsArchived, channel.UpdatedAt)
 	return err
 }
 
