@@ -32,6 +32,7 @@ type SprintRepository interface {
 	querySprints(ctx context.Context, query string, args ...interface{}) ([]*Sprint, error)
 	FindSprintsEndingSoon(ctx context.Context, within time.Duration) ([]*Sprint, error)
 	FindExpiredSprints(ctx context.Context) ([]*Sprint, error)
+	FindActiveSprints(ctx context.Context) ([]*Sprint, error)
 
 }
 
@@ -193,6 +194,17 @@ func (r *sprintRepository) Delete(ctx context.Context, id string) error {
 	query := `DELETE FROM sprints WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, id)
 	return err
+}
+
+
+func (r *sprintRepository) FindActiveSprints(ctx context.Context) ([]*Sprint, error) {
+	query := `
+		SELECT * FROM sprints 
+		WHERE status = 'active' 
+		   OR (start_date <= NOW() AND end_date >= NOW() AND status != 'completed')
+		ORDER BY end_date ASC
+	`
+	return r.querySprints(ctx, query)
 }
 
 // FindSprintsEndingSoon returns sprints ending within the next 'within' duration

@@ -183,14 +183,15 @@ func main() {
 	// Initialize Cron Scheduler
 	// ============================================
 	cronScheduler := cron.NewSchedulerWithRepos(
-		services,
-		notificationSvc,
-		repos.TaskRepo,
-		repos.SprintRepo,
-		repos.ProjectRepo,
-		repos.UserRepo,
-		repos.NotificationRepo,
-	)
+    services,
+    notificationSvc,
+    repos.TaskRepo,
+    repos.SprintRepo,
+    repos.ProjectRepo,
+    repos.UserRepo,
+    repos.NotificationRepo,
+    services.SprintAnalytics, // ✅ This is a SERVICE
+)
 	cronScheduler.Start()
 	defer cronScheduler.Stop()
 
@@ -403,6 +404,52 @@ func main() {
 				tasks.POST("/bulk/move-sprint", h.Task.BulkMoveToSprint)
 			}
 
+
+						// Goal routes
+		goals := protected.Group("/goals")
+			{
+				goals.POST("", h.Goal.Create)
+				goals.GET("/:id", h.Goal.Get)
+				goals.PUT("/:id", h.Goal.Update)
+				goals.PATCH("/:id/progress", h.Goal.UpdateProgress)
+				goals.PATCH("/:id/status", h.Goal.UpdateStatus)
+				goals.DELETE("/:id", h.Goal.Delete)
+				goals.POST("/:id/key-results", h.Goal.AddKeyResult)
+				goals.PUT("/key-results/:krId", h.Goal.UpdateKeyResult)
+				goals.PATCH("/key-results/:krId/progress", h.Goal.UpdateKeyResultProgress)
+				goals.DELETE("/key-results/:krId", h.Goal.DeleteKeyResult)
+				goals.POST("/:id/tasks", h.Goal.LinkTask)
+				goals.DELETE("/:id/tasks/:taskId", h.Goal.UnlinkTask)
+				goals.GET("/:id/progress", h.Goal.GetGoalProgress)
+			}
+
+			// Sprint routes (new group or add to existing)
+			sprints := protected.Group("/sprints")
+			{
+				sprints.GET("/:sprintId/goals", h.Goal.ListBySprint)
+				sprints.GET("/:sprintId/goals/summary", h.Goal.GetSprintGoalsSummary)
+				sprints.GET("/:sprintId/report", h.SprintAnalytics.GetSprintReport)
+				sprints.POST("/:sprintId/report/generate", h.SprintAnalytics.GenerateSprintReport)
+				sprints.GET("/:sprintId/cycle-time", h.SprintAnalytics.GetSprintCycleTime)
+				sprints.GET("/:sprintId/analytics", h.SprintAnalytics.GetSprintAnalyticsDashboard)
+			}
+
+			// Add to workspaces group:
+			workspaces.GET("/:id/goals", h.Goal.ListByWorkspace)
+
+			// Add to projects group:
+			projects.GET("/:id/goals", h.Goal.ListByProject)
+			projects.GET("/:id/velocity", h.SprintAnalytics.GetVelocityHistory)
+			projects.GET("/:id/velocity/trend", h.SprintAnalytics.GetVelocityTrend)
+			projects.GET("/:id/cycle-time", h.SprintAnalytics.GetProjectCycleTime)
+			projects.GET("/:id/gantt", h.SprintAnalytics.GetGanttData)
+			projects.GET("/:id/analytics", h.SprintAnalytics.GetProjectAnalyticsDashboard)
+
+			// Add to tasks group:
+			tasks.GET("/:id/goals", h.Goal.GetGoalsByTask)
+			tasks.GET("/:id/status-history", h.SprintAnalytics.GetTaskStatusHistory)
+
+
 			// Label routes
 			labels := protected.Group("/labels")
 			{
@@ -441,7 +488,7 @@ func main() {
 				chat.POST("/channels", chatHandler.CreateChannel)
 				chat.GET("/channels/find", chatHandler.GetChannelByTarget)
 				chat.GET("/channels/:id", chatHandler.GetChannel)
-				    chat.PUT("/channels/:id", chatHandler.UpdateChannel)           // ✅ ADD THIS
+				    chat.PUT("/channels/:id", chatHandler.UpdateChannel)          
 
 				chat.DELETE("/channels/:id", chatHandler.DeleteChannel)
 
@@ -449,7 +496,7 @@ func main() {
 				chat.POST("/channels/:id/leave", chatHandler.LeaveChannel)
 				chat.GET("/channels/:id/members", chatHandler.GetChannelMembers)
 				chat.POST("/channels/:id/members/add", chatHandler.AddMember)
-				    chat.POST("/channels/:id/members/remove", chatHandler.RemoveMember)  // ✅ ADD THIS
+				    chat.POST("/channels/:id/members/remove", chatHandler.RemoveMember)  
 
 				chat.POST("/channels/:id/read", chatHandler.MarkAsRead)
 				chat.GET("/channels/:id/unread", chatHandler.GetUnreadCount)
@@ -491,7 +538,9 @@ func main() {
 				members.GET("/my/memberships", h.Member.GetUserMemberships)
 				members.GET("/my/access", h.Member.GetUserAllAccess)
 
-				members.GET("/my/visible/spaces", h.Member.GetVisibleSpaces)          
+				members.GET("/my/visible/spaces", h.Member.GetVisibleSpaces)   
+				// In routes
+				members.GET("/:entityType/:entityId/eligible", h.Member.GetEligibleUsers)       
     			members.GET("/:entityType/:entityId/access-info", h.Member.GetAccessInfo)
     
 

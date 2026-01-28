@@ -47,7 +47,9 @@ type Services struct {
 	Permission   PermissionService
 	Member       MemberService
 	Broadcaster  *socket.Broadcaster
-	notifiServicev1  *notification.Service
+	NotifService *notification.Service
+	Goal         GoalService
+	SprintAnalytics SprintAnalyticsService
 }
 
 // ServiceDeps contains all dependencies needed to create services
@@ -58,6 +60,8 @@ type ServiceDeps struct {
 	EmailSvc    *email.Service
 	Broadcaster *socket.Broadcaster
 }
+
+
 
 func NewServices(deps *ServiceDeps) *Services {
 	// ✅ Create MemberService first (needed by other services)
@@ -78,57 +82,66 @@ func NewServices(deps *ServiceDeps) *Services {
 		deps.Repos.ProjectRepo,
 		deps.Repos.TaskRepo,
 		deps.Repos.TeamRepo,
-		deps.Repos.FolderRepo, // ✅ Added missing folderRepo
-		memberService, // ✅ ADD THIS
+		deps.Repos.FolderRepo,
+		memberService,
+	)
+
+	// ✅ Create GoalService BEFORE TaskService (TaskService depends on it)
+	goalService := NewGoalService(
+		deps.Repos.GoalRepo,
+		deps.Repos.TaskRepo,
+		deps.Repos.SprintRepo,
+		memberService,
+		deps.NotifSvc,
+		deps.Broadcaster,
 	)
 
 	return &Services{
 		Auth:      NewAuthService(deps.Config, deps.Repos.UserRepo),
 		User:      NewUserService(deps.Repos.UserRepo),
-		Workspace: NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc,deps.Broadcaster,
-),
+		Workspace: NewWorkspaceService(deps.Repos.WorkspaceRepo, deps.Repos.UserRepo, deps.NotifSvc, deps.Broadcaster),
 		Space: NewSpaceService(
 			deps.Repos.SpaceRepo,
 			deps.Repos.WorkspaceRepo,
 			memberService,
-								deps.Broadcaster,
-
+			deps.Broadcaster,
 		),
 		Folder: NewFolderService(
 			deps.Repos.FolderRepo,
 			deps.Repos.SpaceRepo,
 			memberService,
-								deps.Broadcaster,
-
+			deps.Broadcaster,
 		),
 		Project: NewProjectService(
 			deps.Repos.ProjectRepo,
 			deps.Repos.SpaceRepo,
 			deps.Repos.FolderRepo,
 			memberService,
-								deps.Broadcaster,
-
+			deps.Broadcaster,
 		),
 		// ✅ CORRECTED TaskService with ALL required repos and services
 		Task: NewTaskService(
-					deps.Repos.TaskRepo,
-					deps.Repos.TaskCommentRepo,
-					deps.Repos.TaskAttachmentRepo,
-					deps.Repos.TimeEntryRepo,
-					deps.Repos.TaskDependencyRepo,
-					deps.Repos.TaskChecklistRepo,
-					deps.Repos.TaskActivityRepo,
-					deps.Repos.ProjectRepo,
-					deps.Repos.SprintRepo,
-					deps.Repos.UserRepo,
-					memberService,
-					permissionService,
-					deps.NotifSvc,   
-					deps.Broadcaster,
-				),
-		Label:        NewLabelService(deps.Repos.LabelRepo),
-		Notification: NewNotificationService(deps.Repos.NotificationRepo),
-		Team:         NewTeamService(deps.Repos.TeamRepo, deps.Repos.UserRepo, deps.Repos.WorkspaceRepo, deps.NotifSvc, deps.EmailSvc, deps.Broadcaster),
+			deps.Repos.TaskRepo,
+			deps.Repos.TaskCommentRepo,
+			deps.Repos.TaskAttachmentRepo,
+			deps.Repos.TimeEntryRepo,
+			deps.Repos.TaskDependencyRepo,
+			deps.Repos.TaskChecklistRepo,
+			deps.Repos.TaskActivityRepo,
+			deps.Repos.ProjectRepo,
+			deps.Repos.SprintRepo,
+			deps.Repos.UserRepo,
+			memberService,
+			permissionService,
+			deps.NotifSvc,
+			deps.Broadcaster,
+			goalService, // ✅ FIXED: Pass goalService instead of deps.Repos.GoalRepo
+		),
+		Goal:            goalService, // ✅ Use the same goalService instance
+		SprintAnalytics: NewSprintAnalyticsService(deps.Repos.SprintAnalyticsRepo, deps.Repos.SprintRepo, deps.Repos.TaskRepo, deps.Repos.ProjectRepo, deps.Repos.GoalRepo, memberService),
+		Label:           NewLabelService(deps.Repos.LabelRepo),
+		Notification:    NewNotificationService(deps.Repos.NotificationRepo),
+		Team:            NewTeamService(deps.Repos.TeamRepo, deps.Repos.UserRepo, deps.Repos.WorkspaceRepo, deps.NotifSvc, deps.EmailSvc, deps.Broadcaster),
 		Invitation: NewInvitationService(
 			deps.Repos.InvitationRepo,
 			deps.Repos.WorkspaceRepo,

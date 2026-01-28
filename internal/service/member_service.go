@@ -47,8 +47,13 @@ type MemberService interface {
 	GetAccessibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error)
 	GetAccessibleFolders(ctx context.Context, userID string) ([]*repository.Folder, error)
 	GetAccessibleProjects(ctx context.Context, userID string) ([]*repository.Project, error)
-	
+
+	// GetEligibleUsersForEntity returns users who can be added as members to an entity
+	// For projects/folders: returns space members who aren't already direct members
+	GetEligibleUsersForEntity(ctx context.Context, entityType, entityID string) ([]*UnifiedMember, error) 
+
 	// ✅ NEW: Visible entities (METADATA VISIBILITY - what user can see/discover)
+
 	GetVisibleSpaces(ctx context.Context, userID string) ([]*repository.Space, error)
 
 	// Notification recipients (direct members only)
@@ -1437,6 +1442,145 @@ func (s *memberService) GetAccessibleFolders(ctx context.Context, userID string)
 	}
 
 	return result, nil
+}
+
+
+
+// GetEligibleUsersForEntity returns users who can be added as members to an entity
+// For projects/folders: returns space members who aren't already direct members
+func (s *memberService) GetEligibleUsersForEntity(ctx context.Context, entityType, entityID string) ([]*UnifiedMember, error) {
+	switch entityType {
+	case EntityTypeWorkspace:
+		// For workspace, return all users (or use user search)
+		return nil, nil // Use user search instead
+		
+	case EntityTypeSpace:
+		// For space, return workspace members who aren't already space members
+		space, err := s.spaceRepo.FindByID(ctx, entityID)
+		if err != nil || space == nil {
+			return nil, err
+		}
+		
+		// Get workspace members
+		workspaceMembers, err := s.workspaceRepo.FindMembers(ctx, space.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
+		
+		// Get existing space members
+		existingMembers, _ := s.spaceRepo.FindMembers(ctx, entityID)
+		existingMap := make(map[string]bool)
+		for _, m := range existingMembers {
+			existingMap[m.UserID] = true
+		}
+		
+		// Filter out existing members
+		result := make([]*UnifiedMember, 0)
+		for _, wm := range workspaceMembers {
+			if !existingMap[wm.UserID] {
+				result = append(result, &UnifiedMember{
+					ID:         wm.ID,
+					EntityType: EntityTypeWorkspace,
+					EntityID:   space.WorkspaceID,
+					UserID:     wm.UserID,
+					Role:       wm.Role,
+					JoinedAt:   wm.JoinedAt,
+					User:       wm.User,
+				})
+			}
+		}
+		return result, nil
+		
+	case EntityTypeFolder:
+		// For folder, return space members who aren't already folder members
+		folder, err := s.folderRepo.FindByID(ctx, entityID)
+		if err != nil || folder == nil {
+			return nil, err
+		}
+		
+		spaceMembers, err := s.spaceRepo.FindMembers(ctx, folder.SpaceID)
+		if err != nil {
+			return nil, err
+		}
+		
+		existingMembers, _ := s.folderRepo.FindMembers(ctx, entityID)
+		existingMap := make(map[string]bool)
+		for _, m := range existingMembers {
+			existingMap[m.UserID] = true
+		}
+		
+		result := make([]*UnifiedMember, 0)
+		for _, sm := range spaceMembers {
+			if !existingMap[sm.UserID] {
+				result = append(result, &UnifiedMember{
+					ID:         sm.ID,
+					EntityType: EntityTypeSpace,
+					EntityID:   folder.SpaceID,
+					UserID:     sm.UserID,
+					Role:       sm.Role,
+					JoinedAt:   sm.JoinedAt,
+					User:       sm.User,
+				})
+			}
+		}
+		return result, nil
+		
+	case EntityTypeProject:
+		// For project, return space members (+ folder members if in folder) who aren't already project members
+		project, err := s.projectRepo.FindByID(ctx, entityID)
+		if err != nil || project == nil {
+			return nil, err
+		}
+		
+		eligibleMap := make(map[string]*UnifiedMember)
+		
+		// Add space members
+		spaceMembers, _ := s.spaceRepo.FindMembers(ctx, project.SpaceID)
+		for _, sm := range spaceMembers {
+			eligibleMap[sm.UserID] = &UnifiedMember{
+				ID:         sm.ID,
+				EntityType: EntityTypeSpace,
+				EntityID:   project.SpaceID,
+				UserID:     sm.UserID,
+				Role:       sm.Role,
+				JoinedAt:   sm.JoinedAt,
+				User:       sm.User,
+			}
+		}
+		
+		// Add folder members if project is in folder
+		if project.FolderID != nil {
+			folderMembers, _ := s.folderRepo.FindMembers(ctx, *project.FolderID)
+			for _, fm := range folderMembers {
+				if _, exists := eligibleMap[fm.UserID]; !exists {
+					eligibleMap[fm.UserID] = &UnifiedMember{
+						ID:         fm.ID,
+						EntityType: EntityTypeFolder,
+						EntityID:   *project.FolderID,
+						UserID:     fm.UserID,
+						Role:       fm.Role,
+						JoinedAt:   fm.JoinedAt,
+						User:       fm.User,
+					}
+				}
+			}
+		}
+		
+		// Remove existing project members
+		existingMembers, _ := s.projectRepo.FindMembers(ctx, entityID)
+		for _, m := range existingMembers {
+			delete(eligibleMap, m.UserID)
+		}
+		
+		result := make([]*UnifiedMember, 0, len(eligibleMap))
+		for _, m := range eligibleMap {
+			result = append(result, m)
+		}
+		return result, nil
+		
+	default:
+		return nil, ErrInvalidEntityType
+	}
 }
 
 // ✅ UPDATED: GetAccessibleProjects returns projects user can ACCESS (direct + inherited from space/folder)

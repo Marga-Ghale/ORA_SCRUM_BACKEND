@@ -27,8 +27,13 @@ type TaskResponse struct {
 	CreatedBy      *string    `json:"createdBy,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
-	SubtaskCount   int             `json:"subtaskCount"`           // ADD THIS
-	Subtasks       []TaskResponse `json:"subtasks,omitempty"`     // ADD THIS
+	SubtaskCount   int        `json:"subtaskCount"`
+	Subtasks       []TaskResponse `json:"subtasks,omitempty"`
+	
+	// ✅ Cycle Time Tracking Fields
+	StartedAt        *time.Time `json:"startedAt,omitempty"`
+	CycleTimeSeconds *int       `json:"cycleTimeSeconds,omitempty"`  // Changed from *int64 to *int
+	LeadTimeSeconds  *int       `json:"leadTimeSeconds,omitempty"`   // Changed from *int64 to *int
 }
 
 // CreateTaskRequest for creating tasks
@@ -239,4 +244,166 @@ type SprintBurndownResponse struct {
 	IdealBurndown    []BurndownPoint `json:"idealBurndown"`
 	ActualBurndown   []BurndownPoint `json:"actualBurndown"`
 	CompletionRate   float64         `json:"completionRate"`
+}
+
+
+
+// ============================================
+// GOAL MODELS (if not using repository.Goal directly)
+// ============================================
+
+type GoalResponse struct {
+	ID           string     `json:"id"`
+	WorkspaceID  string     `json:"workspaceId"`
+	ProjectID    *string    `json:"projectId,omitempty"`
+	SprintID     *string    `json:"sprintId,omitempty"`
+	Title        string     `json:"title"`
+	Description  *string    `json:"description,omitempty"`
+	GoalType     string     `json:"goalType"`
+	Status       string     `json:"status"`
+	TargetValue  *float64   `json:"targetValue,omitempty"`
+	CurrentValue float64    `json:"currentValue"`
+	Progress     float64    `json:"progress"`
+	Unit         *string    `json:"unit,omitempty"`
+	StartDate    *time.Time `json:"startDate,omitempty"`
+	TargetDate   *time.Time `json:"targetDate,omitempty"`
+	CompletedAt  *time.Time `json:"completedAt,omitempty"`
+	OwnerID      *string    `json:"ownerId,omitempty"`
+	CreatedBy    *string    `json:"createdBy,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
+	KeyResults   []KeyResultResponse `json:"keyResults,omitempty"`
+	LinkedTasks  []string   `json:"linkedTasks,omitempty"`
+}
+
+type KeyResultResponse struct {
+	ID           string    `json:"id"`
+	GoalID       string    `json:"goalId"`
+	Title        string    `json:"title"`
+	Description  *string   `json:"description,omitempty"`
+	TargetValue  float64   `json:"targetValue"`
+	CurrentValue float64   `json:"currentValue"`
+	Progress     float64   `json:"progress"`
+	Unit         *string   `json:"unit,omitempty"`
+	Status       string    `json:"status"`
+	Weight       float64   `json:"weight"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// ============================================
+// VELOCITY/ANALYTICS MODELS
+// ============================================
+
+type VelocityHistoryResponse struct {
+	SprintID        string    `json:"sprintId"`
+	SprintName      string    `json:"sprintName"`
+	SprintNumber    int       `json:"sprintNumber"`
+	CommittedPoints int       `json:"committedPoints"`
+	CompletedPoints int       `json:"completedPoints"`
+	StartDate       time.Time `json:"startDate"`
+	EndDate         time.Time `json:"endDate"`
+}
+
+type VelocityTrendResponse struct {
+	Sprints         []VelocityHistoryResponse `json:"sprints"`
+	AverageVelocity float64                   `json:"averageVelocity"`
+	TrendDirection  string                    `json:"trendDirection"`
+	TrendPercentage float64                   `json:"trendPercentage"`
+}
+
+type CycleTimeResponse struct {
+	TaskID           string     `json:"taskId"`
+	TaskTitle        string     `json:"taskTitle"`
+	CycleTimeHours   *float64   `json:"cycleTimeHours,omitempty"`
+	LeadTimeHours    *float64   `json:"leadTimeHours,omitempty"`
+	StartedAt        *time.Time `json:"startedAt,omitempty"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
+}
+
+// ============================================
+// GANTT CHART MODELS
+// ============================================
+
+type GanttTaskResponse struct {
+	ID            string     `json:"id"`
+	Title         string     `json:"title"`
+	StartDate     *time.Time `json:"startDate,omitempty"`
+	DueDate       *time.Time `json:"dueDate,omitempty"`
+	EndDate       *time.Time `json:"endDate,omitempty"`
+	Status        string     `json:"status"`
+	Priority      string     `json:"priority"`
+	Progress      float64    `json:"progress"`
+	AssigneeIDs   []string   `json:"assigneeIds"`
+	ParentTaskID  *string    `json:"parentTaskId,omitempty"`
+	Dependencies  []string   `json:"dependencies"`
+	SprintID      *string    `json:"sprintId,omitempty"`
+	StoryPoints   *int       `json:"storyPoints,omitempty"`
+	Type          *string    `json:"type,omitempty"`
+	Color         string     `json:"color"`
+}
+
+type GanttDataResponse struct {
+	Tasks      []GanttTaskResponse `json:"tasks"`
+	StartDate  time.Time           `json:"startDate"`
+	EndDate    time.Time           `json:"endDate"`
+	TotalTasks int                 `json:"totalTasks"`
+}
+
+// ============================================
+// SPRINT REPORT MODELS
+// ============================================
+
+type SprintReportResponse struct {
+	SprintID            string   `json:"sprintId"`
+	CommittedTasks      int      `json:"committedTasks"`
+	CommittedPoints     int      `json:"committedPoints"`
+	CompletedTasks      int      `json:"completedTasks"`
+	CompletedPoints     int      `json:"completedPoints"`
+	IncompleteTasks     int      `json:"incompleteTasks"`
+	IncompletePoints    int      `json:"incompletePoints"`
+	CarryoverTasks      int      `json:"carryoverTasks"`
+	CarryoverPoints     int      `json:"carryoverPoints"`
+	TotalEstimatedHours float64  `json:"totalEstimatedHours"`
+	TotalLoggedHours    float64  `json:"totalLoggedHours"`
+	AvgCycleTimeHours   *float64 `json:"avgCycleTimeHours,omitempty"`
+	AvgLeadTimeHours    *float64 `json:"avgLeadTimeHours,omitempty"`
+	Velocity            int      `json:"velocity"`
+	GoalsCompleted      int      `json:"goalsCompleted"`
+	GoalsTotal          int      `json:"goalsTotal"`
+}
+
+// ============================================
+// DASHBOARD MODELS
+// ============================================
+
+type SprintAnalyticsDashboardResponse struct {
+	SprintID             string              `json:"sprintId"`
+	Report               SprintReportResponse `json:"report"`
+	CompletionPercentage float64             `json:"completionPercentage"`
+	DaysRemaining        int                 `json:"daysRemaining"`
+	DaysElapsed          int                 `json:"daysElapsed"`
+	CurrentVelocity      int                 `json:"currentVelocity"`
+	ProjectedVelocity    int                 `json:"projectedVelocity"`
+	AvgCycleTimeHours    *float64            `json:"avgCycleTimeHours,omitempty"`
+	BurndownAvailable    bool                `json:"burndownAvailable"`
+	GoalsCompleted       int                 `json:"goalsCompleted"`
+	GoalsTotal           int                 `json:"goalsTotal"`
+	TasksByStatus        map[string]int      `json:"tasksByStatus"`
+	TasksByPriority      map[string]int      `json:"tasksByPriority"`
+}
+
+type ProjectAnalyticsDashboardResponse struct {
+	ProjectID                 string                `json:"projectId"`
+	VelocityTrend             VelocityTrendResponse `json:"velocityTrend"`
+	AvgCycleTimeHours         float64               `json:"avgCycleTimeHours"`
+	AvgLeadTimeHours          float64               `json:"avgLeadTimeHours"`
+	ActiveSprintID            *string               `json:"activeSprintId,omitempty"`
+	ActiveSprintName          *string               `json:"activeSprintName,omitempty"`
+	TotalTasks                int                   `json:"totalTasks"`
+	CompletedTasks            int                   `json:"completedTasks"`
+	OpenTasks                 int                   `json:"openTasks"`
+	OverdueTasks              int                   `json:"overdueTasks"`
+	TasksCompletedLast30Days  int                   `json:"tasksCompletedLast30Days"`
+	PointsCompletedLast30Days int                   `json:"pointsCompletedLast30Days"`
 }
