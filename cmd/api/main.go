@@ -200,6 +200,10 @@ func main() {
 	// ============================================
 	r := gin.Default()
 
+	// Add comprehensive logging
+	r.Use(middleware.RequestLogger())
+	r.Use(middleware.ErrorLogger())
+
 	// Configure CORS
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5173", "https://scrum.oratechnologies.io"},
@@ -332,6 +336,10 @@ func main() {
 
 				// Activities
 				projects.GET("/:id/activities", activityHandler.GetProjectActivities)
+
+				projects.GET("/:id/sprints", h.Sprint.ListByProject)      // NEW
+				projects.POST("/:id/sprints", h.Sprint.Create)            // NEW
+				projects.GET("/:id/sprints/active", h.Sprint.GetActive)   //
 			}
 
 			// Task routes
@@ -424,16 +432,24 @@ func main() {
 			}
 
 			// Sprint routes (new group or add to existing)
+			// Sprint routes
 			sprints := protected.Group("/sprints")
 			{
-				sprints.GET("/:sprintId/goals", h.Goal.ListBySprint)
-				sprints.GET("/:sprintId/goals/summary", h.Goal.GetSprintGoalsSummary)
-				sprints.GET("/:sprintId/report", h.SprintAnalytics.GetSprintReport)
-				sprints.POST("/:sprintId/report/generate", h.SprintAnalytics.GenerateSprintReport)
-				sprints.GET("/:sprintId/cycle-time", h.SprintAnalytics.GetSprintCycleTime)
-				sprints.GET("/:sprintId/analytics", h.SprintAnalytics.GetSprintAnalyticsDashboard)
+				// Basic CRUD (using :id)
+				sprints.GET("/:id", h.Sprint.Get)
+				sprints.PUT("/:id", h.Sprint.Update)
+				sprints.DELETE("/:id", h.Sprint.Delete)
+				sprints.POST("/:id/start", h.Sprint.Start)
+				sprints.POST("/:id/complete", h.Sprint.Complete)
+				
+				// Analytics routes (change :sprintId to :id)
+				sprints.GET("/:id/goals", h.Goal.ListBySprint)
+				sprints.GET("/:id/goals/summary", h.Goal.GetSprintGoalsSummary)
+				sprints.GET("/:id/report", h.SprintAnalytics.GetSprintReport)
+				sprints.POST("/:id/report/generate", h.SprintAnalytics.GenerateSprintReport)
+				sprints.GET("/:id/cycle-time", h.SprintAnalytics.GetSprintCycleTime)
+				sprints.GET("/:id/analytics", h.SprintAnalytics.GetSprintAnalyticsDashboard)
 			}
-
 			// Add to workspaces group:
 			workspaces.GET("/:id/goals", h.Goal.ListByWorkspace)
 

@@ -50,6 +50,7 @@ type Services struct {
 	NotifService *notification.Service
 	Goal         GoalService
 	SprintAnalytics SprintAnalyticsService
+	Sprint 	 	SprintService
 }
 
 // ServiceDeps contains all dependencies needed to create services
@@ -139,6 +140,7 @@ func NewServices(deps *ServiceDeps) *Services {
 		),
 		Goal:            goalService, // ✅ Use the same goalService instance
 		SprintAnalytics: NewSprintAnalyticsService(deps.Repos.SprintAnalyticsRepo, deps.Repos.SprintRepo, deps.Repos.TaskRepo, deps.Repos.ProjectRepo, deps.Repos.GoalRepo, memberService),
+		Sprint: NewSprintService(deps.Repos.SprintRepo,deps.Repos.ProjectRepo,memberService),
 		Label:           NewLabelService(deps.Repos.LabelRepo),
 		Notification:    NewNotificationService(deps.Repos.NotificationRepo),
 		Team:            NewTeamService(deps.Repos.TeamRepo, deps.Repos.UserRepo, deps.Repos.WorkspaceRepo, deps.NotifSvc, deps.EmailSvc, deps.Broadcaster),

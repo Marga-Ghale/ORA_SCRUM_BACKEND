@@ -108,7 +108,7 @@ func (h *GoalHandler) ListBySprint(c *gin.Context) {
 		return
 	}
 
-	sprintID := c.Param("sprintId")
+	sprintID := c.Param("id")  // ✅ FIXED - was "sprintId"
 	goals, err := h.goalService.ListBySprint(c.Request.Context(), sprintID, userID)
 	if err != nil {
 		handleGoalError(c, err)
@@ -116,6 +116,18 @@ func (h *GoalHandler) ListBySprint(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, goals)
+}
+
+func (h *GoalHandler) GetSprintGoalsSummary(c *gin.Context) {
+	sprintID := c.Param("id")  // ✅ FIXED - was "sprintId"
+
+	summary, err := h.goalService.GetSprintGoalsSummary(c.Request.Context(), sprintID)
+	if err != nil {
+		handleGoalError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
 }
 
 func (h *GoalHandler) Update(c *gin.Context) {
@@ -373,17 +385,6 @@ func (h *GoalHandler) GetGoalProgress(c *gin.Context) {
 	})
 }
 
-func (h *GoalHandler) GetSprintGoalsSummary(c *gin.Context) {
-	sprintID := c.Param("sprintId")
-
-	summary, err := h.goalService.GetSprintGoalsSummary(c.Request.Context(), sprintID)
-	if err != nil {
-		handleGoalError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, summary)
-}
 
 // ============================================
 // ERROR HANDLER

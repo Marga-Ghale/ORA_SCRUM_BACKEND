@@ -21,14 +21,14 @@ func NewSprintAnalyticsHandler(analyticsService service.SprintAnalyticsService) 
 // SPRINT REPORTS
 // ============================================
 
-// GET /api/sprints/:sprintId/report
+// GET /api/sprints/:id/report
 func (h *SprintAnalyticsHandler) GetSprintReport(c *gin.Context) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
 	}
 
-	sprintID := c.Param("sprintId")
+	sprintID := c.Param("id")
 	report, err := h.analyticsService.GetSprintReport(c.Request.Context(), sprintID, userID)
 	if err != nil {
 		handleAnalyticsError(c, err)
@@ -38,14 +38,14 @@ func (h *SprintAnalyticsHandler) GetSprintReport(c *gin.Context) {
 	c.JSON(http.StatusOK, report)
 }
 
-// POST /api/sprints/:sprintId/report/generate
+// POST /api/sprints/:id/report/generate
 func (h *SprintAnalyticsHandler) GenerateSprintReport(c *gin.Context) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
 	}
 
-	sprintID := c.Param("sprintId")
+	sprintID := c.Param("id")
 	report, err := h.analyticsService.GenerateSprintReport(c.Request.Context(), sprintID, userID)
 	if err != nil {
 		handleAnalyticsError(c, err)
@@ -106,14 +106,14 @@ func (h *SprintAnalyticsHandler) GetVelocityTrend(c *gin.Context) {
 // CYCLE TIME
 // ============================================
 
-// GET /api/sprints/:sprintId/cycle-time
+// GET /api/sprints/:id/cycle-time
 func (h *SprintAnalyticsHandler) GetSprintCycleTime(c *gin.Context) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
 	}
 
-	sprintID := c.Param("sprintId")
+	sprintID := c.Param("id")
 	stats, err := h.analyticsService.GetCycleTimeStats(c.Request.Context(), sprintID, userID)
 	if err != nil {
 		handleAnalyticsError(c, err)
@@ -178,7 +178,7 @@ func (h *SprintAnalyticsHandler) GetGanttData(c *gin.Context) {
 	}
 
 	projectID := c.Param("id")
-	sprintID := c.Query("sprintId")
+	sprintID := c.Query("id")
 
 	var sprintIDPtr *string
 	if sprintID != "" {
@@ -198,14 +198,14 @@ func (h *SprintAnalyticsHandler) GetGanttData(c *gin.Context) {
 // DASHBOARDS
 // ============================================
 
-// GET /api/sprints/:sprintId/analytics
+// GET /api/sprints/:id/analytics
 func (h *SprintAnalyticsHandler) GetSprintAnalyticsDashboard(c *gin.Context) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
 	}
 
-	sprintID := c.Param("sprintId")
+	sprintID := c.Param("id")
 	dashboard, err := h.analyticsService.GetSprintAnalyticsDashboard(c.Request.Context(), sprintID, userID)
 	if err != nil {
 		handleAnalyticsError(c, err)

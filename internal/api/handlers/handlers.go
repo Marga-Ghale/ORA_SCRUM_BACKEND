@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"net/http"
+
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/models"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 // Handlers contains all HTTP handlers
@@ -20,6 +23,7 @@ type Handlers struct {
 	Member	   	 *MemberHandler
 	Goal  	 *GoalHandler
 	SprintAnalytics *SprintAnalyticsHandler
+	Sprint 	 *SprintHandler
 }
 
 // NewHandlers creates all handlers
@@ -37,10 +41,9 @@ func NewHandlers(services *service.Services) *Handlers {
 		Member:       &MemberHandler{memberService: services.Member},
 		Goal:         &GoalHandler{goalService: services.Goal},
 		SprintAnalytics: &SprintAnalyticsHandler{analyticsService: services.SprintAnalytics},
-
+		Sprint: NewSprintHandler(services.Sprint, services.SprintAnalytics),  
 	}
 }
-
 // ============================================
 // Response Mappers
 // ============================================
@@ -289,4 +292,21 @@ func toWorkspaceResponse(ws *repository.Workspace) models.WorkspaceResponse {
 	}
 
 	return resp
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+func handleServiceError(c *gin.Context, err error) {
+	switch err {
+	case service.ErrUnauthorized:
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized"})
+	case service.ErrNotFound:
+		c.JSON(http.StatusNotFound, gin.H{"error": "Resource not found"})
+	case service.ErrInvalidInput:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+	}
 }

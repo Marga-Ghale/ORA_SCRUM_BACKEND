@@ -1238,22 +1238,6 @@ func (h *TaskHandler) BulkMoveToSprint(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Tasks moved to sprint successfully"})
 }
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-func handleServiceError(c *gin.Context, err error) {
-	switch err {
-	case service.ErrUnauthorized:
-		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized"})
-	case service.ErrNotFound:
-		c.JSON(http.StatusNotFound, gin.H{"error": "Resource not found"})
-	case service.ErrInvalidInput:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-	}
-}
 
 
 

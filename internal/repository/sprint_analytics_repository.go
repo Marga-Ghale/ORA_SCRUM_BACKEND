@@ -495,14 +495,12 @@ func (r *sprintAnalyticsRepository) GetTaskStatusHistory(ctx context.Context, ta
 // GANTT CHART
 // ============================================
 
-// ============================================
-// GANTT CHART
-// ============================================
-
 func (r *sprintAnalyticsRepository) GetGanttData(ctx context.Context, projectID string, sprintID *string) (*GanttData, error) {
 	query := `
 		SELECT 
-			t.id, t.title, t.start_date, t.due_date, t.completed_at,
+			t.id, t.title, 
+			COALESCE(t.start_date, t.created_at) as start_date,
+			t.due_date, t.completed_at,
 			t.status, t.priority, t.assignee_ids, t.parent_task_id,
 			t.sprint_id, t.story_points, t.type,
 			ARRAY(
@@ -534,9 +532,10 @@ func (r *sprintAnalyticsRepository) GetGanttData(ctx context.Context, projectID 
 	for rows.Next() {
 		var t GanttTask
 		var deps []string
+		var startDate time.Time  // ✅ Non-pointer - COALESCE guarantees non-null
 
 		err := rows.Scan(
-			&t.ID, &t.Title, &t.StartDate, &t.DueDate, &t.EndDate,
+			&t.ID, &t.Title, &startDate, &t.DueDate, &t.EndDate,  // ✅ startDate is now non-pointer
 			&t.Status, &t.Priority, pq.Array(&t.AssigneeIDs), &t.ParentTaskID,
 			&t.SprintID, &t.StoryPoints, &t.Type, pq.Array(&deps),
 		)
@@ -544,6 +543,7 @@ func (r *sprintAnalyticsRepository) GetGanttData(ctx context.Context, projectID 
 			return nil, err
 		}
 
+		t.StartDate = &startDate  // ✅ Assign to pointer field
 		t.Dependencies = deps
 		if t.Dependencies == nil {
 			t.Dependencies = []string{}
@@ -556,11 +556,10 @@ func (r *sprintAnalyticsRepository) GetGanttData(ctx context.Context, projectID 
 
 		tasks = append(tasks, t)
 
-		// Track date range
-		if t.StartDate != nil {
-			if minDate == nil || t.StartDate.Before(*minDate) {
-				minDate = t.StartDate
-			}
+		// Track date range - startDate is always set now
+		if minDate == nil || startDate.Before(*minDate) {
+			sd := startDate  // Create copy for pointer
+			minDate = &sd
 		}
 		if t.DueDate != nil {
 			if maxDate == nil || t.DueDate.After(*maxDate) {
