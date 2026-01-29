@@ -13,14 +13,15 @@ import (
 
 // Scheduler handles scheduled tasks
 type Scheduler struct {
-	cronJob          *cronlib.Cron
-	services         *service.Services
-	notifSvc         *notification.Service
-	taskRepo         repository.TaskRepository
-	sprintRepo       repository.SprintRepository
-	projectRepo      repository.ProjectRepository
-	userRepo         repository.UserRepository
-	notificationRepo repository.NotificationRepository
+	cronJob            *cronlib.Cron
+	services           *service.Services
+	notifSvc           *notification.Service
+	taskRepo           repository.TaskRepository
+	sprintRepo         repository.SprintRepository
+	projectRepo        repository.ProjectRepository
+	userRepo           repository.UserRepository
+	notificationRepo   repository.NotificationRepository
+	sprintAnalyticsSvc service.SprintAnalyticsService
 }
 
 // NewSchedulerWithRepos creates a scheduler with repositories
@@ -32,16 +33,18 @@ func NewSchedulerWithRepos(
 	projectRepo repository.ProjectRepository,
 	userRepo repository.UserRepository,
 	notificationRepo repository.NotificationRepository,
+	sprintAnalyticsSvc service.SprintAnalyticsService,
 ) *Scheduler {
 	return &Scheduler{
-		cronJob:          cronlib.New(),
-		services:         services,
-		notifSvc:         notifSvc,
-		taskRepo:         taskRepo,
-		sprintRepo:       sprintRepo,
-		projectRepo:      projectRepo,
-		userRepo:         userRepo,
-		notificationRepo: notificationRepo,
+		cronJob:            cronlib.New(),
+		services:           services,
+		notifSvc:           notifSvc,
+		taskRepo:           taskRepo,
+		sprintRepo:         sprintRepo,
+		projectRepo:        projectRepo,
+		userRepo:           userRepo,
+		notificationRepo:   notificationRepo,
+		sprintAnalyticsSvc: sprintAnalyticsSvc,
 	}
 }
 
@@ -72,6 +75,12 @@ func (s *Scheduler) Start() {
 	s.cronJob.AddFunc("0 0 * * 0", func() {
 		log.Println("[Cron] Cleaning up old notifications...")
 		s.cleanupOldNotifications()
+	})
+
+	// Optional: Daily at 1 AM - generate sprint reports (cached for performance)
+	s.cronJob.AddFunc("0 1 * * *", func() {
+		log.Println("[Cron] Generating sprint reports...")
+		s.generateActiveSprintReports()
 	})
 
 	s.cronJob.Start()
@@ -194,7 +203,7 @@ func (s *Scheduler) checkTasksDueToday() {
 	log.Printf("[Cron] Hourly due today reminders sent: %d", sent)
 }
 
-// autoCompleteExpiredSprints marks expired sprints as completed
+// autoCompleteExpiredSprints marks expired sprints as completed and records velocity
 func (s *Scheduler) autoCompleteExpiredSprints() {
 	ctx := context.Background()
 	sprints, err := s.sprintRepo.FindExpiredSprints(ctx)
@@ -207,6 +216,16 @@ func (s *Scheduler) autoCompleteExpiredSprints() {
 		totalPoints, _ := s.taskRepo.GetSprintVelocity(ctx, sp.ID)
 		completedPoints, _ := s.taskRepo.GetCompletedStoryPoints(ctx, sp.ID)
 
+		// ✅ Record velocity history BEFORE completing sprint
+		if s.sprintAnalyticsSvc != nil {
+			if err := s.sprintAnalyticsSvc.RecordSprintVelocity(ctx, sp.ID); err != nil {
+				log.Printf("[Cron] Failed to record velocity for sprint %s: %v", sp.ID, err)
+			} else {
+				log.Printf("[Cron] Recorded velocity for sprint %s: %d/%d points", sp.Name, completedPoints, totalPoints)
+			}
+		}
+
+		// Update sprint status to completed
 		sp.Status = "completed"
 		sp.EndDate = time.Now()
 		if err := s.sprintRepo.Update(ctx, sp); err != nil {
@@ -214,6 +233,7 @@ func (s *Scheduler) autoCompleteExpiredSprints() {
 			continue
 		}
 
+		// Notify project members
 		memberIDs, _ := s.projectRepo.FindMemberUserIDs(ctx, sp.ProjectID)
 		if len(memberIDs) > 0 {
 			s.notifSvc.SendSprintCompletedToMembers(ctx, memberIDs, sp.Name, sp.ID, sp.ProjectID, completedPoints, totalPoints)
@@ -242,4 +262,32 @@ func (s *Scheduler) updateInactiveUserStatus() {
 		return
 	}
 	log.Println("[Cron] User status update complete")
+}
+
+// generateActiveSprintReports generates cached reports for active sprints
+// This is optional - reports are generated on-demand, but caching them nightly improves dashboard performance
+func (s *Scheduler) generateActiveSprintReports() {
+	ctx := context.Background()
+	
+	// Get all active sprints
+	sprints, err := s.sprintRepo.FindActiveSprints(ctx)
+	if err != nil {
+		log.Printf("[Cron] Error fetching active sprints: %v", err)
+		return
+	}
+
+	generated := 0
+	for _, sprint := range sprints {
+		// Generate and cache the sprint report
+		if s.sprintAnalyticsSvc != nil {
+			_, err := s.sprintAnalyticsSvc.GetSprintReport(ctx, sprint.ID, "")
+			if err != nil {
+				log.Printf("[Cron] Failed to generate report for sprint %s: %v", sprint.ID, err)
+				continue
+			}
+			generated++
+		}
+	}
+	
+	log.Printf("[Cron] Generated %d sprint reports", generated)
 }

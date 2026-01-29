@@ -20,6 +20,9 @@ type Repositories struct {
 	LabelRepo        LabelRepository
 	NotificationRepo NotificationRepository
 
+	GoalRepo            GoalRepository
+	SprintAnalyticsRepo SprintAnalyticsRepository
+
 	// Task-related repositories (sql.DB)
 	SprintRepo         SprintRepository
 	TaskRepo           TaskRepository
@@ -48,6 +51,8 @@ func NewRepositories(pool *pgxpool.Pool, db *sql.DB) *Repositories {
 
 		// sql.DB repos (all task-related)
 		SprintRepo:         NewSprintRepository(db),
+		SprintAnalyticsRepo: NewSprintAnalyticsRepository(db),
+		GoalRepo:         NewGoalRepository(db),
 		TaskRepo:           NewTaskRepository(db),
 		TaskDependencyRepo: NewTaskDependencyRepository(db),
 		TaskAttachmentRepo: NewTaskAttachmentRepository(db),

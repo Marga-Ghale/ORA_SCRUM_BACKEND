@@ -93,6 +93,7 @@ type TaskService interface {
 	BulkUpdateStatus(ctx context.Context, taskIDs []string, status, userID string) error
 	BulkAssign(ctx context.Context, taskIDs []string, assigneeID, actorID string) error
 	BulkMoveToSprint(ctx context.Context, taskIDs []string, sprintID, userID string) error
+
 }
 
 type SprintBurndown struct {
@@ -113,6 +114,12 @@ type BurndownPoint struct {
 }
 
 
+// GoalRecalculator interface to avoid circular dependency
+type GoalRecalculator interface {
+	GetGoalsByTask(ctx context.Context, taskID, userID string) ([]*repository.Goal, error)
+	RecalculateGoalProgress(ctx context.Context, goalID string) error
+}
+
 
 
 
@@ -131,6 +138,7 @@ type taskService struct {
 	permService     PermissionService
 	notificationSvc *notification.Service
 	broadcaster     *socket.Broadcaster
+	goalService     GoalService
 }
 
 // Constructor
@@ -149,6 +157,7 @@ func NewTaskService(
 	permService PermissionService,
 	notificationSvc *notification.Service,
 	broadcaster *socket.Broadcaster,
+	goalService GoalService,
 ) TaskService {
 	return &taskService{
 		taskRepo:        taskRepo,
@@ -165,6 +174,7 @@ func NewTaskService(
 		permService:     permService,
 		notificationSvc: notificationSvc,
 		broadcaster:     broadcaster,
+		goalService:     goalService,
 	}
 }
 
@@ -485,14 +495,24 @@ func (s *taskService) Update(ctx context.Context, taskID, userID string, req *mo
 		changeDetails = append(changeDetails, "updated description")
 	}
 	if req.Status != nil && *req.Status != task.Status {
-		task.Status = *req.Status
-		changes = append(changes, "status")
-		changeDetails = append(changeDetails, fmt.Sprintf("status: %s → %s", formatStatus(oldStatus), formatStatus(*req.Status)))
-		if *req.Status == "done" && task.CompletedAt == nil {
-			now := time.Now()
-			task.CompletedAt = &now
-		}
+	task.Status = *req.Status
+	changes = append(changes, "status")
+	changeDetails = append(changeDetails,
+		fmt.Sprintf("status: %s → %s", formatStatus(oldStatus), formatStatus(*req.Status)),
+	)
+	// set completed_at when moved to done
+	if *req.Status == "done" && task.CompletedAt == nil {
+		now := time.Now()
+		task.CompletedAt = &now
 	}
+
+	// if status changed to done -> recalculate goals
+	if *req.Status == "done" && oldStatus != "done" {
+		go s.recalculateLinkedGoals(ctx, taskID) // or without go if you want blocking
+	}
+
+	
+}
 	if req.Priority != nil && *req.Priority != task.Priority {
 		task.Priority = *req.Priority
 		changes = append(changes, "priority")
@@ -918,6 +938,12 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 		return err
 	}
 
+	// ✅ NEW: Recalculate linked goal progress when task completes
+	if status == "done" {
+		s.recalculateLinkedGoals(ctx, taskID)
+	}
+
+
 	// ✅ NOTIFICATIONS - Only send status change notifications
 	notifiedUsers := make(map[string]bool)
 	
@@ -965,6 +991,26 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 	}
 
 	return nil
+}
+
+
+func (s *taskService) recalculateLinkedGoals(ctx context.Context, taskID string) {
+	if s.goalService == nil {
+		return
+	}
+
+	// Get goals linked to this task
+	goals, err := s.goalService.GetGoalsByTask(ctx, taskID, "")
+	if err != nil {
+		return
+	}
+
+	// Recalculate each goal's progress
+	for _, goal := range goals {
+		if err := s.goalService.RecalculateGoalProgress(ctx, goal.ID); err != nil {
+			log.Printf("Failed to recalculate goal %s progress: %v", goal.ID, err)
+		}
+	}
 }
 
 func (s *taskService) UpdatePriority(ctx context.Context, taskID, priority, userID string) error {
@@ -1163,133 +1209,6 @@ func (s *taskService) PromoteToTask(ctx context.Context, taskID, userID string) 
 	return nil
 }
 
-// // ============================================
-// // ADD COMMENT - With Notifications
-// // ============================================
-
-// func (s *taskService) AddComment(
-// 	ctx context.Context,
-// 	taskID, userID, content string,
-// 	mentionedUsers []string,
-// ) (*repository.TaskComment, error) {
-
-// 	if !s.permService.CanAccessTask(ctx, userID, taskID) {
-// 		log.Printf("[AddComment] unauthorized access userID=%s taskID=%s", userID, taskID)
-// 		return nil, ErrUnauthorized
-// 	}
-
-// 	content = strings.TrimSpace(content)
-// 	if content == "" {
-// 		log.Printf("[AddComment] empty content userID=%s taskID=%s", userID, taskID)
-// 		return nil, ErrBadRequest
-// 	}
-
-// 	// Get task info for notifications
-// 	task, err := s.taskRepo.FindByID(ctx, taskID)
-// 	if err != nil || task == nil {
-// 		return nil, ErrNotFound
-// 	}
-
-// 	comment := &repository.TaskComment{
-// 		TaskID:         taskID,
-// 		UserID:         userID,
-// 		Content:        content,
-// 		MentionedUsers: mentionedUsers,
-// 	}
-
-// 	if err := s.commentRepo.Create(ctx, comment); err != nil {
-// 		log.Printf("[AddComment] failed to create comment userID=%s taskID=%s err=%v",
-// 			userID, taskID, err)
-// 		return nil, err
-// 	}
-
-// 	// ✅ NOTIFICATIONS START
-// 	// Get commenter info
-// 	commenter, _ := s.userRepo.FindByID(ctx, userID)
-// 	commenterName := "Someone"
-// 	if commenter != nil {
-// 		commenterName = commenter.Name
-// 	}
-
-// 	// Collect users to notify (excluding commenter)
-// 	notifiedUsers := make(map[string]bool)
-
-// 	// 1. Notify assignees
-// 	for _, assigneeID := range task.AssigneeIDs {
-// 		if assigneeID != userID {
-// 			s.notificationSvc.SendTaskCommented(
-// 				ctx,
-// 				assigneeID,
-// 				commenterName,
-// 				task.Title,
-// 				task.ID,
-// 				task.ProjectID,
-// 			)
-// 			notifiedUsers[assigneeID] = true
-// 		}
-// 	}
-
-// 	// 2. Notify watchers (excluding already notified)
-// 	for _, watcherID := range task.WatcherIDs {
-// 		if watcherID != userID && !notifiedUsers[watcherID] {
-// 			s.notificationSvc.SendTaskCommented(
-// 				ctx,
-// 				watcherID,
-// 				commenterName,
-// 				task.Title,
-// 				task.ID,
-// 				task.ProjectID,
-// 			)
-// 			notifiedUsers[watcherID] = true
-// 		}
-// 	}
-
-// 	// 3. Parse and send mention notifications
-// 	if s.notificationSvc != nil {
-// 		s.notificationSvc.ParseAndSendMentions(
-// 			ctx,
-// 			content,
-// 			commenterName,
-// 			task.Title,
-// 			task.ID,
-// 			task.ProjectID,
-// 			userID,
-// 		)
-// 	}
-
-// 	// 4. Broadcast comment
-// 	if s.broadcaster != nil {
-// 		s.broadcaster.BroadcastCommentAdded(
-// 			task.ProjectID,
-// 			task.ID,
-// 			map[string]interface{}{
-// 				"id":        comment.ID,
-// 				"content":   comment.Content,
-// 				"userId":    comment.UserID,
-// 				"createdAt": comment.CreatedAt,
-// 			},
-// 			userID,
-// 		)
-// 	}
-// 	// ✅ NOTIFICATIONS END
-
-// 	// Activity logging
-// 	if err := s.activityRepo.Create(ctx, &repository.TaskActivity{
-// 		TaskID: taskID,
-// 		UserID: &userID,
-// 		Action: "commented",
-// 	}); err != nil {
-// 		log.Printf("[AddComment] activity log failed commentID=%s taskID=%s err=%v",
-// 			comment.ID, taskID, err)
-// 	}
-
-// 	return comment, nil
-// }
-
-
-// ============================================
-// ADD COMMENT - With Smart Notifications (NO DUPLICATES)
-// ============================================
 
 func (s *taskService) AddComment(
 	ctx context.Context,

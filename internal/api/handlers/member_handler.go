@@ -448,3 +448,19 @@ func (h *MemberHandler) GetAccessInfo(c *gin.Context) {
 
 	c.JSON(http.StatusOK, accessInfo)
 }
+
+
+
+// GetEligibleUsers returns users who can be added to an entity
+func (h *MemberHandler) GetEligibleUsers(c *gin.Context) {
+	entityType := c.Param("entityType")
+	entityID := c.Param("entityId")
+	
+	members, err := h.memberService.GetEligibleUsersForEntity(c.Request.Context(), entityType, entityID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, members)
+}

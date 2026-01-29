@@ -32,7 +32,7 @@ type SprintRepository interface {
 	querySprints(ctx context.Context, query string, args ...interface{}) ([]*Sprint, error)
 	FindSprintsEndingSoon(ctx context.Context, within time.Duration) ([]*Sprint, error)
 	FindExpiredSprints(ctx context.Context) ([]*Sprint, error)
-
+	FindActiveSprints(ctx context.Context) ([]*Sprint, error)
 }
 
 // sprintRepository implementation
@@ -49,10 +49,9 @@ func NewSprintRepository(db *sql.DB) SprintRepository {
 func (r *sprintRepository) Create(ctx context.Context, sprint *Sprint) error {
 	query := `
 		INSERT INTO sprints (
-			id, project_id, name, goal, status, start_date, end_date, 
-			created_by, created_at, updated_at
+			project_id, name, goal, status, start_date, end_date, created_by
 		) VALUES (
-			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW()
+			$1, $2, $3, $4, $5, $6, $7
 		) RETURNING id, created_at, updated_at`
 
 	return r.db.QueryRowContext(
@@ -69,20 +68,21 @@ func (r *sprintRepository) Create(ctx context.Context, sprint *Sprint) error {
 
 // FindByID retrieves a sprint by ID
 func (r *sprintRepository) FindByID(ctx context.Context, id string) (*Sprint, error) {
-	query := `SELECT * FROM sprints WHERE id = $1`
+	// ✅ Match DB column order: id, name, goal, project_id, status, start_date, end_date, created_at, updated_at, created_by
+	query := `SELECT id, name, goal, project_id, status, start_date, end_date, created_at, updated_at, created_by FROM sprints WHERE id = $1`
 
 	sprint := &Sprint{}
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&sprint.ID,
-		&sprint.ProjectID,
 		&sprint.Name,
 		&sprint.Goal,
+		&sprint.ProjectID,
 		&sprint.Status,
 		&sprint.StartDate,
 		&sprint.EndDate,
-		&sprint.CreatedBy,
 		&sprint.CreatedAt,
 		&sprint.UpdatedAt,
+		&sprint.CreatedBy,
 	)
 
 	if err == sql.ErrNoRows {
@@ -97,7 +97,7 @@ func (r *sprintRepository) FindByID(ctx context.Context, id string) (*Sprint, er
 
 // FindByProjectID retrieves all sprints for a project
 func (r *sprintRepository) FindByProjectID(ctx context.Context, projectID string) ([]*Sprint, error) {
-	query := `SELECT * FROM sprints WHERE project_id = $1 ORDER BY start_date DESC`
+	query := `SELECT id, name, goal, project_id, status, start_date, end_date, created_at, updated_at, created_by FROM sprints WHERE project_id = $1 ORDER BY start_date DESC`
 
 	rows, err := r.db.QueryContext(ctx, query, projectID)
 	if err != nil {
@@ -110,15 +110,15 @@ func (r *sprintRepository) FindByProjectID(ctx context.Context, projectID string
 		sprint := &Sprint{}
 		err := rows.Scan(
 			&sprint.ID,
-			&sprint.ProjectID,
 			&sprint.Name,
 			&sprint.Goal,
+			&sprint.ProjectID,
 			&sprint.Status,
 			&sprint.StartDate,
 			&sprint.EndDate,
-			&sprint.CreatedBy,
 			&sprint.CreatedAt,
 			&sprint.UpdatedAt,
+			&sprint.CreatedBy,
 		)
 		if err != nil {
 			return nil, err
@@ -131,20 +131,20 @@ func (r *sprintRepository) FindByProjectID(ctx context.Context, projectID string
 
 // FindActiveSprint retrieves the currently active sprint for a project
 func (r *sprintRepository) FindActiveSprint(ctx context.Context, projectID string) (*Sprint, error) {
-	query := `SELECT * FROM sprints WHERE project_id = $1 AND status = 'active' ORDER BY start_date DESC LIMIT 1`
+	query := `SELECT id, name, goal, project_id, status, start_date, end_date, created_at, updated_at, created_by FROM sprints WHERE project_id = $1 AND status = 'active' ORDER BY start_date DESC LIMIT 1`
 
 	sprint := &Sprint{}
 	err := r.db.QueryRowContext(ctx, query, projectID).Scan(
 		&sprint.ID,
-		&sprint.ProjectID,
 		&sprint.Name,
 		&sprint.Goal,
+		&sprint.ProjectID,
 		&sprint.Status,
 		&sprint.StartDate,
 		&sprint.EndDate,
-		&sprint.CreatedBy,
 		&sprint.CreatedAt,
 		&sprint.UpdatedAt,
+		&sprint.CreatedBy,
 	)
 
 	if err == sql.ErrNoRows {
@@ -163,7 +163,7 @@ func (r *sprintRepository) Update(ctx context.Context, sprint *Sprint) error {
 		UPDATE sprints SET
 			name = $2,
 			goal = $3,
-			status = $4,
+			status = COALESCE(NULLIF($4, ''), status),
 			start_date = $5,
 			end_date = $6,
 			updated_at = NOW()
@@ -171,7 +171,8 @@ func (r *sprintRepository) Update(ctx context.Context, sprint *Sprint) error {
 		RETURNING updated_at`
 
 	return r.db.QueryRowContext(
-		ctx, query,
+		ctx,
+		query,
 		sprint.ID,
 		sprint.Name,
 		sprint.Goal,
@@ -195,10 +196,22 @@ func (r *sprintRepository) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+func (r *sprintRepository) FindActiveSprints(ctx context.Context) ([]*Sprint, error) {
+	query := `
+		SELECT id, name, goal, project_id, status, start_date, end_date, created_at, updated_at, created_by
+		FROM sprints 
+		WHERE status = 'active' 
+		   OR (start_date <= NOW() AND end_date >= NOW() AND status != 'completed')
+		ORDER BY end_date ASC
+	`
+	return r.querySprints(ctx, query)
+}
+
 // FindSprintsEndingSoon returns sprints ending within the next 'within' duration
 func (r *sprintRepository) FindSprintsEndingSoon(ctx context.Context, within time.Duration) ([]*Sprint, error) {
 	query := `
-		SELECT * FROM sprints 
+		SELECT id, name, goal, project_id, status, start_date, end_date, created_at, updated_at, created_by
+		FROM sprints 
 		WHERE end_date BETWEEN NOW() AND NOW() + $1::interval 
 		  AND status != 'completed'
 		ORDER BY end_date ASC`
@@ -207,7 +220,7 @@ func (r *sprintRepository) FindSprintsEndingSoon(ctx context.Context, within tim
 
 // FindExpiredSprints returns sprints whose end_date has passed but not completed
 func (r *sprintRepository) FindExpiredSprints(ctx context.Context) ([]*Sprint, error) {
-	query := `SELECT * FROM sprints WHERE end_date < NOW() AND status != 'completed' ORDER BY end_date ASC`
+	query := `SELECT id, name, goal, project_id, status, start_date, end_date, created_at, updated_at, created_by FROM sprints WHERE end_date < NOW() AND status != 'completed' ORDER BY end_date ASC`
 	return r.querySprints(ctx, query)
 }
 
@@ -223,8 +236,8 @@ func (r *sprintRepository) querySprints(ctx context.Context, query string, args 
 	for rows.Next() {
 		s := &Sprint{}
 		err := rows.Scan(
-			&s.ID, &s.ProjectID, &s.Name, &s.Goal, &s.Status,
-			&s.StartDate, &s.EndDate, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt,
+			&s.ID, &s.Name, &s.Goal, &s.ProjectID, &s.Status,
+			&s.StartDate, &s.EndDate, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy,
 		)
 		if err != nil {
 			return nil, err

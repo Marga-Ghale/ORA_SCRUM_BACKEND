@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"net/http"
+
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/models"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/repository"
 	"github.com/Marga-Ghale/ora-scrum-backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 // Handlers contains all HTTP handlers
@@ -18,6 +21,9 @@ type Handlers struct {
 	Label        *LabelHandler
 	Notification *NotificationHandler
 	Member	   	 *MemberHandler
+	Goal  	 *GoalHandler
+	SprintAnalytics *SprintAnalyticsHandler
+	Sprint 	 *SprintHandler
 }
 
 // NewHandlers creates all handlers
@@ -33,9 +39,11 @@ func NewHandlers(services *service.Services) *Handlers {
 		Label:        &LabelHandler{labelService: services.Label},
 		Notification: &NotificationHandler{notificationService: services.Notification},
 		Member:       &MemberHandler{memberService: services.Member},
+		Goal:         &GoalHandler{goalService: services.Goal},
+		SprintAnalytics: &SprintAnalyticsHandler{analyticsService: services.SprintAnalytics},
+		Sprint: NewSprintHandler(services.Sprint, services.SprintAnalytics),  
 	}
 }
-
 // ============================================
 // Response Mappers
 // ============================================
@@ -55,7 +63,6 @@ func toUserResponse(u *repository.User) models.UserResponse {
 // ============================================
 // COMPREHENSIVE TASK RESPONSE MAPPER
 // ============================================
-
 func toTaskResponse(t *repository.Task) models.TaskResponse {
 	if t == nil {
 		return models.TaskResponse{}
@@ -85,22 +92,25 @@ func toTaskResponse(t *repository.Task) models.TaskResponse {
 		CreatedBy:      t.CreatedBy,
 		CreatedAt:      t.CreatedAt,
 		UpdatedAt:      t.UpdatedAt,
-		SubtaskCount:   0,    // Will be populated separately if needed
-		Subtasks:       nil,  // Will be populated separately if needed
+		SubtaskCount:   0,
+		Subtasks:       nil,
+		
+		// ✅ CYCLE TIME TRACKING
+		StartedAt:        t.StartedAt,
+		CycleTimeSeconds: t.CycleTimeSeconds,
+		LeadTimeSeconds:  t.LeadTimeSeconds,
 	}
 }
 
-
-// Enhanced converter with subtasks
 // Enhanced converter with subtasks
 func toTaskResponseWithSubtasks(t *repository.Task, subtasks []*repository.Task) models.TaskResponse {
-	response := toTaskResponse(t)
+	response := toTaskResponse(t)  // ✅ Gets parent task with cycle time fields
 	response.SubtaskCount = len(subtasks)
 	
 	if len(subtasks) > 0 {
-		response.Subtasks = make([]models.TaskResponse, len(subtasks)) // ✅ Changed from []*models.TaskResponse to []models.TaskResponse
+		response.Subtasks = make([]models.TaskResponse, len(subtasks))
 		for i, st := range subtasks {
-			response.Subtasks[i] = toTaskResponse(st) // ✅ This now works
+			response.Subtasks[i] = toTaskResponse(st) // ✅ Each subtask also gets cycle time fields
 		}
 	}
 	
@@ -282,4 +292,21 @@ func toWorkspaceResponse(ws *repository.Workspace) models.WorkspaceResponse {
 	}
 
 	return resp
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+func handleServiceError(c *gin.Context, err error) {
+	switch err {
+	case service.ErrUnauthorized:
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized"})
+	case service.ErrNotFound:
+		c.JSON(http.StatusNotFound, gin.H{"error": "Resource not found"})
+	case service.ErrInvalidInput:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+	}
 }

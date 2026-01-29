@@ -18,7 +18,7 @@ type Task struct {
 	Description    *string    `json:"description,omitempty" db:"description"`
 	Status         string     `json:"status" db:"status"`
 	Priority       string     `json:"priority" db:"priority"`
-	Type           *string    `json:"type,omitempty" db:"type"` 
+	Type           *string    `json:"type,omitempty" db:"type"`
 	ProjectID      string     `json:"projectId" db:"project_id"`
 	SprintID       *string    `json:"sprintId,omitempty" db:"sprint_id"`
 	ParentTaskID   *string    `json:"parentTaskId,omitempty" db:"parent_task_id"`
@@ -36,6 +36,11 @@ type Task struct {
 	CreatedBy      *string    `json:"createdBy,omitempty" db:"created_by"`
 	CreatedAt      time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt      time.Time  `json:"updatedAt" db:"updated_at"`
+	
+	// ✅ ADD THESE 3 FIELDS
+	StartedAt        *time.Time `json:"startedAt,omitempty" db:"started_at"`
+	CycleTimeSeconds *int       `json:"cycleTimeSeconds,omitempty" db:"cycle_time_seconds"`
+	LeadTimeSeconds  *int       `json:"leadTimeSeconds,omitempty" db:"lead_time_seconds"`
 }
 
 // TaskFilters for advanced filtering
