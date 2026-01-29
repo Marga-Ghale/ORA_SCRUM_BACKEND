@@ -134,6 +134,7 @@ type taskService struct {
 	projectRepo     repository.ProjectRepository
 	sprintRepo      repository.SprintRepository
 	userRepo        repository.UserRepository
+	commitmentRepo  repository.SprintCommitmentRepository  
 	memberService   MemberService
 	permService     PermissionService
 	notificationSvc *notification.Service
@@ -914,7 +915,7 @@ func (s *taskService) Delete(ctx context.Context, taskID, userID string) error {
 
 
 // ============================================
-// UPDATE STATUS - With Notifications
+// UPDATE STATUS - With History, Cycle Time & Notifications
 // ============================================
 
 func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID string) error {
@@ -929,24 +930,34 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 
 	oldStatus := task.Status
 
-	// ✅ Don't send notification if status hasn't actually changed
+	// Don't process if status hasn't changed
 	if oldStatus == status {
 		return nil
 	}
 
+	// Record status history for analytics
+	if s.commitmentRepo != nil {
+		if err := s.commitmentRepo.RecordStatusChange(ctx, taskID, oldStatus, status, &userID); err != nil {
+			log.Printf("⚠️ Failed to record status history: %v", err)
+		}
+	}
+
+	// Update task with cycle time calculation (handled in repository)
 	if err := s.taskRepo.UpdateStatus(ctx, taskID, status); err != nil {
 		return err
 	}
 
-	// ✅ NEW: Recalculate linked goal progress when task completes
+	// ✅ Recalculate linked goal progress when task completes
 	if status == "done" {
 		s.recalculateLinkedGoals(ctx, taskID)
 	}
 
+	// ============================================
+	// NOTIFICATIONS
+	// ============================================
 
-	// ✅ NOTIFICATIONS - Only send status change notifications
 	notifiedUsers := make(map[string]bool)
-	
+
 	for _, assigneeID := range task.AssigneeIDs {
 		if assigneeID != userID {
 			s.notificationSvc.SendTaskStatusChangedBy(
@@ -978,9 +989,12 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 		}
 	}
 
-	// Broadcast status change
+	// ============================================
+	// REALTIME BROADCAST
+	// ============================================
+
 	if s.broadcaster != nil {
-		task.Status = status // Update for broadcast
+		task.Status = status // ensure latest state
 		s.broadcaster.BroadcastTaskStatusChanged(
 			task.ProjectID,
 			s.taskToMap(task),
@@ -991,6 +1005,66 @@ func (s *taskService) UpdateStatus(ctx context.Context, taskID, status, userID s
 	}
 
 	return nil
+}
+
+
+// ============================================
+// CYCLE TIME & STATUS HISTORY HELPERS
+// ============================================
+
+func (s *taskService) recordStatusHistory(
+	ctx context.Context,
+	taskID, fromStatus, toStatus, userID string,
+) {
+	if s.activityRepo == nil {
+		return
+	}
+
+	_ = s.activityRepo.Create(ctx, &repository.TaskActivity{
+		TaskID:    taskID,
+		UserID:    &userID,
+		Action:    "status_changed",
+		FieldName: strPtr("status"),
+		OldValue:  &fromStatus,
+		NewValue:  &toStatus,
+	})
+}
+
+func (s *taskService) updateCycleTimeFields(
+	ctx context.Context,
+	task *repository.Task,
+	oldStatus, newStatus string,
+) error {
+	now := time.Now()
+
+	// ▶ First time entering "in_progress"
+	if newStatus == "in_progress" && task.StartedAt == nil {
+		task.StartedAt = &now
+	}
+
+	// ✔ Task completed
+	if newStatus == "done" && task.CompletedAt == nil {
+		task.CompletedAt = &now
+
+		// Cycle time: in_progress → done
+		if task.StartedAt != nil {
+			seconds := int(now.Sub(*task.StartedAt).Seconds())
+			task.CycleTimeSeconds = &seconds
+		}
+
+		// Lead time: created → done
+		leadSeconds := int(now.Sub(task.CreatedAt).Seconds())
+		task.LeadTimeSeconds = &leadSeconds
+	}
+
+	// 🔄 Task reopened
+	if oldStatus == "done" && newStatus != "done" {
+		task.CompletedAt = nil
+		task.CycleTimeSeconds = nil
+		task.LeadTimeSeconds = nil
+	}
+
+	return s.taskRepo.Update(ctx, task)
 }
 
 

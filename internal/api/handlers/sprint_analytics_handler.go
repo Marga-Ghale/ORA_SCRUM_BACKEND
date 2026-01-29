@@ -178,7 +178,7 @@ func (h *SprintAnalyticsHandler) GetGanttData(c *gin.Context) {
 	}
 
 	projectID := c.Param("id")
-	sprintID := c.Query("id")
+sprintID := c.Query("sprintId")
 
 	var sprintIDPtr *string
 	if sprintID != "" {

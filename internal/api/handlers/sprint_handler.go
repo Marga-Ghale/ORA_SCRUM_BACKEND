@@ -168,13 +168,17 @@ func (h *SprintHandler) Start(c *gin.Context) {
 	sprintID := c.Param("id")
 	log.Printf("📝 [Sprint Start] Starting sprint - SprintID: %s, UserID: %s", sprintID, userID)
 
-	if err := h.sprintService.StartSprint(c.Request.Context(), sprintID, userID); err != nil {
+	response, err := h.sprintService.StartSprint(c.Request.Context(), sprintID, userID)
+	if err != nil {
 		log.Printf("❌ [Sprint Start] Failed - SprintID: %s, Error: %v", sprintID, err)
 		handleServiceError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Sprint started"})
+	log.Printf("✅ [Sprint Start] Success - SprintID: %s, Committed: %d tasks, %d points", 
+		sprintID, response.CommittedTasks, response.CommittedPoints)
+
+	c.JSON(http.StatusOK, response)
 }
 
 
@@ -185,23 +189,90 @@ func (h *SprintHandler) Complete(c *gin.Context) {
 	}
 
 	sprintID := c.Param("id")
-	log.Printf("📝 [Sprint Complete] Completing sprint - SprintID: %s, UserID: %s", sprintID, userID)
+	
+	// Parse options from request body (optional)
+	var options service.SprintCompleteOptions
+	if err := c.ShouldBindJSON(&options); err != nil {
+		// Default to backlog if no options provided
+		options.MoveIncompleteTo = "backlog"
+	}
 
-	// 1. Complete the sprint (update status)
-	if err := h.sprintService.CompleteSprint(c.Request.Context(), sprintID, userID); err != nil {
+	log.Printf("📝 [Sprint Complete] Completing sprint - SprintID: %s, MoveIncompleteTo: %s", sprintID, options.MoveIncompleteTo)
+
+	response, err := h.sprintService.CompleteSprintWithOptions(c.Request.Context(), sprintID, userID, &options)
+	if err != nil {
 		log.Printf("❌ [Sprint Complete] Failed - SprintID: %s, Error: %v", sprintID, err)
 		handleServiceError(c, err)
 		return
 	}
 
-	// 2. ✅ RECORD VELOCITY - THIS WAS MISSING!
+	// Record velocity
 	if err := h.analyticsService.RecordSprintVelocity(c.Request.Context(), sprintID); err != nil {
 		log.Printf("⚠️ [Sprint Complete] Failed to record velocity - SprintID: %s, Error: %v", sprintID, err)
-		// Don't fail the request, just log the error
-	} else {
-		log.Printf("✅ [Sprint Complete] Velocity recorded - SprintID: %s", sprintID)
 	}
 
-	log.Printf("✅ [Sprint Complete] Success - SprintID: %s", sprintID)
-	c.JSON(http.StatusOK, gin.H{"message": "Sprint completed"})
+	log.Printf("✅ [Sprint Complete] Success - Completed: %d/%d tasks, Moved %d incomplete tasks to %s",
+		response.CompletedTasks, response.CompletedTasks+response.IncompleteTasks,
+		response.IncompleteTasks, response.TasksMovedTo)
+
+	c.JSON(http.StatusOK, response)
+}
+
+// Add new endpoint for sprint summary
+func (h *SprintHandler) GetSummary(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	sprintID := c.Param("id")
+	summary, err := h.sprintService.GetSprintSummary(c.Request.Context(), sprintID, userID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+// POST /api/sprints/:id/complete-with-options
+func (h *SprintHandler) CompleteWithOptions(c *gin.Context) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	sprintID := c.Param("id")
+
+	var req struct {
+		MoveIncompleteTo string `json:"moveIncompleteTo"` // "backlog", "next_sprint", or sprint ID
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req.MoveIncompleteTo = "backlog" // Default
+	}
+
+	log.Printf("📝 [Sprint Complete] SprintID: %s, MoveIncompleteTo: %s", sprintID, req.MoveIncompleteTo)
+
+	response, err := h.sprintService.CompleteSprintWithOptions(c.Request.Context(), sprintID, userID, &service.SprintCompleteOptions{
+		MoveIncompleteTo: req.MoveIncompleteTo,
+	})
+	if err != nil {
+		log.Printf("❌ [Sprint Complete] Failed - SprintID: %s, Error: %v", sprintID, err)
+		handleServiceError(c, err)
+		return
+	}
+
+	// Record velocity
+	if err := h.analyticsService.RecordSprintVelocity(c.Request.Context(), sprintID); err != nil {
+		log.Printf("⚠️ Failed to record velocity: %v", err)
+	}
+
+	log.Printf("✅ [Sprint Complete] Success - Completed: %d tasks (%d pts), Incomplete: %d tasks (%d pts), Moved to: %s",
+		response.CompletedTasks,
+		response.CompletedPoints,
+		response.IncompleteTasks,
+		response.IncompletePoints,
+		response.TasksMovedTo,
+	)
+
+	c.JSON(http.StatusOK, response)
 }

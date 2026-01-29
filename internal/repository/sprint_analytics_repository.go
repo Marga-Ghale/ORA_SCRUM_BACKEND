@@ -178,9 +178,24 @@ func (r *sprintAnalyticsRepository) GenerateSprintReport(ctx context.Context, sp
 		return nil, err
 	}
 
-	report.CommittedTasks = totalTasks
-	report.CommittedPoints = totalPoints
-	report.Velocity = report.CompletedPoints
+	// ✅ These should ideally come from a snapshot taken at sprint start
+// For now, we track current state but mark it clearly
+report.CommittedTasks = totalTasks
+report.CommittedPoints = totalPoints
+report.Velocity = report.CompletedPoints
+
+// ✅ Calculate added/removed tasks (tasks added after sprint started)
+addedQuery := `
+	SELECT COUNT(*), COALESCE(SUM(story_points), 0)
+	FROM tasks
+	WHERE sprint_id = $1 
+	  AND parent_task_id IS NULL
+	  AND created_at > (SELECT start_date FROM sprints WHERE id = $1)`
+
+r.db.QueryRowContext(ctx, addedQuery, sprintID).Scan(
+	&report.AddedTasks,
+	&report.AddedPoints,
+)
 
 	// Get cycle time averages
 	cycleTimeQuery := `
