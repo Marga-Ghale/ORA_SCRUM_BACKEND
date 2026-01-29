@@ -23,7 +23,9 @@ var (
 	ErrInvalidInput       = errors.New("invalid input")
 	ErrHasSubtasks        = errors.New("task has subtasks and cannot be deleted")
 	ErrBadRequest         = errors.New("comment content is required")
-	 ErrLastOwner = errors.New("cannot remove or demote the last owner")
+	ErrLastOwner          = errors.New("cannot remove or demote the last owner")
+	ErrSprintAlreadyActive = errors.New("another sprint is already active in this project")
+	ErrSprintNoTasks      = errors.New("cannot start sprint with no tasks")
 )
 
 // ============================================
@@ -140,7 +142,7 @@ func NewServices(deps *ServiceDeps) *Services {
 		),
 		Goal:            goalService, // ✅ Use the same goalService instance
 		SprintAnalytics: NewSprintAnalyticsService(deps.Repos.SprintAnalyticsRepo, deps.Repos.SprintRepo, deps.Repos.TaskRepo, deps.Repos.ProjectRepo, deps.Repos.GoalRepo, memberService),
-		Sprint: NewSprintService(deps.Repos.SprintRepo,deps.Repos.ProjectRepo,memberService),
+		Sprint: NewSprintService(deps.Repos.SprintRepo,deps.Repos.ProjectRepo,deps.Repos.TaskRepo,deps.Repos.SprintCommitmentRepo,deps.Repos.GoalRepo, memberService),
 		Label:           NewLabelService(deps.Repos.LabelRepo),
 		Notification:    NewNotificationService(deps.Repos.NotificationRepo),
 		Team:            NewTeamService(deps.Repos.TeamRepo, deps.Repos.UserRepo, deps.Repos.WorkspaceRepo, deps.NotifSvc, deps.EmailSvc, deps.Broadcaster),

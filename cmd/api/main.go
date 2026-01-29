@@ -441,6 +441,7 @@ func main() {
 				sprints.DELETE("/:id", h.Sprint.Delete)
 				sprints.POST("/:id/start", h.Sprint.Start)
 				sprints.POST("/:id/complete", h.Sprint.Complete)
+				sprints.POST("/:id/complete-with-options", h.Sprint.CompleteWithOptions)
 				
 				// Analytics routes (change :sprintId to :id)
 				sprints.GET("/:id/goals", h.Goal.ListBySprint)

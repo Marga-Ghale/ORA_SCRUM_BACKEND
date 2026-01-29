@@ -305,11 +305,47 @@ func (r *taskRepository) FindBacklog(ctx context.Context, projectID string) ([]*
 
 // UpdateStatus updates task status
 
+// func (r *taskRepository) UpdateStatus(ctx context.Context, taskID, status string) error {
+// 	query := `
+// 		UPDATE tasks SET 
+// 			status = $2::varchar, 
+// 			completed_at = CASE WHEN $2::varchar = 'done' THEN NOW() ELSE completed_at END,
+// 			updated_at = NOW()
+// 		WHERE id = $1`
+// 	_, err := r.db.ExecContext(ctx, query, taskID, status)
+// 	return err
+// }
+
+
 func (r *taskRepository) UpdateStatus(ctx context.Context, taskID, status string) error {
 	query := `
 		UPDATE tasks SET 
-			status = $2::varchar, 
-			completed_at = CASE WHEN $2::varchar = 'done' THEN NOW() ELSE completed_at END,
+			status = $2::varchar,
+			-- Set started_at when first moving to in_progress
+			started_at = CASE 
+				WHEN $2::varchar = 'in_progress' AND started_at IS NULL THEN NOW() 
+				ELSE started_at 
+			END,
+			-- Set completed_at when done, clear when reopened
+			completed_at = CASE 
+				WHEN $2::varchar = 'done' THEN NOW() 
+				WHEN $2::varchar != 'done' THEN NULL
+				ELSE completed_at 
+			END,
+			-- Calculate cycle time (in_progress -> done)
+			cycle_time_seconds = CASE 
+				WHEN $2::varchar = 'done' AND started_at IS NOT NULL 
+				THEN EXTRACT(EPOCH FROM (NOW() - started_at))::int
+				WHEN $2::varchar != 'done' THEN NULL
+				ELSE cycle_time_seconds
+			END,
+			-- Calculate lead time (created -> done)
+			lead_time_seconds = CASE 
+				WHEN $2::varchar = 'done' 
+				THEN EXTRACT(EPOCH FROM (NOW() - created_at))::int
+				WHEN $2::varchar != 'done' THEN NULL
+				ELSE lead_time_seconds
+			END,
 			updated_at = NOW()
 		WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, taskID, status)

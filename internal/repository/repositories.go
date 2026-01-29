@@ -32,6 +32,7 @@ type Repositories struct {
 	TaskCommentRepo    TaskCommentRepository
 	TaskActivityRepo   TaskActivityRepository
 	TimeEntryRepo      TimeEntryRepository
+	SprintCommitmentRepo SprintCommitmentRepository
 }
 
 func NewRepositories(pool *pgxpool.Pool, db *sql.DB) *Repositories {
@@ -60,5 +61,6 @@ func NewRepositories(pool *pgxpool.Pool, db *sql.DB) *Repositories {
 		TaskCommentRepo:    NewTaskCommentRepository(db),
 		TaskActivityRepo:   NewTaskActivityRepository(db),
 		TimeEntryRepo:      NewTimeEntryRepository(db),
+		SprintCommitmentRepo: NewSprintCommitmentRepository(db),
 	}
 }
